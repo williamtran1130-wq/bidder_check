@@ -13,7 +13,7 @@ export default async function Layout({
       workspace={
         profile.role === "admin"
           ? "Platform overview"
-          : (workspaces[0]?.name ?? "My workspace")
+          : (workspaces[0]?.name ?? "Workspace")
       }
     >
       {children}

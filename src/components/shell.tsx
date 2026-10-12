@@ -27,6 +27,7 @@ import {
 import { Brand } from "./brand";
 import { Button } from "./ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "./ui/sheet";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { signOut } from "@/app/auth/actions";
 import { getUnreadNotificationCount } from "@/app/(workspace)/actions";
 import { initials } from "@/lib/domain";
@@ -34,14 +35,14 @@ import { cn } from "@/lib/utils";
 import type { Row } from "@/lib/database.types";
 const links = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
-  { href: "/bids", label: "Bid workspace", icon: BriefcaseBusiness },
-  { href: "/resumes", label: "Resume library", icon: FileText },
-  { href: "/profiles", label: "Candidate profiles", icon: ContactRound },
+  { href: "/bids", label: "Bids", icon: BriefcaseBusiness },
+  { href: "/resumes", label: "Resumes", icon: FileText },
+  { href: "/profiles", label: "Profiles", icon: ContactRound },
   { href: "/users", label: "People", icon: Users },
   { href: "/earnings", label: "Earnings", icon: Wallet },
   {
     href: "/interviews",
-    label: "Interview performance",
+    label: "Interviews",
     icon: ChartNoAxesCombined,
   },
   { href: "/notifications", label: "Notifications", icon: MessageSquareText },
@@ -58,6 +59,10 @@ export function Shell({
   unreadCount?: number;
 }) {
   const pathname = usePathname();
+  const workspaceName = workspace.trim() || "Workspace";
+  const workspaceAvatarName = workspace.startsWith("Workspace - ")
+    ? workspace.slice("Workspace - ".length).trim() || "Workspace"
+    : workspaceName;
   const [collapsed, setCollapsed] = useState(false);
   const [mobile, setMobile] = useState(false);
   const [unread, setUnread] = useState(unreadCount);
@@ -77,7 +82,7 @@ export function Shell({
     };
   }, [profile.role]);
   const nav = (small = false) => (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col overflow-y-auto">
       <Link href="/dashboard" className="px-5 py-7">
         <Brand compact={small} />
       </Link>
@@ -87,12 +92,29 @@ export function Shell({
           small && "justify-center px-1",
         )}
       >
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-violet-100 text-xs font-bold text-violet-700">
-          {initials(workspace)}
-        </span>
+        {small ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={workspaceName}
+                className="flex size-8 shrink-0 items-center justify-center rounded-md bg-violet-100 text-xs font-bold text-violet-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+              >
+                {initials(workspaceAvatarName)}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right" className="max-w-xs break-words">
+              {workspaceName}
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-violet-100 text-xs font-bold text-violet-700">
+            {initials(workspaceAvatarName)}
+          </span>
+        )}
         {!small && (
           <div className="min-w-0">
-            <p className="truncate text-xs font-semibold">{workspace}</p>
+            <p className="break-words text-xs font-semibold leading-5">{workspaceName}</p>
             <p className="mt-1 text-[10px] capitalize text-muted-foreground">
               {profile.role} workspace
             </p>

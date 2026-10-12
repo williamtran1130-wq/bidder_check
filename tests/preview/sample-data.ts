@@ -1,5 +1,24 @@
 import type { WorkspaceData } from "@/lib/data";
+import type { ComparisonRow } from "@/lib/report-types";
 const now = new Date().toISOString();
+export const longWorkspaceName = "Workspace - Alexandra Catherine Montgomery Rivera and the International Candidate Operations Team";
+export function comparisonFixtures(scenario: string): ComparisonRow[] {
+  if (scenario === "empty") return [];
+  const mixed = { id: "group-a", label: "ENG-01", found: 10, foundApplied: 6, arrangements: {
+    remote: { found: 5, foundApplied: 3 }, onsiteHybrid: { found: 3, foundApplied: 2 }, unspecified: { found: 2, foundApplied: 1 },
+  } };
+  if (scenario === "unavailable") return [{ id: "group-a", label: "ENG-01", found: 10, foundApplied: 6 }];
+  if (scenario === "unknown") return [{ ...mixed, arrangements: {
+    remote: { found: 0, foundApplied: 0 }, onsiteHybrid: { found: 0, foundApplied: 0 }, unspecified: { found: 10, foundApplied: 6 },
+  } }];
+  if (scenario === "ten") return [...Array.from({ length: 11 }, (_, i) => ({
+    id: `group-${String(i + 1).padStart(2, "0")}`, label: `Profile ${String(i + 1).padStart(2, "0")}`, found: 10, foundApplied: 6,
+    arrangements: { remote: { found: 10, foundApplied: 6 }, onsiteHybrid: { found: 0, foundApplied: 0 }, unspecified: { found: 0, foundApplied: 0 } },
+  })).reverse(), { ...mixed, id: "group-00", label: "A full candidate profile name that must remain readable on narrow screens", found: 12, foundApplied: 6,
+    arrangements: { remote: { found: 7, foundApplied: 3 }, onsiteHybrid: { found: 3, foundApplied: 2 }, unspecified: { found: 2, foundApplied: 1 } },
+  }];
+  return [mixed];
+}
 const profile = {
   id: "client",
   display_name: "Alex Morgan",

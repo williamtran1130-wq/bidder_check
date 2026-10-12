@@ -3,7 +3,11 @@ import type { PeriodSelection } from "./calendar-period";
 export type ReportQuery = { period: PeriodSelection; workspace?: string; bidder?: string; profile?: string };
 export type GroupedReportQuery = ReportQuery & { group: "profile" | "bidder" | "assignment" };
 export type ReportResult<T> = { data?: T; error?: string; code?: "temporarily_unavailable" | "unavailable" | "validation" | "forbidden" };
-export type ComparisonRow = { id: string; label: string; found: number; foundApplied: number };
+export type ArrangementCounts = { found: number; foundApplied: number };
+export type ComparisonRow = {
+  id: string; label: string; found: number; foundApplied: number;
+  arrangements?: { remote: ArrangementCounts; onsiteHybrid: ArrangementCounts; unspecified: ArrangementCounts };
+};
 export type DashboardReport = {
   range: { from: string; to: string; bucketUnit: "day" | "week" | "month" | "year"; bucketSize: number };
   totals: { found: number; foundApplied: number; appliedActivity: number; trackedApplications: number; trackedInterviews: number };

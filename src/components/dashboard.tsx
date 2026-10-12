@@ -1,13 +1,13 @@
 "use client";
 import Link from "next/link";
 import { useCallback, useState } from "react";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ArrowUpRight, BriefcaseBusiness, CalendarCheck2, CheckCheck, LoaderCircle, RefreshCw, Target, Wallet } from "lucide-react";
 import type { WorkspaceData } from "@/lib/data";
 import { usd } from "@/lib/domain";
 import { applicationRate, dashboardDateLabel } from "@/lib/dashboard-report";
 import { resolveCalendarPeriod, type PeriodSelection } from "@/lib/calendar-period";
-import type { ComparisonRow } from "@/lib/report-types";
+import { Comparison } from "./dashboard-comparison";
 import { getDashboardPerformance } from "@/app/(workspace)/actions";
 import { PageHeading } from "./common";
 import { PeriodSelector, useCalendarDay } from "./period-selector";
@@ -16,32 +16,6 @@ import { Button } from "./ui/button";
 
 const chartStyle = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: 10, fontSize: 12 };
 const tick = { fontSize: 11, fill: "var(--muted)" };
-function completion(row: ComparisonRow) {
-  const rate = applicationRate(row.found, row.foundApplied);
-  return rate === null ? "—" : `${rate.toFixed(1)}%`;
-}
-function Comparison({ title, rows, loading, available }: { title: string; rows: ComparisonRow[]; loading: boolean; available: boolean }) {
-  const sorted = [...rows].sort((a, b) => b.foundApplied - a.foundApplied || b.found - a.found || a.id.localeCompare(b.id));
-  return <section className="panel min-w-0 p-5" aria-label={title}>
-    <h2 className="font-semibold">{title}</h2>
-    <p className="mt-1 text-xs text-muted-foreground">Bids found in this period and how many are applied.</p>
-    {loading && !available ? <div className="mt-5 h-64 animate-pulse rounded bg-muted/50" /> : !available ? <p className="py-14 text-center text-sm text-muted-foreground">Comparison unavailable.</p> : !rows.length ? <p className="py-14 text-center text-sm text-muted-foreground">No bids found in this period.</p> : <>
-      <div className="mt-5 h-72 min-w-0" role="img" aria-label={`${title}: found and applied bids. Exact values follow the chart.`}>
-        <ResponsiveContainer width="100%" height="100%"><BarChart data={sorted.slice(0, 10)} layout="vertical" margin={{ top: 0, right: 12, left: 0, bottom: 0 }}>
-          <CartesianGrid horizontal={false} stroke="var(--border)" strokeDasharray="3 5" />
-          <XAxis type="number" allowDecimals={false} tick={tick} axisLine={false} tickLine={false} />
-          <YAxis type="category" dataKey="id" tickFormatter={(id) => sorted.find((row) => row.id === id)?.label ?? id} width={110} tick={tick} axisLine={false} tickLine={false} />
-          <Tooltip labelFormatter={(_, payload) => payload?.[0]?.payload?.label ?? ""} formatter={(value, name, item) => [name === "Applied" ? `${Number(value).toLocaleString()} · ${completion(item.payload)} complete` : Number(value).toLocaleString(), name]} contentStyle={chartStyle} />
-          <Bar dataKey="found" name="Found" fill="#8576ed" radius={[0, 3, 3, 0]} isAnimationActive={false} />
-          <Bar dataKey="foundApplied" name="Applied" fill="#34b991" radius={[0, 3, 3, 0]} isAnimationActive={false} />
-        </BarChart></ResponsiveContainer>
-      </div>
-      <div className="mt-2 flex gap-4 text-xs text-muted-foreground"><span>● Found</span><span className="text-emerald-700 dark:text-emerald-400">● Applied</span>{rows.length > 10 && <span className="ml-auto">Top 10 of {rows.length}</span>}</div>
-      <details className="mt-4 border-t pt-3 text-xs"><summary className="cursor-pointer font-medium">View all comparison values</summary><div className="mt-3 max-h-72 overflow-auto"><table className="w-full text-right"><caption className="sr-only">{title} values</caption><thead><tr className="text-muted-foreground"><th className="py-2 text-left">Name</th><th>Found</th><th>Applied</th><th>Completion</th></tr></thead><tbody>{sorted.map((row) => <tr key={row.id} className="border-t"><th scope="row" className="py-2 text-left font-medium">{row.label}</th><td>{row.found.toLocaleString()}</td><td>{row.foundApplied.toLocaleString()}</td><td>{completion(row)}</td></tr>)}</tbody></table></div></details>
-    </>}
-  </section>;
-}
-
 export function Dashboard({ data }: { data: WorkspaceData }) {
   const [period, setPeriod] = useState<PeriodSelection>({ preset: "this_week" });
   const [workspace, setWorkspace] = useState("");

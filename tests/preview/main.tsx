@@ -11,7 +11,7 @@ import { Earnings } from "@/components/earnings";
 import { Settings } from "@/components/settings";
 import { Notifications } from "@/components/notifications";
 import { InterviewReport } from "@/components/interviews";
-import { fixture } from "./sample-data";
+import { fixture, longWorkspaceName } from "./sample-data";
 import "@/app/globals.css";
 const pages: Record<string, React.ReactNode> = {
   "/dashboard": <Dashboard data={fixture} />,
@@ -81,7 +81,7 @@ const pages: Record<string, React.ReactNode> = {
 };
 createRoot(document.getElementById("root")!).render(
   <Providers>
-    <Shell profile={fixture.profile} workspace="Northstar Studio">
+    <Shell profile={fixture.profile} workspace={new URLSearchParams(window.location.search).has("long-workspace") ? longWorkspaceName : new URLSearchParams(window.location.search).has("no-workspace") ? "" : "Northstar Studio"}>
       {pages[window.location.pathname] ?? pages["/dashboard"]}
     </Shell>
   </Providers>,

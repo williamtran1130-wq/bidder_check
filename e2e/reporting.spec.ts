@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-const preview = "http://127.0.0.1:3001";
+const preview = process.env.PREVIEW_URL ?? "http://127.0.0.1:3001";
 const periods = ["Today", "Yesterday", "This week", "Last week", "This month", "Last month", "All time", "Custom range"];
 
 test.beforeEach(async ({ page }) => {

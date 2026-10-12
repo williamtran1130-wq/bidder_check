@@ -217,12 +217,29 @@ export async function getDashboardPerformance(input: import("@/lib/report-types"
       const assignment = fixture.resumes.find((resume) => resume.id === row.resume_id);
       const key = kind === "bidder" ? row.bidder_id : assignment?.profile_id ?? "unknown";
       const label = kind === "bidder" ? fixture.profiles.find((person) => person.id === key)?.display_name : fixture.candidateProfiles.find((profile) => profile.id === key)?.identifier;
-      const group = groups.get(key) ?? { id: key, label: label ?? key, found: 0, foundApplied: 0 };
+      const group = groups.get(key) ?? { id: key, label: label ?? key, found: 0, foundApplied: 0, arrangements: { remote: { found: 0, foundApplied: 0 }, onsiteHybrid: { found: 0, foundApplied: 0 }, unspecified: { found: 0, foundApplied: 0 } } };
       group.found++; if (row.applied) group.foundApplied++;
+      const arrangement = row.arrangement === "remote" ? "remote" : "onsiteHybrid";
+      group.arrangements![arrangement].found++;
+      if (row.applied) group.arrangements![arrangement].foundApplied++;
       groups.set(key, group);
     }
     return [...groups.values()];
   };
+  const scenario = parameters.get("arrangements");
+  if (scenario) {
+    const { comparisonFixtures } = await import("./sample-data");
+    const rows = comparisonFixtures(scenario);
+    const ownRows = fixture.profile.role === "bidder" ? rows.slice(0, 1) : rows;
+    const totals = ownRows.reduce((sum, row) => ({ found: sum.found + row.found, foundApplied: sum.foundApplied + row.foundApplied }), { found: 0, foundApplied: 0 });
+    return { data: {
+      range: { from, to, bucketUnit: "day", bucketSize: 1 },
+      series: [{ from, to, ...totals, applied: totals.foundApplied }],
+      totals: { ...totals, appliedActivity: totals.foundApplied, trackedApplications: totals.foundApplied, trackedInterviews: 0 },
+      comparisons: { bidders: fixture.profile.role === "bidder" ? [] : rows, profiles: ownRows },
+      ...(fixture.profile.role !== "bidder" ? { financial: { earningsCents: 1000, earningsCount: 1 } } : {}),
+    } };
+  }
   return { data: {
     range: { from, to, bucketUnit: "day", bucketSize: 1 },
     series: days,
