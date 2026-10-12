@@ -305,16 +305,22 @@ function reportResponse(page, path, preset, bidderId) {
   });
 }
 function bidResponse(page, path, preset, bidderId) {
-  return page.waitForResponse((response) => {
+  const pending = page.waitForResponse((response) => {
     const request = response.request();
     if (request.method() !== "POST" || !request.headers()["next-action"] ||
         new URL(request.url()).pathname !== path) return false;
     const args = JSON.parse(request.postData() ?? "[]");
     return args[0] === preset && args[4] === bidderId;
   });
+  // The triggering click can fail before this listener is awaited. Preserve the
+  // rejected promise for its caller while preventing an unhandled rejection.
+  pending.catch(() => {});
+  return pending;
 }
 async function ui(role, session, sample) {
   const context = await browser.newContext();
+  let page;
+  let detailStarted = false;
   try {
     await context.addCookies(
       [...session.jar.values()]
@@ -332,7 +338,7 @@ async function ui(role, session, sample) {
       await context.setExtraHTTPHeaders({
         "x-vercel-protection-bypass": process.env.SMOKE_VERCEL_BYPASS,
       });
-    const page = await context.newPage();
+    page = await context.newPage();
     page.setDefaultTimeout(45000);
     const clean = async () => {
       // Next's accessibility route announcer is an alert in its own shadow root.
@@ -470,11 +476,19 @@ async function ui(role, session, sample) {
         });
       }
       if (stagingMode) {
+        step = "manager:bidder-detail";
+        assertionStage = "bidder-detail-navigation";
+        detailStarted = true;
         const path = `/users/${sample.bidder_id}`;
         await page.goto(`${origin}${path}`);
         await expect(page).toHaveURL(`${origin}${path}`);
+        await expect(page.getByRole("tab", { name: "Bid activity", exact: true })).toBeVisible();
         const initialBidsResponse = bidResponse(page, path, "today", sample.bidder_id);
+        assertionStage = "bidder-detail-bid-tab-click";
         await page.getByRole("tab", { name: "Bid activity", exact: true }).click();
+        assertionStage = "bidder-detail-bid-tab-active";
+        await expect(page.getByRole("tab", { name: "Bid activity", exact: true })).toHaveAttribute("aria-selected", "true");
+        assertionStage = "bidder-detail-initial-bid-response";
         assert.equal((await initialBidsResponse).status(), 200);
         await expect(page.getByLabel("Found period", { exact: true })).toHaveValue("today");
         await measure(role, "ui-bidder-detail:bids-today-and-all", async () => {
@@ -488,7 +502,9 @@ async function ui(role, session, sample) {
           await clean();
         });
         const initialDetailEarnings = reportResponse(page, path, "this_week", sample.bidder_id);
+        assertionStage = "bidder-detail-earnings-tab-click";
         await page.getByRole("tab", { name: "Earnings", exact: true }).click();
+        await expect(page.getByRole("tab", { name: "Earnings", exact: true })).toHaveAttribute("aria-selected", "true");
         assert.equal((await initialDetailEarnings).status(), 200);
         await expect(page.getByLabel("First applied period", { exact: true })).toHaveValue("this_week");
         await measure(role, "ui-bidder-detail:earnings-week-and-all", async () => {
@@ -509,6 +525,11 @@ async function ui(role, session, sample) {
         await expect(page).toHaveURL(`${origin}/dashboard`);
         await expect(page.getByText("Earned", { exact: true })).toHaveCount(0);
       });
+  } catch (error) {
+    if (detailStarted && page) {
+      await page.screenshot({ path: "test-results/page-defaults-detail-failure.png", fullPage: true }).catch(() => {});
+    }
+    throw error;
   } finally {
     await context.close();
   }

@@ -126,6 +126,49 @@ beforeAll(async () => {
 afterAll(async () => {
   await db?.close();
 });
+it("loads bidder-scoped resume counts with authenticated manager grants and financial boundaries", async () => {
+  await asUser(client);
+  const expected = (await db.query<{ count: number }>(
+    "select count(id)::integer count from public.bids where resume_id=$1", [resume],
+  )).rows[0].count;
+  const counts = (await db.query<{ counts: Record<string, number> }>(
+    "select public.resume_bid_counts_for_bidder($1) counts", [bidder],
+  )).rows[0].counts;
+  expect(counts).toEqual({ [resume]: expected });
+  const privileges = (await db.query<{ internal: boolean; anon: boolean; financial: boolean; definer: boolean }>(
+    `select has_function_privilege('authenticated','public.require_manager(uuid)','execute') internal,
+      has_function_privilege('anon','public.resume_bid_counts_for_bidder(uuid)','execute') anon,
+      has_column_privilege('authenticated','public.bids','rate_cents','select') financial,
+      (select prosecdef from pg_proc where oid='public.resume_bid_counts_for_bidder(uuid)'::regprocedure) definer`,
+  )).rows[0];
+  expect(privileges).toEqual({ internal: false, anon: false, financial: false, definer: false });
+  for (const [table, column] of [
+    ["bidders", "default_rate_cents"], ["resumes", "rate_override_cents"],
+    ["bids", "rate_cents"], ["retained_bid_daily_aggregates", "earned_cents"],
+    ["bid_events", "details"],
+  ]) {
+    await expect(db.query(`select ${column} from public.${table} limit 1`)).rejects.toMatchObject({ code: "42501" });
+  }
+});
+it("keeps bidder-scoped resume counts manager-only and allows authorized administrators", async () => {
+  await asUser(bidder);
+  await expect(db.query("select public.resume_bid_counts_for_bidder($1)", [bidder])).rejects.toThrow(/Access denied/);
+  await asUser(other);
+  await expect(db.query("select public.resume_bid_counts_for_bidder($1)", [bidder])).rejects.toThrow(/Bidder not found|Access denied/);
+  await db.exec("reset role");
+  await db.query("update public.profiles set role='admin' where id=$1", [other]);
+  try {
+    await asUser(other);
+    const counts = (await db.query<{ counts: Record<string, number> }>(
+      "select public.resume_bid_counts_for_bidder($1) counts", [bidder],
+    )).rows[0].counts;
+    expect(Object.keys(counts)).toEqual([resume]);
+    expect(counts[resume]).toBeGreaterThan(0);
+  } finally {
+    await db.exec("reset role");
+    await db.query("update public.profiles set role='client' where id=$1", [other]);
+  }
+});
 it("keeps invitations pending until email confirmation and supports retries", async () => {
   await asUser(client);
   const pending = await db.query<{ accepted_at: string | null }>(
