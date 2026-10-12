@@ -416,7 +416,6 @@ async function benchmark(
   receipt.results = results;
   await save();
   console.log(JSON.stringify(measurement));
-  assert.ok(measurement.passed, "p95 must be below 2000ms");
 }
 
 async function verifyCleanupScope() {
@@ -897,6 +896,10 @@ async function main() {
       .limit(1);
     assert.equal(denied.error?.code, "42501");
   }
+  assert.ok(
+    results.every((measurement) => measurement.passed),
+    "p95 must be below 2000ms",
+  );
   receipt.passed = true;
   receipt.fixtureRetained = keep;
   await save();
