@@ -6,6 +6,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { createClient } from "@supabase/supabase-js";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
+import { seedChunk } from "./screenshot-size-seed-reconciliation.mjs";
 
 const STAGING = "https://kdmvludtvhuuewmhurpw.supabase.co";
 const PREFIX = "screenshot-size-bench-";
@@ -101,6 +102,9 @@ function noMoney(value) {
 async function chunks(rows, action, size = 500) {
   for (let start = 0; start < rows.length; start += size)
     await action(rows.slice(start, start + size));
+}
+function seed(table, operation, rows) {
+  return seedChunk({ service, receipt, table, operation, rows, check: ok, save });
 }
 async function account(planned, role, sponsor) {
   // Managed provisioning suppresses public signup alerts/pushes to real admins.
@@ -800,16 +804,13 @@ async function main() {
   );
   ok(await service.from("resumes").insert(fixtureData.assignments));
   await chunks(fixtureData.bids, (rows) =>
-    service
-      .from("bids")
-      .insert(rows.map((row) => ({ ...row, evidence_file_id: null })))
-      .then(ok),
+    seed("bids", "insert", rows.map((row) => ({ ...row, evidence_file_id: null }))),
   );
   await chunks(fixtureData.files, (rows) =>
-    service.from("files").insert(rows).then(ok),
+    seed("files", "insert", rows),
   );
   await chunks(fixtureData.finalBids, (rows) =>
-    service.from("bids").upsert(rows, { onConflict: "id" }).then(ok),
+    seed("bids", "upsert", rows),
   );
   const seeded = await service
     .from("bids")

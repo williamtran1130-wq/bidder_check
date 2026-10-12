@@ -22,6 +22,8 @@ node --check scripts/reporting-production-smoke.mjs
 
 Run the baseline **before** migration 008, with the current schema through 007. If 008 is already applied, preserve the completed pre008 baseline receipt rather than running `--before` against the new response shape. Use process-scoped staging credentials from the established approved mechanism or an existing dedicated staging environment file; never edit the original environment files. The URL must be exactly `https://kdmvludtvhuuewmhurpw.supabase.co` and `--staging-ready` is mandatory even for cleanup. Choose a fresh receipt filename for every run; an existing receipt is never overwritten by a new benchmark.
 
+Bulk seed bids INSERT, files INSERT and final bids UPSERT reconcile a status-zero transport acknowledgement failure through read-only checks of the exact planned IDs, receipt workspaces and every supplied value, in batches of at most 100 IDs. Only equivalent UTC timestamp formatting is normalized; missing, duplicate, mismatched or unreadable rows fail into normal cleanup. No write is retried. The receipt records aggregate attempted/verified chunks and rows in `seedReconciliationCounts`. Record the reviewed benchmark and setup-helper checksums, preserve the original benchmark source and all failed receipts including `after-011.json`, and require a fresh complete uninstrumented benchmark at `after-011-reconciled.json`. This setup change preserves the timed reads, fixture, concurrency, samples, timeouts and raw p95 gate.
+
 ```powershell
 node --env-file=.env.staging scripts/screenshot-size-staging-benchmark.mjs --before --staging-ready --receipt .superpowers/sdd/2026-10-12-screenshot-size-matching/hosted-receipts/before-008.json
 if ($LASTEXITCODE -ne 0) { throw "Baseline or cleanup failed; inspect the sanitized receipt" }
@@ -32,7 +34,7 @@ Baseline mode exercises only ordinary found-date ordering and requires the pre00
 Use an isolated Supabase CLI workdir linked explicitly to the dedicated staging project. Preserve frozen migrations 008/009/010 and failed `after-008.json`, `after-009.json` and `after-010.json` receipts. Require complete cleanup of every failed fixture, including the ongoing failed010 cleanup, before applying 011 or seeding another benchmark. Inspect migration history and `db push --linked --dry-run`; current staging is through 010 and must show exactly 011 pending once the actual artifact is reviewed and frozen. On a fresh target through 007, require exactly 008, 009, 010 and 011 pending. Resolve any history mismatch before applying. Retain prior independent review evidence and require 011's complete-output/scope/status/sort differential tests, snapshot and custom-plan preservation checks plus independent review. Apply only reviewed pending artifacts, wait for PostgREST schema-cache refresh and rerun the unchanged full-size benchmark with a new receipt:
 
 ```powershell
-node --env-file=.env.staging scripts/screenshot-size-staging-benchmark.mjs --staging-ready --keep-fixture --receipt .superpowers/sdd/2026-10-12-screenshot-size-matching/hosted-receipts/after-011.json
+node --env-file=.env.staging scripts/screenshot-size-staging-benchmark.mjs --staging-ready --keep-fixture --receipt .superpowers/sdd/2026-10-12-screenshot-size-matching/hosted-receipts/after-011-reconciled.json
 if ($LASTEXITCODE -ne 0) { throw "Post benchmark failed; inspect fixture cleanup receipt" }
 ```
 
@@ -58,7 +60,7 @@ The benchmark does **not** upload storage objects. Its synthetic metadata can ex
 Run after staged app acceptance, including when acceptance fails:
 
 ```powershell
-node --env-file=.env.staging scripts/screenshot-size-staging-benchmark.mjs --cleanup-only --staging-ready --receipt .superpowers/sdd/2026-10-12-screenshot-size-matching/hosted-receipts/after-011.json
+node --env-file=.env.staging scripts/screenshot-size-staging-benchmark.mjs --cleanup-only --staging-ready --receipt .superpowers/sdd/2026-10-12-screenshot-size-matching/hosted-receipts/after-011-reconciled.json
 if ($LASTEXITCODE -ne 0) { throw "Fixture cleanup incomplete; preserve receipt for recovery" }
 ```
 
