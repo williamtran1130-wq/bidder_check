@@ -44,7 +44,7 @@ test("interview performance switches between profile, bidder, and assignment gro
 
 test("clients can record interview time and notes from an applied bid", async ({ page }) => {
   await page.goto("http://127.0.0.1:3001/bids");
-  await page.getByRole("button", { name: "All dates", exact: true }).click();
+  await page.getByLabel("Found period").selectOption("all");
   await page.getByRole("button", { name: "Record", exact: true }).first().click();
   const dialog=page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: "Record interview invitation" })).toBeVisible();

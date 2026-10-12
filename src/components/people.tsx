@@ -6,6 +6,7 @@ import { Plus, Search, ArrowUpRight, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import type { WorkspaceData } from "@/lib/data";
 import type { Row } from "@/lib/database.types";
+import type { BidderRow } from "@/lib/workspace-types";
 import { usd, initials } from "@/lib/domain";
 import {
   createBidder,
@@ -140,7 +141,7 @@ export function EditPerson({
   bidder,
 }: {
   person: Row<"profiles">;
-  bidder?: Row<"bidders">;
+  bidder?: BidderRow;
 }) {
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
@@ -198,7 +199,7 @@ export function EditPerson({
               min="0"
               step="0.01"
               defaultValue={
-                bidder.default_rate_cents === null
+                bidder.default_rate_cents == null
                   ? ""
                   : bidder.default_rate_cents / 100
               }
@@ -356,12 +357,24 @@ function ApprovalActions({ person }: { person: Row<"profiles"> }) {
     </div>
   );
 }
-export function People({ data, initialTab = "active", highlightId }: { data: WorkspaceData; initialTab?: string; highlightId?: string }) {
+export function People({
+  data,
+  initialTab = "active",
+  highlightId,
+}: {
+  data: WorkspaceData;
+  initialTab?: string;
+  highlightId?: string;
+}) {
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState(initialTab);
   useEffect(() => {
     if (!highlightId) return;
-    window.requestAnimationFrame(() => document.getElementById(`person-${highlightId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
+    window.requestAnimationFrame(() =>
+      document
+        .getElementById(`person-${highlightId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" }),
+    );
   }, [highlightId]);
   const admin = data.profile.role === "admin";
   const matches = (p: Row<"profiles">) =>
@@ -386,7 +399,11 @@ export function People({ data, initialTab = "active", highlightId }: { data: Wor
   function personRow(p: Row<"profiles">) {
     const b = data.bidders.find((b) => b.user_id === p.id);
     return (
-      <div id={`person-${p.id}`} key={p.id} className={`flex flex-wrap items-center gap-3 p-4 ${highlightId === p.id ? "bg-primary/5 ring-2 ring-inset ring-primary" : ""}`}>
+      <div
+        id={`person-${p.id}`}
+        key={p.id}
+        className={`flex flex-wrap items-center gap-3 p-4 ${highlightId === p.id ? "bg-primary/5 ring-2 ring-inset ring-primary" : ""}`}
+      >
         <span className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
           {initials(p.display_name || p.email)}
         </span>
@@ -410,7 +427,7 @@ export function People({ data, initialTab = "active", highlightId }: { data: Wor
         {p.archived && <Badge variant="outline">Archived</Badge>}
         {b && (
           <span className="text-xs text-muted-foreground">
-            {b.default_rate_cents === null
+            {b.default_rate_cents == null
               ? "Rate not set"
               : `${usd(b.default_rate_cents)} / bid`}
           </span>

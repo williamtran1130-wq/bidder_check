@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Popover as PopoverPrimitive } from "radix-ui";
-import { formatInTimeZone } from "date-fns-tz";
+import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import {
   ColumnDef,
   ColumnFiltersState,
@@ -69,12 +69,15 @@ import { FileUpload } from "./file-upload";
 import { BulkBidToolbar } from "./bulk-bid-toolbar";
 import { BidGrid } from "./bid-grid";
 import { SheetsImport, type ImportResult } from "./sheets-import";
-import { skippedRowsCsv } from "@/lib/import-workflow";
-type Bid = Row<"bids">;
+import type { BidRow } from "@/lib/workspace-types";
+import { calendarToday, shiftCalendarDate, type CalendarPeriod } from "@/lib/calendar-period";
+import { PeriodSelector } from "./period-selector";
+type Bid = BidRow;
 export function BidDialog({ data, bid }: { data: WorkspaceData; bid?: Bid }) {
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
   const [saveError, setSaveError] = useState("");
+  const [blocked, setBlocked] = useState(false);
   const router = useRouter();
   const active = data.resumes.filter(
     (r) =>
@@ -84,7 +87,7 @@ export function BidDialog({ data, bid }: { data: WorkspaceData; bid?: Bid }) {
       r.id === bid?.resume_id,
   );
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(next) => { setOpen(next); setBlocked(false); setSaveError(""); }}>
       <DialogTrigger asChild>
         <Button
           variant={bid ? "outline" : "default"}
@@ -109,12 +112,16 @@ export function BidDialog({ data, bid }: { data: WorkspaceData; bid?: Bid }) {
           className="space-y-4"
           action={(form) =>
             start(async () => {
+              setBlocked(false);
               const result = await saveBid(form);
               if (result.error) {
                 setSaveError(result.error);
                 toast.error(result.error);
               }
-              else {
+              else if (result.data?.status === "blocked") {
+                setSaveError("");
+                setBlocked(true);
+              } else if (result.data?.status === "saved") {
                 setSaveError("");
                 toast.success(bid ? "Bid updated" : "Opportunity added");
                 setOpen(false);
@@ -123,6 +130,7 @@ export function BidDialog({ data, bid }: { data: WorkspaceData; bid?: Bid }) {
             })
           }
         >
+          {blocked && <p role="status" className="rounded-lg bg-muted p-3 text-sm">Blocked</p>}
           {saveError && !["url", "company", "role_name", "resume_id"].some((field) => {
             if (field === "url") return /url|link|job/i.test(saveError);
             if (field === "company") return /company|limit/i.test(saveError);
@@ -245,22 +253,22 @@ export function BidWorkspace({
   const [uploadBusy, setUploadBusy] = useState(false);
   const [search, setSearch] = useState("");
   const [paste, setPaste] = useState<string | null>(null);
-  const [lastImport, setLastImport] = useState<ImportResult | null>(null);
   const editing = useRef(false);
   const deferredRefresh = useRef(false);
   const [isEditing, setIsEditing] = useState(false);
   function editingChanged(value: boolean) {
     editing.current = value;
     setIsEditing(value);
-    if (!value)
+    if (!value) {
       setToday(formatInTimeZone(new Date(), BID_TIMEZONE, "yyyy-MM-dd"));
+      setDebouncedSearch(search);
+    }
     if (!value && deferredRefresh.current) {
       deferredRefresh.current = false;
       setRevision((n) => n + 1);
     }
   }
   function imported(result: ImportResult) {
-    setLastImport(result);
     setPaste(null);
     setSearch("");
     setStatus("all");
@@ -295,7 +303,7 @@ export function BidWorkspace({
   const [customPageSize, setCustomPageSize] = useState(false);
   const pageSize = pagination.pageSize;
   const [selected, setSelected] = useState<string>();
-  const [history, setHistory] = useState<Row<"bid_events">[]>([]);
+  const [history, setHistory] = useState<Omit<Row<"bid_events">, "details">[]>([]);
   const [reason, setReason] = useState("");
   const [interviewEditor, setInterviewEditor] = useState<Bid | null>(null);
   const [interviewAt, setInterviewAt] = useState("");
@@ -304,7 +312,7 @@ export function BidWorkspace({
   const [clearInterview, setClearInterview] = useState(false);
   const [pending, start] = useTransition();
   const router = useRouter();
-  const [dateMode, setDateMode] = useState("today");
+  const [dateMode, setDateMode] = useState<CalendarPeriod>("today");
   const [trash, setTrash] = useState(false);
   const [today, setToday] = useState(() =>
     formatInTimeZone(new Date(), BID_TIMEZONE, "yyyy-MM-dd"),
@@ -317,8 +325,22 @@ export function BidWorkspace({
   const [loading, setLoading] = useState(true);
   const [revision, setRevision] = useState(0);
   const [debouncedSearch, setDebouncedSearch] = useState(search);
+  const queryKey = JSON.stringify([
+    data.profile.id, dateMode, from, to, trash, bidderId,
+    dateMode !== "custom" && dateMode !== "all" || columnFilters.some((filter) => filter.value && typeof filter.value === "object" && "preset" in filter.value && filter.value.preset !== "custom" && filter.value.preset !== "all") ? today : "",
+    debouncedSearch, status, arrangement, resume, bidder, source, job,
+    columnFilters, sorting, pagination.pageIndex, pageSize,
+  ]);
+  const [loadedKey, setLoadedKey] = useState<string>();
+  const hasResults = loadedKey === queryKey;
   useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedSearch(search), 250);
+    const timer = window.setTimeout(() => {
+      if (editing.current) {
+        deferredRefresh.current = true;
+        return;
+      }
+      setDebouncedSearch(search);
+    }, 250);
     return () => window.clearTimeout(timer);
   }, [search]);
   useEffect(() => {
@@ -329,12 +351,18 @@ export function BidWorkspace({
     }
   }, []);
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
     const update = () => {
+      clearTimeout(timer);
+      const now = new Date();
+      const day = calendarToday(now);
+      const next = fromZonedTime(`${shiftCalendarDate(day, 1)}T00:00:00`, BID_TIMEZONE);
+      timer = setTimeout(update, Math.max(1, next.getTime() - now.getTime()));
       if (editing.current) {
         deferredRefresh.current = true;
         return;
       }
-      setToday(formatInTimeZone(new Date(), BID_TIMEZONE, "yyyy-MM-dd"));
+      setToday(day);
     };
     const focus = () => {
       if (editing.current) {
@@ -344,10 +372,10 @@ export function BidWorkspace({
       update();
       setRevision((n) => n + 1);
     };
-    const timer = setInterval(update, 15000);
+    update();
     window.addEventListener("focus", focus);
     return () => {
-      clearInterval(timer);
+      clearTimeout(timer);
       window.removeEventListener("focus", focus);
     };
   }, []);
@@ -361,7 +389,7 @@ export function BidWorkspace({
       setLoading(true);
       const query = { search: debouncedSearch, status, arrangement, resume, bidder, source, job, columnFilters, sorting, pageIndex: pagination.pageIndex, pageSize };
       const result = await getBidRows(dateMode, from, to, trash, bidderId, query).catch(() => ({
-        error: "Could not refresh bids. Your previous results are still shown.",
+        error: "Could not refresh bids. Please retry.",
         data: undefined,
       }));
       if (cancelled) return;
@@ -371,8 +399,8 @@ export function BidWorkspace({
         return;
       }
       setLoading(false);
-      if (result.error) {
-        setLoadError(result.error);
+      if (result.error || !result.data) {
+        setLoadError(result.error || "Bid results could not be loaded. Please retry.");
       } else {
         setLoadError("");
         const page = result.data as { rows: Bid[]; total: number; sources: string[]; statusCounts: Record<string, number> } | undefined;
@@ -380,13 +408,14 @@ export function BidWorkspace({
         setTotalCount(page?.total ?? 0);
         setSourceOptions(page?.sources ?? []);
         setStatusCounts(page?.statusCounts ?? {});
+        setLoadedKey(queryKey);
       }
     };
     void run();
     return () => {
       cancelled = true;
     };
-  }, [data, dateMode, from, to, trash, bidderId, today, revision, debouncedSearch, status, arrangement, resume, bidder, source, job, columnFilters, sorting, pagination.pageIndex, pageSize]);
+  }, [data, dateMode, from, to, trash, bidderId, today, revision, debouncedSearch, status, arrangement, resume, bidder, source, job, columnFilters, sorting, pagination.pageIndex, pageSize, queryKey]);
   useEffect(() => {
     const targets = Object.entries(checked).map(([id, target]) => ({ id, version: target.version }));
     if (!targets.length) return;
@@ -401,9 +430,9 @@ export function BidWorkspace({
     });
     return () => { cancelled = true; };
   }, [checked, trash]);
-  const active = list.find((b) => b.id === selected);
+  const filteredRows = hasResults ? list : [];
+  const active = filteredRows.find((b) => b.id === selected);
   const timezone = BID_TIMEZONE;
-  const filteredRows = list;
   function openBid(b: Bid) {
     setSelected(b.id);
     setReason("");
@@ -457,8 +486,8 @@ export function BidWorkspace({
             <PopoverPrimitive.Trigger asChild><button type="button" aria-label={`Filter ${label}`} title={`Filter ${label}`} aria-expanded={openFilter===id} disabled={isEditing} className="rounded p-1 text-muted-foreground hover:bg-secondary"><SlidersHorizontal size={12}/></button></PopoverPrimitive.Trigger>
             <PopoverPrimitive.Portal><PopoverPrimitive.Content sideOffset={4} align="start" collisionPadding={8} className="z-50 max-h-[min(24rem,calc(100dvh-1rem))] w-56 overflow-y-auto rounded-md border bg-card p-3 text-foreground shadow-lg">
             {id === "found_at" || id === "applied_at" ? (() => {
-              const range = (column.getFilterValue() as { from?: string; to?: string; presence?: string } | undefined) ?? {};
-              return <div className="space-y-2"><select aria-label={`${label} presence`} className="native-select" value={range.presence ?? "all"} onChange={(event)=>column.setFilterValue({...range,presence:event.target.value})}><option value="all">Any</option><option value="has">Has time</option><option value="empty">No time</option></select><label className="block text-[10px] text-muted-foreground">From (CT)<input aria-label={`${label} from CT`} className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-xs" type="date" value={range.from ?? ""} onChange={(event)=>column.setFilterValue({...range,from:event.target.value})}/></label><label className="block text-[10px] text-muted-foreground">Through (CT)<input aria-label={`${label} through CT`} className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-xs" type="date" value={range.to ?? ""} onChange={(event)=>column.setFilterValue({...range,to:event.target.value})}/></label></div>;
+              const range = (column.getFilterValue() as { preset?: CalendarPeriod; from?: string; to?: string; presence?: string } | undefined) ?? {};
+              return <div className="space-y-2"><select aria-label={`${label} presence`} className="native-select" value={range.presence ?? "all"} onChange={(event)=>column.setFilterValue({...range,presence:event.target.value})}><option value="all">Any</option><option value="has">Has time</option><option value="empty">No time</option></select><PeriodSelector label={`${label} period`} value={{ preset: range.preset ?? (range.from && range.to ? "custom" : "all"), from: range.from, to: range.to }} onChange={(selection) => column.setFilterValue({ ...selection, presence: range.presence })} /></div>;
             })() : options ? <select aria-label={`${label} filter`} className="native-select" value={String(column.getFilterValue() ?? "")} onChange={(event) => column.setFilterValue(event.target.value || undefined)}>
               <option value="">All</option>{options.map((option) => <option key={option} value={option}>{option}</option>)}
             </select> : <Input aria-label={`${label} filter`} placeholder={`Filter ${label.toLowerCase()}`} value={String(column.getFilterValue() ?? "")} onChange={(event) => column.setFilterValue(event.target.value || undefined)} />}
@@ -673,7 +702,7 @@ export function BidWorkspace({
     trash,
     sorting,
     columnFilters,
-    dateMode === "today" || dateMode === "yesterday" ? today : "",
+    dateMode !== "custom" && dateMode !== "all" || columnFilters.some((filter) => filter.value && typeof filter.value === "object" && "preset" in filter.value && filter.value.preset !== "custom" && filter.value.preset !== "all") ? today : "",
   ]);
   useEffect(() => {
     setChecked({});
@@ -686,9 +715,10 @@ export function BidWorkspace({
     } catch { /* Browser storage is optional. */ }
   }, [data.profile.id]);
   useEffect(() => {
+    if (!hasResults) return;
     const max = Math.max(0, Math.ceil(totalCount / pageSize) - 1);
     if (table.getState().pagination.pageIndex > max) table.setPageIndex(max);
-  }, [totalCount, columnFilters, pageSize, table]);
+  }, [totalCount, columnFilters, pageSize, table, hasResults]);
   return (
     <>
       {paste !== null && (
@@ -699,20 +729,6 @@ export function BidWorkspace({
           onClose={() => setPaste(null)}
           onSuccess={imported}
         />
-      )}
-        {lastImport && lastImport.skipped.length > 0 && (
-          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm" role="status">
-            <span>{lastImport.importedCount} {lastImport.importedCount === 1 ? "bid" : "bids"} imported; {lastImport.skipped.length} {lastImport.skipped.length === 1 ? "row" : "rows"} skipped.</span>
-          <Button variant="outline" size="sm" onClick={() => {
-            const url = URL.createObjectURL(new Blob([skippedRowsCsv(lastImport.skipped)], { type: "text/csv;charset=utf-8" }));
-            const anchor = document.createElement("a");
-            anchor.href = url;
-            anchor.download = `bid-import-skipped-${lastImport.date}.csv`;
-            anchor.click();
-            URL.revokeObjectURL(url);
-          }}>Download skipped rows</Button>
-          <Button variant="ghost" size="sm" onClick={() => setLastImport(null)}>Dismiss</Button>
-        </div>
       )}
       {!embedded && (
         <PageHeading
@@ -741,7 +757,7 @@ export function BidWorkspace({
                 >
                   {s === "all" ? "All bids" : s === "pending_review" ? "Pending review" : s}
                   <span className="ml-1 rounded bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                    {statusCounts[s] ?? 0}
+                    {hasResults ? statusCounts[s] ?? 0 : "—"}
                   </span>
                 </Button>
               ))}
@@ -756,22 +772,7 @@ export function BidWorkspace({
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2 px-5 pt-4">
-            {[
-              ["today", "Today (CT)"],
-              ["yesterday", "Yesterday (CT)"],
-              ["all", "All dates"],
-              ["custom", "Custom range"],
-            ].map(([value, label]) => (
-              <Button
-                key={value}
-                size="sm"
-                variant={dateMode === value ? "secondary" : "ghost"}
-                aria-pressed={dateMode === value}
-                onClick={() => setDateMode(value)}
-              >
-                {label}
-              </Button>
-            ))}
+            <PeriodSelector key={`${dateMode}:${from}:${to}`} label="Found period" value={{ preset: dateMode, from, to }} onChange={(selection) => { setDateMode(selection.preset); setFrom(selection.from ?? ""); setTo(selection.to ?? ""); }} />
             <Button
               size="sm"
               className="ml-auto"
@@ -781,23 +782,6 @@ export function BidWorkspace({
             >
               {trash ? "Back to active bids" : "Trash"}
             </Button>
-            {dateMode === "custom" && (
-              <div className="flex flex-wrap gap-3">
-                <Field
-                  label="Found from (CT)"
-                  type="date"
-                  value={from}
-                  onChange={(e) => setFrom(e.target.value)}
-                />
-                <Field
-                  label="Found through (CT)"
-                  type="date"
-                  min={from}
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
-                />
-              </div>
-            )}
           </div>
           {loadError && (
             <p role="alert" className="px-5 pt-3 text-sm text-destructive">
@@ -949,7 +933,7 @@ export function BidWorkspace({
                   .getRowModel()
                   .rows.map((row) => row.original.id)
                   .join(","),
-                dateMode === "today" || dateMode === "yesterday" ? today : "",
+                dateMode !== "custom" && dateMode !== "all" ? today : "",
                 sorting,
                 search,
                 status,
@@ -1001,17 +985,17 @@ export function BidWorkspace({
             />
             <div className="flex items-center justify-between border-t px-5 py-4 text-xs text-muted-foreground">
               <span>
-                {totalCount === 0 ? 0 : table.getState().pagination.pageIndex * pageSize + 1}–
+                {hasResults ? <>{totalCount === 0 ? 0 : table.getState().pagination.pageIndex * pageSize + 1}–
                 {Math.min((table.getState().pagination.pageIndex + 1) * pageSize,totalCount)}{" "}
-                of {totalCount} bids
+                of {totalCount} bids</> : loading ? "Loading results…" : "Results unavailable"}
               </span>
               <div className="flex items-center gap-2">
-                <label className="flex items-center gap-2">Rows per page <select aria-label="Rows per page" className="native-select w-20" value={customPageSize?"custom":pageSize} onChange={(event)=>{if(event.target.value==="custom"){setCustomPageSize(true);return;}setCustomPageSize(false);const value=Number(event.target.value);setPagination({pageIndex:0,pageSize:value});try{localStorage.setItem(`bidder-check-page-size:${data.profile.id}`,String(value));}catch{}}}>{[10,25,50,100].map(n=><option key={n} value={n}>{n}</option>)}<option value="custom">Custom</option></select>{customPageSize&&<input aria-label="Custom rows per page" type="number" min={1} max={100} value={pageSize} className="h-9 w-16 rounded-md border bg-background px-2" onChange={(event)=>{const value=Number(event.target.value);if(Number.isInteger(value)&&value>=1&&value<=100){setPagination({pageIndex:0,pageSize:value});try{localStorage.setItem(`bidder-check-page-size:${data.profile.id}`,String(value));}catch{}}}} />}</label>
+                <label className="flex items-center gap-2">Rows per page <select aria-label="Rows per page" disabled={isEditing} className="native-select w-20" value={customPageSize?"custom":pageSize} onChange={(event)=>{if(event.target.value==="custom"){setCustomPageSize(true);return;}setCustomPageSize(false);const value=Number(event.target.value);setPagination({pageIndex:0,pageSize:value});try{localStorage.setItem(`bidder-check-page-size:${data.profile.id}`,String(value));}catch{}}}>{[10,25,50,100].map(n=><option key={n} value={n}>{n}</option>)}<option value="custom">Custom</option></select>{customPageSize&&<input aria-label="Custom rows per page" disabled={isEditing} type="number" min={1} max={100} value={pageSize} className="h-9 w-16 rounded-md border bg-background px-2" onChange={(event)=>{const value=Number(event.target.value);if(Number.isInteger(value)&&value>=1&&value<=100){setPagination({pageIndex:0,pageSize:value});try{localStorage.setItem(`bidder-check-page-size:${data.profile.id}`,String(value));}catch{}}}} />}</label>
                 <Button
                   aria-label="Previous page"
                   size="icon-sm"
                   variant="outline"
-                  disabled={isEditing || !table.getCanPreviousPage()}
+                  disabled={isEditing || !hasResults || !table.getCanPreviousPage()}
                   onClick={() => table.previousPage()}
                 >
                   <ChevronLeft size={14} />
@@ -1023,7 +1007,7 @@ export function BidWorkspace({
                   aria-label="Next page"
                   size="icon-sm"
                   variant="outline"
-                  disabled={isEditing || !table.getCanNextPage()}
+                  disabled={isEditing || !hasResults || !table.getCanNextPage()}
                   onClick={() => table.nextPage()}
                 >
                   <ChevronRight size={14} />
@@ -1085,13 +1069,13 @@ export function BidWorkspace({
                     },
                     { label: "Source", value: active.source },
                     { label: "Job status", value: active.job_status },
-                    {
+                    ...(data.profile.role !== "bidder" ? [{
                       label: "Saved rate",
                       value:
-                        active.rate_cents === null
+                        active.rate_cents == null
                           ? "Set on application"
                           : usd(active.rate_cents),
-                    },
+                    }] : []),
                     {
                       label: "Found",
                       value: formatInTimeZone(

@@ -2,13 +2,13 @@
 import { useEffect, useRef, useState } from "react";
 import { flexRender, type Table } from "@tanstack/react-table";
 import { formatInTimeZone } from "date-fns-tz";
-import type { Row } from "@/lib/database.types";
+import type { BidRow } from "@/lib/workspace-types";
 import type { WorkspaceData } from "@/lib/data";
 import { BID_TIMEZONE } from "@/lib/domain";
 import { toTsv } from "@/lib/sheets";
 import { updateBidCell } from "@/app/(workspace)/actions";
 import { Button } from "./ui/button";
-type Bid = Row<"bids">;
+type Bid = BidRow;
 type Point = { r: number; c: number };
 type Edit = {
   id: string;

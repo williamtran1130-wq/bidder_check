@@ -1,5 +1,7 @@
 import type { SortingState, ColumnFiltersState } from "@tanstack/react-table";
-import type { Row } from "./database.types";
+import type { BidRow } from "./workspace-types";
+
+export const BID_LIST_RPC = "list_bids_v2" as const;
 
 export type BidListQuery = {
   search: string;
@@ -16,7 +18,7 @@ export type BidListQuery = {
 };
 
 export type BidListResult = {
-  rows: Row<"bids">[];
+  rows: BidRow[];
   total: number;
   sources: string[];
   statusCounts: Record<string, number>;

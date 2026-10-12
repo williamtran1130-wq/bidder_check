@@ -23,7 +23,8 @@ export function classifyImportRows(
   rows.forEach((row, index) => {
     const sourceRow = sourceRows[index] ?? index + 1;
     const rowReasons = reasons.get(sourceRow) ?? [];
-    if (rowReasons.length) skipped.push({ sourceRow, row, reasons: rowReasons });
+    if (rowReasons.length)
+      skipped.push({ sourceRow, row, reasons: rowReasons });
     else {
       allowed.push(row);
       allowedSourceRows.push(sourceRow);
@@ -32,17 +33,20 @@ export function classifyImportRows(
   return { allowed, allowedSourceRows, skipped };
 }
 
-function csvCell(value: string) {
-  const safe = /^[\s]*[=+\-@]/.test(value) ? `'${value}` : value;
-  return `"${safe.replaceAll('"', '""')}"`;
-}
-
-export function skippedRowsCsv(rows: SkippedImportRow[]) {
-  const header = ["Row", "Company", "Role", "Job URL", "Job site", "Work arrangement", "Job status", "Reasons"];
-  const body = rows.map(({ sourceRow, row, reasons }) => [
-    String(sourceRow), row.company, row.role_name, row.url, row.source,
-    row.arrangement, row.job_status,
-    reasons.map((reason) => `${reason.field}: ${reason.message}`).join("; "),
-  ]);
-  return [header, ...body].map((line) => line.map(csvCell).join(",")).join("\r\n");
+/** Never broaden the batch beyond the source rows approved in preview. */
+export function reviewedImportRows(
+  rows: ImportRow[],
+  sourceRows: number[],
+  approvedSourceRows: number[],
+  errors: ImportError[],
+) {
+  const approved = new Set(approvedSourceRows);
+  const fresh = classifyImportRows(rows, sourceRows, errors);
+  const indexes = fresh.allowedSourceRows
+    .map((sourceRow, index) => ({ sourceRow, index }))
+    .filter(({ sourceRow }) => approved.has(sourceRow));
+  return {
+    rows: indexes.map(({ index }) => fresh.allowed[index]),
+    sourceRows: indexes.map(({ sourceRow }) => sourceRow),
+  };
 }

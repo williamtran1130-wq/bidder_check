@@ -143,3 +143,19 @@ export const fixture: WorkspaceData = {
     created_at: new Date(Date.now() - i * 86400000).toISOString(),
   })),
 };
+
+// A real bidder-shaped transport fixture: no monetary keys or teammate rows.
+if (new URLSearchParams(window.location.search).get("role") === "bidder") {
+  fixture.profile = { ...people[0], role: "bidder" };
+  fixture.profiles = [fixture.profile];
+  fixture.bidders = fixture.bidders.filter((row) => row.user_id === fixture.profile.id).map((row) => {
+    const safe = { ...row }; delete safe.default_rate_cents; return safe;
+  });
+  fixture.resumes = fixture.resumes.filter((row) => row.bidder_id === fixture.profile.id).map((row) => {
+    const safe = { ...row }; delete safe.rate_override_cents; return safe;
+  });
+  fixture.candidateProfiles = fixture.candidateProfiles.filter((row) => fixture.resumes.some((assignment) => assignment.profile_id === row.id));
+  fixture.bids = fixture.bids.filter((row) => row.bidder_id === fixture.profile.id).map((row) => {
+    const safe = { ...row }; delete safe.rate_cents; return safe;
+  });
+}

@@ -1,5 +1,6 @@
-import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
-export const BID_TIMEZONE = "America/Chicago";
+import { formatInTimeZone } from "date-fns-tz";
+import { CALENDAR_TIMEZONE, isCalendarPeriod, periodTimestampBounds, resolveCalendarPeriod } from "./calendar-period";
+export const BID_TIMEZONE = CALENDAR_TIMEZONE;
 export function formatCTDateBucket(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value))
     throw new Error("Enter a valid calendar date.");
@@ -14,33 +15,8 @@ export function chicagoDateRange(
   to: string,
   now = new Date(),
 ): { from?: string; to?: string } {
-  if (mode === "all") return {};
-  if (mode === "today")
-    from = to = formatInTimeZone(now, BID_TIMEZONE, "yyyy-MM-dd");
-  if (mode === "yesterday") {
-    const day = new Date(
-      `${formatInTimeZone(now, BID_TIMEZONE, "yyyy-MM-dd")}T00:00:00Z`,
-    );
-    day.setUTCDate(day.getUTCDate() - 1);
-    from = to = day.toISOString().slice(0, 10);
-  }
-  if (mode !== "today" && mode !== "yesterday" && mode !== "custom")
-    throw new Error("Invalid date filter");
-  const valid = (value: string) =>
-    /^\d{4}-\d{2}-\d{2}$/.test(value) &&
-    !Number.isNaN(Date.parse(value)) &&
-    new Date(value).toISOString().slice(0, 10) === value;
-  if (!valid(from) || !valid(to) || from > to)
-    throw new Error("Choose a valid date range");
-  const next = new Date(`${to}T00:00:00Z`);
-  next.setUTCDate(next.getUTCDate() + 1);
-  return {
-    from: fromZonedTime(`${from}T00:00:00`, BID_TIMEZONE).toISOString(),
-    to: fromZonedTime(
-      `${next.toISOString().slice(0, 10)}T00:00:00`,
-      BID_TIMEZONE,
-    ).toISOString(),
-  };
+  if (!isCalendarPeriod(mode)) throw new Error("Invalid date filter");
+  return periodTimestampBounds(resolveCalendarPeriod({ preset: mode, from, to }, now));
 }
 
 export function normalizeJobUrl(input: string) {

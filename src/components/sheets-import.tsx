@@ -14,7 +14,7 @@ import {
   type ImportError,
 } from "@/lib/sheets";
 import { checkBidImport, importReviewedBids } from "@/app/(workspace)/actions";
-import { classifyImportRows, type SkippedImportRow } from "@/lib/import-workflow";
+import { classifyImportRows, reviewedImportRows } from "@/lib/import-workflow";
 import {
   Dialog,
   DialogContent,
@@ -23,11 +23,15 @@ import {
   DialogDescription,
 } from "./ui/dialog";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 import { Field, SelectField } from "./common";
 import { toast } from "sonner";
-export type ImportResult = { date: string; bidder: string; resume: string; importedCount: number; skipped: SkippedImportRow[] };
+export type ImportResult = {
+  date: string;
+  bidder: string;
+  resume: string;
+  importedCount: number;
+};
 export function SheetsImport({
   data,
   initialText,
@@ -67,11 +71,27 @@ export function SheetsImport({
     [busy, setBusy] = useState(false),
     [checking, setChecking] = useState(false);
   const request = useRef(crypto.randomUUID());
-  const frozen = useRef<{ resume: string; date: string; rows: ImportRow[]; sourceRows: number[]; requestId: string; skipped: SkippedImportRow[] } | null>(null);
+  const frozen = useRef<{
+    resume: string;
+    date: string;
+    rows: ImportRow[];
+    sourceRows: number[];
+    requestId: string;
+  } | null>(null);
   const [uncertain, setUncertain] = useState(false);
-  const [attempted, setAttempted] = useState(false);
+  const [validated, setValidated] = useState(false);
+  const [approvedSourceRows, setApprovedSourceRows] = useState<number[] | null>(
+    null,
+  );
+
   const localErrors = useMemo(
-    () => rows ? validateImportRows(rows).map((entry) => ({ ...entry, row: sourceRows[entry.row - 1] ?? entry.row })) : [],
+    () =>
+      rows
+        ? validateImportRows(rows).map((entry) => ({
+            ...entry,
+            row: sourceRows[entry.row - 1] ?? entry.row,
+          }))
+        : [],
     [rows, sourceRows],
   );
   const bidders = data.bidders.filter(
@@ -91,11 +111,20 @@ export function SheetsImport({
       try {
         const result = await checkBidImport(resume, date, rows);
         if (!cancelled) {
-          setServerErrors((result.data ?? []).map((entry) => ({
+          const checkedErrors = (result.data ?? []).map((entry) => ({
             ...entry,
             row: sourceRows[entry.row - 1] ?? entry.row,
-          })));
+          }));
+          setServerErrors(checkedErrors);
+          if (!result.error) {
+            const approved = classifyImportRows(rows, sourceRows, [
+              ...localErrors,
+              ...checkedErrors,
+            ]).allowedSourceRows;
+            setApprovedSourceRows((current) => current ?? approved);
+          }
           setError(result.error ?? "");
+          setValidated(!result.error);
         }
       } catch {
         if (!cancelled)
@@ -110,7 +139,7 @@ export function SheetsImport({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [rows, resume, date, sourceRows]);
+  }, [rows, resume, date, sourceRows, localErrors]);
   function parse() {
     try {
       const parsed = parseSheet(text);
@@ -136,6 +165,8 @@ export function SheetsImport({
         throw new Error("Map one column to Job URL.");
       const mapped = mapSheet(source, mapping, defaults);
       if (mapped.length > 500) throw new Error("Import at most 500 rows.");
+      setApprovedSourceRows(null);
+      setValidated(false);
       setRows(mapped);
       setSourceRows(mapped.map((_, index) => index + 1));
       setServerErrors([]);
@@ -146,74 +177,86 @@ export function SheetsImport({
       setError((e as Error).message);
     }
   }
-  function changeRows(next: ImportRow[], nextSourceRows = sourceRows) {
-    setAttempted(false);
-    setRows(next);
-    setSourceRows(nextSourceRows);
-    setServerErrors([]);
-    setChecking(next.length > 0);
-    setError("");
-    request.current = crypto.randomUUID();
-  }
   async function submit() {
-    if (!rows || busy) return;
+    if (!rows || busy || (!uncertain && (checking || !validated || !!error)))
+      return;
     let payload = frozen.current;
-    const reviewedSourceRows = displayed?.allowedSourceRows ?? [];
-    let preSkipped: SkippedImportRow[] = [];
+    const reviewedSourceRows = approvedSourceRows ?? [];
     let importSent = false;
-    setAttempted(true);
     setBusy(true);
     setError("");
     try {
       if (!payload) {
-        if (!bidder || !resume || !date) throw new Error("Choose a bidder, resume, and Added date before importing.");
-        if (!rows.length) throw new Error("Add at least one bid row to import.");
+        if (!bidder || !resume || !date)
+          throw new Error(
+            "Choose a bidder, resume, and Added date before importing.",
+          );
+        if (!rows.length)
+          throw new Error("Add at least one bid row to import.");
         const checked = await checkBidImport(resume, date, rows);
         if (checked.error) throw new Error(checked.error);
-        const freshErrors = (checked.data ?? []).map((entry) => ({ ...entry, row: sourceRows[entry.row - 1] ?? entry.row }));
-        const fresh = classifyImportRows(rows, sourceRows, [...localErrors, ...freshErrors]);
-        preSkipped = fresh.skipped;
-        const selected = new Set(reviewedSourceRows);
-        const allowedIndexes = rows.map((_, index) => index).filter((index) => {
-          const rowNumber = sourceRows[index] ?? index + 1;
-          return selected.has(rowNumber) && !fresh.skipped.some((entry) => entry.sourceRow === rowNumber);
-        });
-        const allowed = allowedIndexes.map((index) => rows[index]);
+        const freshErrors = (checked.data ?? []).map((entry) => ({
+          ...entry,
+          row: sourceRows[entry.row - 1] ?? entry.row,
+        }));
+        const fresh = reviewedImportRows(rows, sourceRows, reviewedSourceRows, [
+          ...localErrors,
+          ...freshErrors,
+        ]);
+        const allowed = fresh.rows;
         if (!allowed.length) {
           setServerErrors(freshErrors);
-          setError("No rows are allowed to import after rechecking. Review the updated reasons and correct or remove blocked rows.");
+          setError("No bids to add");
           return;
         }
-        payload = { resume, date, rows: allowed, sourceRows: allowedIndexes.map((index) => sourceRows[index] ?? index + 1), requestId: request.current, skipped: preSkipped };
+        payload = {
+          resume,
+          date,
+          rows: allowed,
+          sourceRows: fresh.sourceRows,
+          requestId: request.current,
+        };
       }
-      if (payload.skipped.length) preSkipped = payload.skipped;
       importSent = true;
-      const result = await importReviewedBids(payload.resume, payload.date, payload.rows, payload.sourceRows, payload.requestId);
+      const result = await importReviewedBids(
+        payload.resume,
+        payload.date,
+        payload.rows,
+        payload.sourceRows,
+        payload.requestId,
+      );
       if (result.error) {
         frozen.current = result.uncertain ? payload : null;
         setUncertain(!!result.uncertain);
-        setError(result.uncertain ? "Connection interrupted. Retry keeps the same request and will not duplicate bids." : result.error);
-      }
-      else if (result.data?.ids) {
-        const backendSkipped = (result.data.skipped ?? []) as unknown as { sourceRow: number; reasons: ImportError[] }[];
+        setError(
+          result.uncertain
+            ? "Connection interrupted. Retry keeps the same request and will not duplicate bids."
+            : result.error,
+        );
+      } else if (result.data?.ids) {
+        const backendSkipped = (result.data.skipped ?? []) as unknown as {
+          sourceRow: number;
+          reasons: ImportError[];
+        }[];
         if (!result.data.ids.length) {
           setServerErrors(backendSkipped.flatMap((entry) => entry.reasons));
-          setError("No rows are allowed to import after rechecking. Review the updated reasons and correct or remove blocked rows.");
-          setAttempted(false);
+          setError("No bids to add");
+          frozen.current = null;
+          setUncertain(false);
+          request.current = crypto.randomUUID();
           return;
         }
         frozen.current = null;
         setUncertain(false);
-        const skippedByRow = new Map(preSkipped.map((entry) => [entry.sourceRow, entry]));
-        backendSkipped.flatMap((entry) => {
-          const index = payload!.sourceRows.indexOf(entry.sourceRow);
-          return index < 0 ? [] : [[entry.sourceRow, { sourceRow: entry.sourceRow, row: payload!.rows[index], reasons: entry.reasons }] as const];
-        }).forEach(([sourceRow, entry]) => skippedByRow.set(sourceRow, entry));
-        const skipped = [
-          ...skippedByRow.values(),
-        ].sort((a, b) => a.sourceRow - b.sourceRow);
-        toast.success(`${result.data.ids.length} ${result.data.ids.length === 1 ? "bid" : "bids"} imported${skipped.length ? `; ${skipped.length} ${skipped.length === 1 ? "row" : "rows"} skipped` : ""}`);
-        onSuccess({ ...result.data, importedCount: result.data.ids.length, skipped });
+        toast.success(
+          `${result.data.ids.length} ${result.data.ids.length === 1 ? "bid" : "bids"} added`,
+        );
+        onSuccess({
+          date: result.data.date,
+          bidder: result.data.bidder,
+          resume: result.data.resume,
+          importedCount: result.data.ids.length,
+        });
       }
     } catch (e) {
       if (importSent && payload) {
@@ -221,17 +264,34 @@ export function SheetsImport({
         frozen.current = payload;
         setUncertain(true);
       }
-      setError(importSent ? "Connection interrupted. Retry keeps the same request and will not duplicate bids." : e instanceof Error ? e.message : "Could not validate this import. Try again.");
+      setError(
+        importSent
+          ? "Connection interrupted. Retry keeps the same request and will not duplicate bids."
+          : e instanceof Error
+            ? e.message
+            : "Could not validate this import. Try again.",
+      );
     } finally {
       setBusy(false);
     }
   }
-  const serverIssueFields = new Set(serverErrors.map((entry) => `${entry.row}:${entry.field}`));
+  const serverIssueFields = new Set(
+    serverErrors.map((entry) => `${entry.row}:${entry.field}`),
+  );
   const errors = [
-    ...localErrors.filter((entry) => !serverIssueFields.has(`${entry.row}:${entry.field}`)),
+    ...localErrors.filter(
+      (entry) => !serverIssueFields.has(`${entry.row}:${entry.field}`),
+    ),
     ...serverErrors,
   ];
-  const displayed = rows ? classifyImportRows(rows, sourceRows, errors) : null;
+  const displayed = rows
+    ? reviewedImportRows(
+        rows,
+        sourceRows,
+        approvedSourceRows ?? sourceRows,
+        errors,
+      )
+    : null;
   return (
     <Dialog
       open
@@ -343,7 +403,7 @@ export function SheetsImport({
             </label>
             <p className="text-xs text-muted-foreground">
               Up to 500 bids and 512 KiB. Every row is data: paste without
-              headings or remove the heading row in preview. Company and role
+              headings. Correct source cells before previewing. Company and role
               are required; job site is optional.
             </p>
             <Button variant="outline" onClick={parse}>
@@ -396,62 +456,41 @@ export function SheetsImport({
                         {fieldLabels[f]}
                       </th>
                     ))}
-                    <th>Remove</th>
                     <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((row, i) => (
                     <tr key={i}>
-                    <th className="border p-2">{sourceRows[i] ?? i + 1}</th>
-                      {importFields.map((f) => {
-                        const issues = errors.filter(
-                          (e) => e.row === (sourceRows[i] ?? i + 1) && e.field === f,
-                        );
-                        return (
-                          <td key={f} className="min-w-40 border p-1">
-                            <Input
-                          aria-label={`Row ${sourceRows[i] ?? i + 1} ${fieldLabels[f]}`}
-                          aria-invalid={!!issues.length}
-                              className="h-8 text-xs"
-                              value={row[f]}
-                              disabled={busy || uncertain}
-                              onChange={(e) =>
-                                changeRows(
-                                  rows.map((r, j) =>
-                                    j === i ? { ...r, [f]: e.target.value } : r,
-                                  ), sourceRows,
-                                )
-                              }
-                            />
-                            {issues.map((e, k) => (
-                              <p key={k} className="max-w-52 text-destructive">
-                                {e.message}
-                              </p>
-                            ))}
-                          </td>
-                        );
-                      })}
-                      <td className="border">
-                        <Button
-                          aria-label={`Remove row ${sourceRows[i] ?? i + 1}`}
-                          size="sm"
-                          variant="ghost"
-                          disabled={busy || uncertain}
-                          onClick={() =>
-                            changeRows(rows.filter((_, j) => j !== i), sourceRows.filter((_, j) => j !== i))
-                          }
-                        >
-                          Remove
-                        </Button>
-                      </td>
+                      <th className="border p-2">{sourceRows[i] ?? i + 1}</th>
+                      {importFields.map((f) => (
+                        <td key={f} className="min-w-40 border p-2">
+                          <span
+                            aria-label={`Row ${sourceRows[i] ?? i + 1} ${fieldLabels[f]}`}
+                          >
+                            {row[f]}
+                          </span>
+                        </td>
+                      ))}
                       <td className="border px-2">
-                        {errors.some((entry) => entry.row === (sourceRows[i] ?? i + 1)) ? (
-                          <span className="font-medium text-destructive">Blocked</span>
-                        ) : checking ? (
-                          <span className="text-muted-foreground">Checking</span>
+                        {(approvedSourceRows !== null &&
+                          !approvedSourceRows.includes(
+                            sourceRows[i] ?? i + 1,
+                          )) ||
+                        errors.some(
+                          (entry) => entry.row === (sourceRows[i] ?? i + 1),
+                        ) ? (
+                          <span className="font-medium text-destructive">
+                            Blocked
+                          </span>
+                        ) : checking || !validated ? (
+                          <span className="text-muted-foreground">
+                            Checking
+                          </span>
                         ) : (
-                          <span className="font-medium text-emerald-700 dark:text-emerald-300">Allowed</span>
+                          <span className="font-medium text-emerald-700 dark:text-emerald-300">
+                            Allowed
+                          </span>
                         )}
                       </td>
                     </tr>
@@ -469,6 +508,7 @@ export function SheetsImport({
                 variant="outline"
                 disabled={busy || uncertain}
                 onClick={() => {
+                  setApprovedSourceRows(null);
                   setRows(null);
                   setChecking(false);
                   setError("");
@@ -477,26 +517,33 @@ export function SheetsImport({
                 Back to mapping
               </Button>
               <Button
-                disabled={busy}
+                disabled={
+                  busy || (!uncertain && (checking || !validated || !!error))
+                }
                 onClick={submit}
               >
-                {busy ? "Validating and importing..." : uncertain ? "Retry same import" : `Import ${displayed?.allowed.length ?? 0} allowed bids`}
+                {busy
+                  ? "Validating and importing..."
+                  : uncertain
+                    ? "Retry same import"
+                    : `Import ${displayed?.rows.length ?? 0} allowed bids`}
               </Button>
               {error && (
                 <Button
                   variant="outline"
                   disabled={busy || uncertain}
                   onClick={() => {
-                    if (attempted) {
+                    if (uncertain) {
                       void submit();
                     } else {
                       setError("");
                       setChecking(true);
+                      setValidated(false);
                       setRows([...rows]);
                     }
                   }}
                 >
-                  {attempted ? "Retry import" : "Retry validation"}
+                  {uncertain ? "Retry same import" : "Retry validation"}
                 </Button>
               )}
             </div>

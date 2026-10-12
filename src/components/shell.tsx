@@ -39,7 +39,11 @@ const links = [
   { href: "/profiles", label: "Candidate profiles", icon: ContactRound },
   { href: "/users", label: "People", icon: Users },
   { href: "/earnings", label: "Earnings", icon: Wallet },
-  { href: "/interviews", label: "Interview performance", icon: ChartNoAxesCombined },
+  {
+    href: "/interviews",
+    label: "Interview performance",
+    icon: ChartNoAxesCombined,
+  },
   { href: "/notifications", label: "Notifications", icon: MessageSquareText },
 ];
 export function Shell({
@@ -67,7 +71,10 @@ export function Shell({
     void update();
     const timer = window.setInterval(() => void update(), 30000);
     window.addEventListener("focus", update);
-    return () => { window.clearInterval(timer); window.removeEventListener("focus", update); };
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", update);
+    };
   }, [profile.role]);
   const nav = (small = false) => (
     <div className="flex h-full flex-col">
@@ -97,7 +104,9 @@ export function Shell({
         {links
           .filter(
             (l) =>
-              (l.href !== "/users" && l.href !== "/profiles") ||
+              (l.href !== "/users" &&
+                l.href !== "/profiles" &&
+                l.href !== "/earnings") ||
               profile.role !== "bidder",
           )
           .map((l) => (
@@ -218,7 +227,20 @@ export function Shell({
             </span>
           </div>
           <div className="ml-auto flex items-center gap-3">
-            {profile.role !== "client" && <Link href="/notifications" aria-label={`${unread} unread notifications`} className="relative rounded-md p-2 text-muted-foreground hover:bg-secondary"><Bell size={17}/>{unread>0&&<span className="absolute -right-0.5 -top-0.5 flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-semibold text-primary-foreground">{unread>9?"9+":unread}</span>}</Link>}
+            {profile.role !== "client" && (
+              <Link
+                href="/notifications"
+                aria-label={`${unread} unread notifications`}
+                className="relative rounded-md p-2 text-muted-foreground hover:bg-secondary"
+              >
+                <Bell size={17} />
+                {unread > 0 && (
+                  <span className="absolute -right-0.5 -top-0.5 flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-semibold text-primary-foreground">
+                    {unread > 9 ? "9+" : unread}
+                  </span>
+                )}
+              </Link>
+            )}
             <span className="hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] text-muted-foreground sm:flex">
               <span className="size-1.5 rounded-full bg-emerald-500" /> Private
               workspace

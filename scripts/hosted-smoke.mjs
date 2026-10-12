@@ -160,7 +160,9 @@ async function seedClient(label) {
   return { email, id: data.user.id };
 }
 async function readBid(id) {
-  return ok(await admin.from("bids").select("*").eq("id", id).single());
+  const row = ok(await client.from("bids").select("id,workspace_id,bidder_id,resume_id,company,role_name,url,normalized_url,source,arrangement,job_status,applied,found_at,applied_at,first_applied_at,evidence_file_id,rejected_hashes,version,created_at,deleted_at,deleted_by,review_status,review_revision,reviewed_by,reviewed_at,review_reason,interview_scheduled,interview_at,interview_notes,interview_updated_by,interview_updated_at,interview_tracking,application_method").eq("id", id).single());
+  const values = ok(await client.rpc("manager_financial_values", { p_bid_ids: [id] }));
+  return { ...row, rate_cents: values.bids[id] };
 }
 async function openBid(page) {
   await page.goto(`${origin}/bids`);
@@ -567,13 +569,15 @@ try {
   const resume = ok(
     await client
       .from("resumes")
-      .select("*")
+      .select("id,file_id,profile_id")
       .eq("profile_id", sharedProfile.id)
       .eq("bidder_id", invited.id)
       .single(),
   );
   assert.ok(resume.file_id);
   assert.equal(resume.id, incompleteAssignment.id);
+  const resumeFinancials = ok(await client.rpc("manager_financial_values", { p_resume_ids: [resume.id] }));
+  assert.equal(resumeFinancials.resumes[resume.id], 250);
   await expect(cp.getByRole("dialog")).toHaveCount(0);
   await expect(cp.getByRole("button", { name: "Assign profile", exact: true })).toBeEnabled();
   await cp.getByRole("button", { name: "Assign profile", exact: true }).click();
@@ -611,7 +615,7 @@ try {
     bp.getByText("Opportunity added", { exact: true }),
   ).toBeVisible();
   const bid = ok(
-    await bidder.from("bids").select("*").eq("resume_id", resume.id).single(),
+    await bidder.from("bids").select("id,review_status").eq("resume_id", resume.id).single(),
   );
   assert.equal(bid.review_status, "pending");
   await openBid(bp);
@@ -684,7 +688,7 @@ try {
   await expect(cp.getByRole("heading", { name: "Interview performance" })).toBeVisible();
   await expect(
     cp.getByText("Interview conversion", { exact: true }).last().locator("..").locator("strong"),
-  ).toHaveText("100%");
+  ).toHaveText("100.0%");
   pass("Client interview tracking feeds conversion reporting; bidder access is read-only");
   await openBid(bp);
   proof = await cp.screenshot();
@@ -854,7 +858,13 @@ try {
     "Bidder trashes and restores a bid through the table, preserving prior application and one earning",
   );
   await bp.goto(`${origin}/earnings`);
-  await expect(bp.getByText("$2.50", { exact: true }).first()).toBeVisible();
+  await expect(bp).toHaveURL(`${origin}/dashboard`);
+  await expect(bp.getByRole("link", { name: "Earnings", exact: true })).toHaveCount(0);
+  assert.ok((await bidder.from("bids").select("rate_cents")).error);
+  assert.ok((await bidder.rpc("earnings_performance_v2")).error);
+  const bidderInterviews = ok(await bidder.rpc("interview_performance", { p_group: "assignment" }));
+  assert.equal(bidderInterviews.totals.interviews, 1);
+  assert.ok(!("earningsCents" in bidderInterviews.totals));
   ok(
     await administrator.rpc("update_client", {
       p_client: owner.id,
@@ -893,13 +903,13 @@ try {
     bp.getByRole("button", { name: "Import 2 allowed bids", exact: true }),
   ).toBeEnabled({ timeout: 30000 });
   await bp.getByRole("button", { name: "Import 2 allowed bids", exact: true }).click();
-  await expect(bp.getByText("2 bids imported", { exact: true })).toBeVisible({
+  await expect(bp.getByText("2 bids added", { exact: true })).toBeVisible({
     timeout: 45000,
   });
   const imported = ok(
     await bidder
       .from("bids")
-      .select("*")
+      .select("id,company,found_at,applied,url")
       .like("url", "https://example.com/import/%"),
   );
   assert.equal(imported.length, 2);
@@ -909,7 +919,9 @@ try {
       "2026-03-08T06:00:00.000Z",
     );
     assert.equal(row.applied, false);
-    assert.equal(row.rate_cents, null);
+    assert.ok(!("rate_cents" in row));
+    const values = ok(await client.rpc("manager_financial_values", { p_bid_ids: [row.id] }));
+    assert.equal(values.bids[row.id], null);
   }
   const cell = bp.getByRole("gridcell", { name: "Imported One", exact: true });
   await cell.dblclick();
@@ -1067,7 +1079,7 @@ try {
       );
   }
   await cp.goto(`${origin}/bids`);
-  await cp.getByRole("button", { name: "All dates", exact: true }).click();
+  await cp.getByLabel("Found period").selectOption("all");
   await cp.getByLabel("Search bids").fill("Purge UI");
   // Date and search filters are server-backed. Wait for the matching row so
   // the page-selection checkbox cannot be clicked while the previous result
@@ -1195,7 +1207,7 @@ try {
     ).error,
   );
   await cp.getByLabel("Search bids").fill("no matching rows");
-  await cp.getByRole("button", { name: "Today (CT)", exact: true }).click();
+  await cp.getByLabel("Found period").selectOption("today");
   await cp.getByRole("button", { name: "Empty trash", exact: true }).click();
   await expect(
     cp.getByRole("heading", { name: "Permanently delete 1 bids?" }),
@@ -1288,6 +1300,8 @@ try {
     }));
     const elapsedMs = Math.round(performance.now() - started);
     assert.equal(result.ids.length, count);
+    // The direct SQL receipt keeps internal validation data; the server action
+    // and browser completion expose only added IDs/counts.
     assert.equal(result.skipped.length, 0);
     assert.ok(elapsedMs < 4000, `${count}-row import exceeded the 4-second performance target (${elapsedMs}ms)`);
     console.log(`BENCHMARK ${count}-row transactional import against 10,000 retained applications: ${elapsedMs}ms`);
@@ -1313,7 +1327,7 @@ try {
   await expect(bp).toHaveURL(/\/auth\/inactive/);
   assert.equal((await readBid(bid.id)).rate_cents, 250);
   pass(
-    "Earnings render correctly; archiving revokes database, storage, and app access while retaining history",
+    "Manager financial snapshot remains intact; archiving revokes database, storage, and app access while retaining history",
   );
 
   const retainedBid = await readBid(bid.id);

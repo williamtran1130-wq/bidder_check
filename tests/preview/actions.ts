@@ -4,7 +4,6 @@ const unavailable = async () => ({
 });
 export const authenticate = unavailable,
   signOut = unavailable,
-  saveBid = unavailable,
   saveResume = unavailable,
   archiveResume = unavailable,
   saveCandidateProfile = unavailable,
@@ -25,6 +24,11 @@ export const authenticate = unavailable,
   setBidInterviewAction = unavailable,
   saveSettings = unavailable,
   getFileUrl = unavailable;
+export async function saveBid() {
+  if (new URLSearchParams(window.location.search).has("single-blocked"))
+    return { data: { status: "blocked" as const } };
+  return unavailable();
+}
 export async function manualApplyBidsAction(input: { targets: { id: string; version: number }[] }) {
   if (!new URLSearchParams(window.location.search).has("manual-apply")) return unavailable();
   window.dispatchEvent(new CustomEvent("manual-apply", { detail: input.targets.length }));
@@ -35,6 +39,9 @@ export async function getEarningsPerformance() {
     totals: { count: 1, cents: 1000, resumes: 1, retainedCount: 0, trackedApplications: 1, trackedInterviews: 0, excludedInterviewCount: 0 },
     groups: [{ id: "resume-1", label: "ENG-01", sub: "Jamie Parker", count: 1, cents: 1000, applied: 1, interviews: 0 }],
   } };
+}
+export async function getInterviewPerformance() {
+  return { data: { totals: { applied: 1, interviews: 0, excludedApplications: 0 }, groups: [{ id: "profile-0", label: "ENG-01", applied: 1, interviews: 0, conversion: 0 }] } };
 }
 export async function getUnreadNotificationCount() { return { data: 0 }; }
 export async function saveResumeAssignment(input: { id?: string; profileId: string; bidderId: string; email: string; phone: string; rate: string }) {
@@ -75,6 +82,7 @@ export async function getBidRows(
     return { error: "Refresh unavailable" };
   const { fixture } = await import("./sample-data");
   const { chicagoDateRange } = await import("@/lib/domain");
+  const { calendarToday, resolveCalendarPeriod } = await import("@/lib/calendar-period");
   try {
     const bounds = chicagoDateRange(mode, from, to);
     const filtered = fixture.bids.filter((b) => {
@@ -93,9 +101,10 @@ export async function getBidRows(
           if (value && typeof value === "object") {
             const date = field === "applied_at" ? b.applied_at : b.found_at;
             if (!date) return (value as { presence?: string }).presence === "empty";
-            const day = date.slice(0, 10);
-            const range = value as { from?: string; to?: string; presence?: string };
-            return range.presence !== "empty" && (!range.from || day >= range.from) && (!range.to || day <= range.to);
+            const day = calendarToday(new Date(date));
+            const column = value as { preset?: import("@/lib/calendar-period").CalendarPeriod; from?: string; to?: string; presence?: string };
+            const range = column.preset ? resolveCalendarPeriod({ ...column, preset: column.preset }) : column;
+            return column.presence !== "empty" && (!range.from || day >= range.from) && (!range.to || day <= range.to);
           }
           if (!value) return true;
           const actual = field === "applied" ? (b.applied ? "Applied" : "Unapplied") : field === "screenshot" ? (b.evidence_file_id ? "Has screenshot" : "No screenshot") : String(b[field as keyof typeof b] ?? "");
@@ -137,6 +146,11 @@ export async function checkBidImport(
   _date: string,
   rows: import("@/lib/sheets").ImportRow[],
 ) {
+  if (new URLSearchParams(window.location.search).has("becomes-eligible")) {
+    const count = Number(sessionStorage.getItem("eligibility-validation") ?? "0") + 1;
+    sessionStorage.setItem("eligibility-validation", String(count));
+    return { data: count === 1 ? rows.map((_, index) => ({row:index + 1,field:"company",code:"restricted_company",message:"Restricted company details"})) : [] };
+  }
   if (new URLSearchParams(window.location.search).has("fresh-conflict")) {
     const count = Number(sessionStorage.getItem("fresh-import-validation") ?? "0") + 1;
     sessionStorage.setItem("fresh-import-validation", String(count));
@@ -163,28 +177,56 @@ export async function reconcileBidTargets(targets: { id: string; version: number
   const { fixture } = await import("./sample-data");
   return { data: targets.filter((target) => fixture.bids.some((row) => row.id === target.id && Boolean(row.deleted_at) === trash)).map((target) => target.id) };
 }
-export async function importReviewedBids(_resume: string, date: string, rows: import("@/lib/sheets").ImportRow[], sourceRows: number[]) {
+export async function importReviewedBids(_resume: string, date: string, rows: import("@/lib/sheets").ImportRow[], sourceRows: number[], requestId: string) {
+  const payload = JSON.stringify({resume:_resume,date,rows,sourceRows,requestId});
+  const attempts: string[] = JSON.parse(sessionStorage.getItem("import-attempts") ?? "[]");
+  attempts.push(payload);
+  sessionStorage.setItem("import-attempts", JSON.stringify(attempts));
   if (new URLSearchParams(location.search).has("lost-import")) return { error: "fetch failed", uncertain: true };
   document.documentElement.dataset.lastImportCount = String(rows.length);
   return { data: { ids: rows.map(() => crypto.randomUUID()), sourceRows, skipped: [], date, bidder: "bidder-0", resume: "resume-0" } };
 }
 
-export async function getDashboardPerformance({ from, to }: { from: string; to: string }) {
+let reportReads = 0;
+export async function getDashboardPerformance(input: import("@/lib/report-types").ReportQuery): Promise<import("@/lib/report-types").ReportResult<import("@/lib/report-types").DashboardReport>> {
   const { fixture } = await import("./sample-data");
-  const days: { date: string; found: number; foundApplied: number; applied: number; earningsCents: number; earningsCount: number }[] = [];
-  for (let date = from; date <= to; ) {
-    days.push({ date, found: 0, foundApplied: 0, applied: 0, earningsCents: 0, earningsCount: 0 });
-    const next = new Date(`${date}T00:00:00Z`);
-    next.setUTCDate(next.getUTCDate() + 1);
-    date = next.toISOString().slice(0, 10);
+  const { resolveCalendarPeriod, calendarToday, shiftCalendarDate, periodTimestampBounds } = await import("@/lib/calendar-period");
+  const parameters = new URLSearchParams(window.location.search);
+  reportReads++;
+  document.documentElement.dataset.reportReads = String(reportReads);
+  if (parameters.has("report-failure") && reportReads > 1)
+    return { error: "This report is temporarily unavailable. Please retry.", code: "temporarily_unavailable" };
+  if (parameters.has("report-delay")) await new Promise((resolve) => setTimeout(resolve, input.period.preset === "this_month" ? 500 : 20));
+  document.documentElement.dataset.reportCompleted = input.period.preset;
+  const range = resolveCalendarPeriod(input.period);
+  const from = range.from ?? fixture.bids.map((row) => row.found_at.slice(0, 10)).sort()[0] ?? calendarToday();
+  const to = range.to ?? calendarToday();
+  const bounds = periodTimestampBounds({ from, to });
+  const found = fixture.bids.filter((row) => !row.deleted_at && (!bounds.from || row.found_at >= bounds.from) && (!bounds.to || row.found_at < bounds.to));
+  const days: import("@/lib/report-types").DashboardReport["series"] = [];
+  for (let date = from; date <= to && days.length < 120; date = shiftCalendarDate(date, 1)) {
+    const dailyBounds = periodTimestampBounds({ from: date, to: date });
+    const rows = found.filter((row) => row.found_at >= dailyBounds.from! && row.found_at < dailyBounds.to!);
+    days.push({ from: date, to: date, found: rows.length, foundApplied: rows.filter((row) => row.applied).length, applied: rows.filter((row) => row.applied).length });
   }
-  if (days.length) Object.assign(days[days.length - 1], { found: fixture.bids.length, foundApplied: fixture.bids.filter((row) => row.applied).length, applied: fixture.bids.filter((row) => row.applied).length, earningsCents: 1000, earningsCount: 1 });
+  const groupRows = (kind: "bidder" | "profile") => {
+    const groups = new Map<string, import("@/lib/report-types").ComparisonRow>();
+    for (const row of found) {
+      const assignment = fixture.resumes.find((resume) => resume.id === row.resume_id);
+      const key = kind === "bidder" ? row.bidder_id : assignment?.profile_id ?? "unknown";
+      const label = kind === "bidder" ? fixture.profiles.find((person) => person.id === key)?.display_name : fixture.candidateProfiles.find((profile) => profile.id === key)?.identifier;
+      const group = groups.get(key) ?? { id: key, label: label ?? key, found: 0, foundApplied: 0 };
+      group.found++; if (row.applied) group.foundApplied++;
+      groups.set(key, group);
+    }
+    return [...groups.values()];
+  };
   return { data: {
-    daily: days,
-    totals: { found: fixture.bids.length, foundApplied: fixture.bids.filter((row) => row.applied).length, appliedActivity: fixture.bids.filter((row) => row.applied).length, earningsCents: 1000, earningsCount: 1, trackedApplications: 1, trackedInterviews: 0 },
-    review: { pending: fixture.bids.filter((row) => row.review_status === "pending").length, approved_unapplied: 0, rejected: 0 },
-    sources: [{ label: "LinkedIn", value: fixture.bids.length }],
-    groups: [{ key: "profile-0", label: "ENG-01", applied: 1, interviews: 0, conversion: 0 }],
+    range: { from, to, bucketUnit: "day", bucketSize: 1 },
+    series: days,
+    totals: { found: found.length, foundApplied: found.filter((row) => row.applied).length, appliedActivity: found.filter((row) => row.applied).length, trackedApplications: 1, trackedInterviews: 0 },
+    comparisons: { bidders: groupRows("bidder"), profiles: groupRows("profile") },
+    ...(fixture.profile.role !== "bidder" ? { financial: { earningsCents: 1000, earningsCount: 1 } } : {}),
   } };
 }
 

@@ -1,10 +1,13 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { Wallet, CheckCheck, FileText } from "lucide-react";
 import { usd } from "@/lib/domain";
-import { PageHeading, Field, EmptyState } from "./common";
+import { PageHeading, EmptyState } from "./common";
 import { Button } from "./ui/button";
-import { getEarningsPerformance, type EarningsReport } from "@/app/(workspace)/actions";
+import { getEarningsPerformance } from "@/app/(workspace)/actions";
+import type { PeriodSelection } from "@/lib/calendar-period";
+import { PeriodSelector, useCalendarDay } from "./period-selector";
+import { useReport } from "./use-report";
 export function Earnings({
   bidderId,
   embedded = false,
@@ -12,24 +15,12 @@ export function Earnings({
   bidderId?: string;
   embedded?: boolean;
 }) {
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [period, setPeriod] = useState<PeriodSelection>({ preset: "all" });
   const [group, setGroup] = useState("bidder");
-  const [report, setReport] = useState<EarningsReport | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [refresh, setRefresh] = useState(0);
-  useEffect(() => {
-    let current = true;
-    void getEarningsPerformance({ from: from || undefined, to: to || undefined, bidder: bidderId, group: group === "bidder" ? "bidder" : "assignment" }).then((result) => {
-      if (!current) return;
-      if (result.error || !result.data) setError(result.error ?? "Earnings report is unavailable.");
-      else { setReport(result.data); setError(""); }
-      setLoading(false);
-    });
-    return () => { current = false; };
-  }, [from, to, group, bidderId, refresh]);
-  const total = report?.totals ?? { count: 0, cents: 0, resumes: 0, retainedCount: 0, trackedApplications: 0, trackedInterviews: 0, excludedInterviewCount: 0 };
+  const day = useCalendarDay();
+  const request = useCallback(() => getEarningsPerformance({ period, bidder: bidderId, group: group === "bidder" ? "bidder" : "assignment" }), [period, bidderId, group]);
+  const { data: report, loading, error, refresh } = useReport(JSON.stringify([period, bidderId, group, day]), request);
+  const total = report?.totals;
   const groups = report?.groups ?? [];
   return (
     <>
@@ -42,15 +33,15 @@ export function Earnings({
       )}
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         {[
-          { label: "Total earned", value: usd(total.cents), icon: Wallet },
+          { label: "Total earned", value: total ? usd(total.cents) : "—", icon: Wallet },
           {
             label: "Qualifying applications",
-            value: total.count,
+            value: total?.count ?? "—",
             icon: CheckCheck,
           },
           {
             label: "Resumes with earnings",
-            value: total.resumes,
+            value: total?.resumes ?? "—",
             icon: FileText,
           },
         ].map((s) => (
@@ -79,40 +70,16 @@ export function Earnings({
               </Button>
             ))}
           </div>
-          <div className="flex flex-wrap gap-3">
-            <Field
-              label="First applied from"
-              type="date"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-            />
-            <Field
-              label="Through"
-              type="date"
-              value={to}
-              min={from}
-              onChange={(e) => setTo(e.target.value)}
-            />
-            <Button
-              variant="ghost"
-              className="self-end"
-              onClick={() => {
-                setFrom("");
-                setTo("");
-              }}
-            >
-              All time
-            </Button>
-          </div>
+          <PeriodSelector label="First applied period" value={period} onChange={setPeriod} />
         </div>
-        {error && <p role="alert" className="mb-4 text-sm text-destructive">{error} <Button size="sm" variant="outline" onClick={() => { setLoading(true); setRefresh((value) => value + 1); }}>Retry</Button></p>}
+        {error && <p role="alert" className="mb-4 text-sm text-destructive">{error}{report ? " Showing the last successful results for these filters." : ""} <Button size="sm" variant="outline" disabled={loading} onClick={refresh}>Retry</Button></p>}
         {loading && <p className="py-8 text-center text-sm text-muted-foreground" role="status">Loading earnings…</p>}
-        {!loading && !groups.length ? (
+        {!loading && report && !groups.length ? (
           <EmptyState
             title="Progress you can put a number on"
             description="Once an application is marked applied, its earnings will appear here."
           />
-        ) : !loading ? (
+        ) : !loading && total ? (
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead className="border-y text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -164,7 +131,7 @@ export function Earnings({
           This is an earnings record, not a payment or payout balance. Each
           workspace’s reporting timezone is used.
         </p>
-          {!!total.retainedCount && <p className="mt-3 text-xs text-muted-foreground">Includes {total.retainedCount} retained historical applications. Their individual application details have been removed.</p>}
+          {!!total?.retainedCount && <p className="mt-3 text-xs text-muted-foreground">Includes {total.retainedCount} retained historical applications. Their individual application details have been removed.</p>}
       </section>
     </>
   );

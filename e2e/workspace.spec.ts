@@ -1,6 +1,5 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import { readFile } from "node:fs/promises";
 test("dashboard has real component layout, responsive navigation, and no serious accessibility issues", async ({
   page,
 }, testInfo) => {
@@ -9,10 +8,11 @@ test("dashboard has real component layout, responsive navigation, and no serious
     page.getByRole("heading", { name: "Welcome back, Alex." }),
   ).toBeVisible();
   await expect(page.getByText("Earned", { exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Daily application activity" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Daily earnings" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Review workload" })).toBeVisible();
-  await expect(page.getByText(/CT$/).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Application activity" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "By bidder" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "By profile" })).toBeVisible();
+  await expect(page.getByText(/CT/).first()).toBeVisible();
+  await expect(page.getByRole("grid")).toHaveCount(0);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -32,6 +32,23 @@ test("dashboard has real component layout, responsive navigation, and no serious
   });
   await page.getByRole("button", { name: "Toggle color theme" }).click();
   await expect(page.locator("html")).toHaveClass(/dark/);
+  const axisLabels = page.locator(".recharts-cartesian-axis-tick-value");
+  await expect(axisLabels.first()).toBeVisible();
+  const contrast = await axisLabels.evaluateAll((labels) => {
+    const luminance = (color: string) => {
+      const rgb = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map((value) => {
+        const channel = value / 255;
+        return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+      });
+      return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+    };
+    return labels.map((label) => {
+      const foreground = luminance(getComputedStyle(label).fill);
+      const background = luminance(getComputedStyle(label.closest("section")!).backgroundColor);
+      return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+    });
+  });
+  expect(Math.min(...contrast)).toBeGreaterThanOrEqual(4.5);
   await page.screenshot({
     path: `test-results/dashboard-dark-${testInfo.project.name}.png`,
     fullPage: true,
@@ -92,8 +109,8 @@ test("daily table has ordered workflow columns, automatic timestamps and trash c
 }) => {
   await page.goto("http://127.0.0.1:3001/bids");
   await expect(
-    page.getByRole("button", { name: "Today (CT)", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
+    page.getByLabel("Found period"),
+  ).toHaveValue("today");
   await expect(page.getByRole("columnheader")).toHaveText([
     "",
     "#",
@@ -114,7 +131,7 @@ test("daily table has ordered workflow columns, automatic timestamps and trash c
     "Actions",
   ]);
   await expect(page.getByText("1\u20131 of 1 bids")).toBeVisible();
-  await page.getByRole("button", { name: "All dates", exact: true }).click();
+  await page.getByLabel("Found period").selectOption("all");
   await expect(page.getByText("1\u201310 of 12 bids")).toBeVisible();
   await page.getByRole("button", { name: "Add bid", exact: true }).click();
   await expect(page.getByLabel(/Found time/)).toHaveCount(0);
@@ -122,14 +139,14 @@ test("daily table has ordered workflow columns, automatic timestamps and trash c
 test("dashboard review link opens the all-dates pending review queue", async ({ page }) => {
   await page.goto("http://127.0.0.1:3001/bids?review=pending");
   await expect(page.getByRole("button", { name: /Pending review/ })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("button", { name: "All dates", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("Found period")).toHaveValue("all");
   await expect(page.getByRole("gridcell", { name: "pending Approve Reject" }).first()).toBeVisible();
   expect(await page.getByRole("row").count()).toBeGreaterThan(2);
 });
 
 test("column controls filter across current results and page size is customizable", async ({ page }) => {
   await page.goto("http://127.0.0.1:3001/bids");
-  await page.getByRole("button", { name: "All dates", exact: true }).click();
+  await page.getByLabel("Found period").selectOption("all");
   await page.getByRole("button", { name: "Filter Company name" }).click();
   await page.getByLabel("Company name filter").fill("Linear");
   await expect(page.getByText("1–1 of 1 bids")).toBeVisible();
@@ -174,9 +191,7 @@ test("spreadsheet keyboard edits preserve drafts, focus and rectangular copying"
   await expect(
     page.getByRole("textbox", { name: "Edit role_name" }),
   ).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "Yesterday (CT)", exact: true })
-    .click();
+  await page.getByLabel("Found period").selectOption("yesterday");
   await expect(page.getByText("1\u20131 of 1 bids")).toBeVisible();
   await expect(
     page.locator('[role="gridcell"][aria-selected="true"]'),
@@ -203,19 +218,13 @@ test("Sheets mapping keeps blocked rows visible and allows valid rows to import"
   await expect(
     page.getByRole("button", { name: "Import 1 allowed bids", exact: true }),
   ).toBeEnabled();
-  await expect(page.getByText("Enter a valid HTTP/HTTPS URL", { exact: false }).first()).toBeVisible();
-  await page
-    .getByLabel("Row 2 Job URL", { exact: true })
-    .fill("https://example.com/two");
-  await expect(
-    page.getByRole("button", { name: "Import 2 allowed bids", exact: true }),
-  ).toBeEnabled();
-  await page.getByRole("button", { name: "Remove row 1", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Import 1 allowed bids", exact: true }),
-  ).toBeEnabled();
+  await expect(page.getByText("Blocked", { exact: true })).toHaveCount(1);
+  await expect(page.getByLabel("Row 2 Job URL", { exact: true })).toHaveText("bad-url");
+  await expect(page.getByRole("dialog").getByRole("table").getByRole("textbox")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Remove row/ })).toHaveCount(0);
+  await expect(page.getByText("Enter a valid HTTP/HTTPS URL", { exact: false })).toHaveCount(0);
 });
-test("imports allowed Sheets rows while skipping invalid URLs and offers a skipped-row report", async ({ page }) => {
+test("imports only allowed Sheets rows with a concise count and no skipped-row report", async ({ page }) => {
   await page.goto("http://127.0.0.1:3001/bids");
   await page.getByRole("button", { name: "Paste from Sheets", exact: true }).click();
   await page.getByLabel("Import bidder", { exact: true }).selectOption("bidder-0");
@@ -226,18 +235,12 @@ test("imports allowed Sheets rows while skipping invalid URLs and offers a skipp
   await expect(page.getByRole("button", { name: "Import 1 allowed bids", exact: true })).toBeEnabled();
   await page.getByRole("button", { name: "Import 1 allowed bids", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Paste new bids from Sheets" })).toHaveCount(0);
-  await expect(page.getByText("1 bid imported; 1 row skipped.", { exact: false })).toBeVisible();
-  const downloadReady = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Download skipped rows" }).click();
-  const download = await downloadReady;
-  const path = await download.path();
-  expect(path).toBeTruthy();
-  const csv = await readFile(path!, "utf8");
-  expect(csv).toContain('"2"');
-  expect(csv).toContain('"Tokyo"');
-  expect(csv).toContain("valid HTTP/HTTPS URL");
+  await expect(page.getByText("1 bid added", { exact: false })).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-last-import-count", "1");
+  await expect(page.getByRole("button", { name: "Download skipped rows" })).toHaveCount(0);
+  await expect(page.getByText(/row skipped/)).toHaveCount(0);
 });
-test("fresh import conflicts skip only the newly blocked row and include it in the report", async ({ page }) => {
+test("fresh import conflicts add only eligible rows with no failure report", async ({ page }) => {
   await page.goto("http://127.0.0.1:3001/bids?fresh-conflict");
   await page.getByRole("button", { name: "Paste from Sheets", exact: true }).click();
   await page.getByLabel("Import bidder", { exact: true }).selectOption("bidder-0");
@@ -248,20 +251,15 @@ test("fresh import conflicts skip only the newly blocked row and include it in t
   await expect(page.getByText("Allowed", { exact: true })).toHaveCount(2);
   await page.getByRole("button", { name: "Import 2 allowed bids", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-last-import-count", "1");
-  await expect(page.getByText("1 bid imported; 1 row skipped.", { exact: false })).toBeVisible();
-  const downloadReady = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Download skipped rows" }).click();
-  const download = await downloadReady;
-  const csv = await readFile((await download.path())!, "utf8");
-  expect(csv).toContain('"2"');
-  expect(csv).toContain('"Tokyo"');
-  expect(csv).toContain("already has an application");
+  await expect(page.getByText("1 bid added", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Download skipped rows" })).toHaveCount(0);
+  await expect(page.getByText("already has an application", { exact: false })).toHaveCount(0);
 });
 test("pasting an image into the selected screenshot cell uploads only to that bid", async ({ page }) => {
   let uploadRequests = 0;
   await page.route("**/storage/v1/object/private-files/**", (route) => { uploadRequests += 1; return route.fulfill({ status: 200, body: "stored" }); });
   await page.goto("http://127.0.0.1:3001/bids?paste-screenshot");
-  await page.getByRole("button", { name: "All dates", exact: true }).click();
+  await page.getByLabel("Found period").selectOption("all");
   const target = page.locator('[data-grid-r="1"][data-field="screenshot"] [aria-label^="Screenshot paste target"]');
   await expect(target).toBeVisible();
   const clipboard = await target.evaluate((element) => {
@@ -302,8 +300,8 @@ test("a lost import response freezes the reviewed batch for retry", async ({ pag
   await page.getByRole("button", { name: "Preview bids" }).click();
   await expect(page.getByText("Validating profile restrictions")).toHaveCount(0);
   await page.getByRole("button", { name: "Import 1 allowed bids", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Retry same import", exact: true })).toBeEnabled();
-  await expect(page.getByLabel("Row 1 Company", { exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Retry same import", exact: true }).first()).toBeEnabled();
+  await expect(page.getByLabel("Row 1 Company", { exact: true })).toHaveText("Acme");
 });
 
 test("Sheets import stays available when every row is blocked and explains the result", async ({
@@ -319,7 +317,7 @@ test("Sheets import stays available when every row is blocked and explains the r
   const importButton = page.getByRole("button", { name: "Import 0 allowed bids", exact: true });
   await expect(importButton).toBeEnabled();
   await importButton.click();
-  await expect(page.getByRole("alert")).toContainText("No rows are allowed");
+  await expect(page.getByRole("alert")).toContainText("No bids to add");
 });
 test("inline conflict preserves the draft and requires review before retry", async ({
   page,
@@ -401,7 +399,7 @@ test("removing the last page clamps pagination and selection", async ({
   page,
 }) => {
   await page.goto("http://127.0.0.1:3001/bids");
-  await page.getByRole("button", { name: "All dates", exact: true }).click();
+  await page.getByLabel("Found period").selectOption("all");
   await page.getByRole("button", { name: "Next page", exact: true }).click();
   await expect(page.getByText("11\u201312 of 12 bids")).toBeVisible();
   await page
@@ -417,7 +415,7 @@ test("removing the last page clamps pagination and selection", async ({
 });
 test("selection clears when edited rows leave the filter", async ({ page }) => {
   await page.goto("http://127.0.0.1:3001/bids");
-  await page.getByRole("button", { name: "All dates", exact: true }).click();
+  await page.getByLabel("Found period").selectOption("all");
   await page
     .getByRole("textbox", { name: "Search bids", exact: true })
     .fill("Engineer");

@@ -10,7 +10,12 @@ export const importFields = [
 ] as const;
 export type ImportField = (typeof importFields)[number];
 export type ImportRow = Record<ImportField, string>;
-export type ImportError = { row: number; field: string; message: string; code?: string };
+export type ImportError = {
+  row: number;
+  field: string;
+  message: string;
+  code?: string;
+};
 export const fieldLabels: Record<ImportField, string> = {
   company: "Company",
   role_name: "Role",
@@ -94,8 +99,7 @@ export function mapSheet(
   });
 }
 export function validateImportRows(rows: ImportRow[]): ImportError[] {
-  const errors: ImportError[] = [],
-    seen = new Map<string, number>();
+  const errors: ImportError[] = [];
   rows.forEach((r, i) => {
     const error = (field: string, message: string) =>
       errors.push({ row: i + 1, field, message });
@@ -109,9 +113,7 @@ export function validateImportRows(rows: ImportRow[]): ImportError[] {
       error("job_status", "Choose open or closed.");
     try {
       if (r.url.length > 4096) throw new Error();
-      const url = normalizeJobUrl(r.url);
-      if (seen.has(url)) error("url", `Duplicate of row ${seen.get(url)}.`);
-      else seen.set(url, i + 1);
+      normalizeJobUrl(r.url);
     } catch {
       error("url", "Enter a valid HTTP/HTTPS URL (maximum 4096 characters).");
     }

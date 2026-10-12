@@ -23,15 +23,11 @@ test("500-row preview remains usable with Unicode, quoted multiline values", asy
   await expect(
     page.getByRole("button", { name: "Import 500 allowed bids", exact: true }),
   ).toBeEnabled();
-  await expect(page.getByLabel("Row 500 Company", { exact: true })).toHaveValue(
+  await expect(page.getByLabel("Row 500 Company", { exact: true })).toHaveText(
     "\u6771\u4eac 499",
   );
-  await page
-    .getByRole("button", { name: "Remove row 500", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", { name: "Import 499 allowed bids", exact: true }),
-  ).toBeEnabled();
+  await expect(page.getByRole("button", { name: /Remove row/ })).toHaveCount(0);
+  await expect(page.getByRole("table").getByRole("textbox")).toHaveCount(0);
 });
 test("an admin import scoped to a bidder keeps the workspace and bidder fixed", async ({
   page,

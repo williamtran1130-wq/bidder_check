@@ -3,7 +3,7 @@ test("checkbox selection spans pages, remains separate from cells and resets on 
   page,
 }) => {
   await page.goto("http://127.0.0.1:3001/bids");
-  await page.getByRole("button", { name: "All dates", exact: true }).click();
+  await page.getByLabel("Found period").selectOption("all");
   await page.getByRole("checkbox", { name: "Select current page" }).check();
   await expect(page.getByText("10 selected", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Next page", exact: true }).click();
@@ -29,7 +29,7 @@ test("checkbox selection spans pages, remains separate from cells and resets on 
     page.getByRole("button", { name: "Permanently delete", exact: true }),
   ).toBeEnabled();
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await page.getByRole("button", { name: "Today (CT)", exact: true }).click();
+  await page.getByLabel("Found period").selectOption("today");
   await expect(page.getByText("0 selected", { exact: true })).toBeVisible();
 });
 test("Sheets import has data-only mapping and only arrangement/status defaults", async ({
@@ -95,7 +95,7 @@ test("cleanup notice counts down, enables retry only when due and then shows com
 
 test("empty results keep headers and portaled filters visible", async ({ page }) => {
   await page.goto("http://127.0.0.1:3001/bids");
-  await page.getByRole("button", { name: "All dates", exact: true }).click();
+  await page.getByLabel("Found period").selectOption("all");
   await page.getByRole("button", { name: "Filter Company name" }).click();
   await page.getByLabel("Company name filter").fill("no company matches this");
   await expect(page.getByText("0–0 of 0 bids")).toBeVisible();

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Row } from "@/lib/database.types";
+import type { BidRow } from "@/lib/workspace-types";
 import { getFileUrl } from "@/app/(workspace)/actions";
 import { Button } from "./ui/button";
 import {
@@ -20,7 +20,7 @@ export function ScreenshotCell({
   disabled,
   onBusy,
 }: {
-  bid: Row<"bids">;
+  bid: BidRow;
   disabled?: boolean;
   onBusy?: (value: boolean) => void;
 }) {

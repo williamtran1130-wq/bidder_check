@@ -13,6 +13,14 @@ async function asUser(id: string) {
     `reset role; set role authenticated; select set_config('request.jwt.claim.sub','${id}',false); select set_config('request.jwt.claim.role','authenticated',false);`,
   );
 }
+async function managerBidRate(id: string, restoreActor = bidder): Promise<number | null> {
+  await asUser(client);
+  const values = (await db.query<{ values: { bids: Record<string, number | null> } }>(
+    "select public.manager_financial_values('{}','{}',array[$1]::uuid[]) values", [id],
+  )).rows[0].values;
+  await asUser(restoreActor);
+  return values.bids[id];
+}
 async function finalizeResumeFile(resumeId: string, actor = client): Promise<string> {
   await asUser(actor);
   const upload = (
@@ -199,8 +207,8 @@ it("private storage is tenant scoped and immutable", async () => {
 });
 it("isolates tenants and protects roles from direct writes", async () => {
   await asUser(other);
-  expect((await db.query("select * from public.bids")).rows).toHaveLength(0);
-  expect((await db.query("select * from public.resumes")).rows).toHaveLength(0);
+  expect((await db.query("select id from public.bids")).rows).toHaveLength(0);
+  expect((await db.query("select id from public.resumes")).rows).toHaveLength(0);
   await expect(
     db.query("update public.profiles set role='admin' where id=$1", [other]),
   ).rejects.toThrow();
@@ -336,13 +344,13 @@ it("enforces profile-wide company limits and literal restrictions", async () => 
       "select public.save_bid(null,$1,'Northwind','Designer','https://northwind.test/job/2','LinkedIn','remote','open')",
       [assignment],
     ),
-  ).rejects.toThrow(/company limit/i);
+  ).rejects.toMatchObject({ message: "Blocked", code: "PBC01" });
   await expect(
     db.query(
       "select public.save_bid(null,$1,'Acme Laboratories','Engineer','https://acme.test/job/3','LinkedIn','remote','open')",
       [assignment],
     ),
-  ).rejects.toThrow(/restricted company/i);
+  ).rejects.toMatchObject({ message: "Blocked", code: "PBC01" });
   const previewErrors = (
     await db.query<{ errors: { row: number; code: string }[] }>(
       "select public.validate_bid_import($1,'2026-03-08',$2::jsonb) errors",
@@ -401,19 +409,18 @@ it("verified uploads apply atomically, replace proof, reject corrected content a
   const first = (
     await db.query<{
       applied: boolean;
-      rate_cents: number;
       first_applied_at: string;
       applied_at: string;
-    }>("select * from public.bids where id=$1", [bid])
+    }>("select applied,first_applied_at,applied_at from public.bids where id=$1", [bid])
   ).rows[0];
   expect(first.applied).toBe(true);
-  expect(first.rate_cents).toBe(125);
+  expect(await managerBidRate(bid)).toBe(125);
   const replacement = await prepare();
   await finish(replacement, "b");
   await finish(replacement, "b");
   await asUser(bidder);
   const replaced = (
-    await db.query<typeof first>("select * from public.bids where id=$1", [bid])
+    await db.query<typeof first>("select applied,first_applied_at,applied_at from public.bids where id=$1", [bid])
   ).rows[0];
   expect(replaced.first_applied_at).toEqual(first.first_applied_at);
   expect(new Date(replaced.applied_at).getTime()).toBeGreaterThan(
@@ -422,7 +429,7 @@ it("verified uploads apply atomically, replace proof, reject corrected content a
   expect(
     (
       await db.query(
-        "select * from public.bid_events where event='proof_replaced' and bid_id=$1",
+        "select id,event from public.bid_events where event='proof_replaced' and bid_id=$1",
         [bid],
       )
     ).rows,
@@ -456,14 +463,7 @@ it("verified uploads apply atomically, replace proof, reject corrected content a
   const fresh = await prepare();
   await finish(fresh, "c");
   await asUser(bidder);
-  expect(
-    (
-      await db.query<{ rate_cents: number }>(
-        "select rate_cents from public.bids where id=$1",
-        [bid],
-      )
-    ).rows[0].rate_cents,
-  ).toBe(125);
+  expect(await managerBidRate(bid)).toBe(125);
 });
 it("dashboard reporting combines live CT cohorts and reports interview conversion by assignment", async () => {
   const today = formatInTimeZone(new Date(), "America/Chicago", "yyyy-MM-dd");
@@ -497,12 +497,12 @@ it("revokes archived bidder access but retains client history", async () => {
   await asUser(client);
   await db.query("select public.update_bidder($1,'Jordan',125,true)", [bidder]);
   await asUser(bidder);
-  expect((await db.query("select * from public.bids")).rows).toHaveLength(0);
+  expect((await db.query("select id from public.bids")).rows).toHaveLength(0);
   await expect(
     db.query("select public.set_applied($1,false,null,'undo')", [bid]),
   ).rejects.toThrow();
   await asUser(client);
-  expect((await db.query("select * from public.bids")).rows).toHaveLength(1);
+  expect((await db.query("select id from public.bids")).rows).toHaveLength(1);
 });
 it("ignores client-supplied role metadata on signup", async () => {
   await db.exec("reset role");
@@ -520,7 +520,7 @@ it("ignores client-supplied role metadata on signup", async () => {
       )
     ).rows[0].role,
   ).toBe("client");
-  expect((await db.query("select * from public.bids")).rows).toHaveLength(0);
+  expect((await db.query("select id from public.bids")).rows).toHaveLength(0);
 });
 it("isolates peers, accepts explicit zero rates, and locks applied resume assignment", async () => {
   await asUser(client);
@@ -555,7 +555,7 @@ it("isolates peers, accepts explicit zero rates, and locks applied resume assign
   await finalizeResumeFile(r2);
   await asUser(peer);
   expect(
-    (await db.query("select * from public.bids where id=$1", [bid])).rows,
+    (await db.query("select id from public.bids where id=$1", [bid])).rows,
   ).toHaveLength(0);
   await expect(
     db.query(
@@ -604,18 +604,11 @@ it("isolates peers, accepts explicit zero rates, and locks applied resume assign
     ]),
   ]);
   await asUser(peer);
-  expect(
-    (
-      await db.query<{ rate_cents: number }>(
-        "select rate_cents from public.bids where id=$1",
-        [fresh],
-      )
-    ).rows[0].rate_cents,
-  ).toBe(0);
+  expect(await managerBidRate(fresh, peer)).toBe(0);
   expect(
     (
       await db.query(
-        "select * from public.bid_events where bid_id=$1 and event='applied'",
+        "select id,event from public.bid_events where bid_id=$1 and event='applied'",
         [fresh],
       )
     ).rows,
@@ -679,16 +672,16 @@ it("admin can manage clients and archived client access is revoked", async () =>
   ]);
   await asUser(admin);
   expect(
-    (await db.query("select * from public.bids")).rows.length,
+    (await db.query("select id from public.bids")).rows.length,
   ).toBeGreaterThan(1);
   await db.query("select public.update_client($1,'Client',true)", [client]);
   await asUser(client);
-  expect((await db.query("select * from public.bids")).rows).toHaveLength(0);
+  expect((await db.query("select id from public.bids")).rows).toHaveLength(0);
   await asUser("00000000-0000-4000-8000-000000000004");
-  expect((await db.query("select * from public.bids")).rows).toHaveLength(0);
+  expect((await db.query("select id from public.bids")).rows).toHaveLength(0);
   await asUser(admin);
   expect(
-    (await db.query("select * from public.bids")).rows.length,
+    (await db.query("select id from public.bids")).rows.length,
   ).toBeGreaterThan(1);
 });
 
@@ -791,7 +784,7 @@ it("active bids reserve duplicates while Trash releases them and conflicts block
         "select public.save_bid(null,$1,' ACME  ',' Engineer ','https://example.com/active-only?id=3','Indeed','remote','open')",
         [testResume],
       ),
-    ).rejects.toThrow(/already has an application/i);
+    ).rejects.toMatchObject({ message: "Blocked", code: "PBC01" });
 
     // Active company capacity is enforced, then released immediately by Trash.
     await expect(
@@ -799,7 +792,7 @@ it("active bids reserve duplicates while Trash releases them and conflicts block
         "select public.save_bid(null,$1,'ACME','Engineer II','https://example.com/active-only?id=2','Indeed','remote','open')",
         [testResume],
       ),
-    ).rejects.toThrow(/company limit/i);
+    ).rejects.toMatchObject({ message: "Blocked", code: "PBC01" });
     await db.query("select public.trash_bid($1,true)", [firstBid]);
     replacement = (
       await db.query<{ id: string }>(
@@ -1034,7 +1027,7 @@ it("imports atomically with receipts and version-checks individual cells", async
       created_at: Date;
       version: number;
       applied: boolean;
-    }>("select * from public.bids where id=$1", [first.ids[0]])
+    }>("select found_at,created_at,version,applied from public.bids where id=$1", [first.ids[0]])
   ).rows[0];
   expect(new Date(b.found_at).toISOString()).toBe("2026-03-08T06:00:00.000Z");
   expect(b.applied).toBe(false);
@@ -1834,7 +1827,7 @@ it("shares candidate profile details but keeps each bidder assignment private", 
       "select public.save_bid(null,$1,' shared   co ','engineer','https://shared.test/job/2','LinkedIn','remote','open')",
       [secondAssignment],
     ),
-  ).rejects.toThrow(/already has an application/i);
+  ).rejects.toMatchObject({ message: "Blocked", code: "PBC01" });
 });
 
 it("aggregates CT reporting before retention and queues screenshot cleanup", async () => {
@@ -2015,7 +2008,8 @@ it("managers can atomically apply selected bids without proof at a chosen time",
   await asUser(client);
   await db.query("select public.update_bidder($1,'Jordan',125,false)", [bidder]);
   const target = (await db.query<{ id: string }>("select public.save_bid(null,$1,'Manual Test Co','Analyst','https://example.com/jobs/manual-test','LinkedIn','remote','open') id", [resume])).rows[0].id;
-  const expectedRate = (await db.query<{ rate: number }>("select coalesce(r.rate_override_cents,m.default_rate_cents) rate from public.resumes r join public.bidders m on m.user_id=r.bidder_id where r.id=$1", [resume])).rows[0].rate;
+  const configured = (await db.query<{ values: { bidders: Record<string, number | null>; resumes: Record<string, number | null> } }>("select public.manager_financial_values(array[$1]::uuid[],array[$2]::uuid[]) values", [bidder,resume])).rows[0].values;
+  const expectedRate = configured.resumes[resume] ?? configured.bidders[bidder];
   const targetVersion = (await db.query<{ version: number }>("select version from public.bids where id=$1", [target])).rows[0].version;
   expect((await db.query<{ applied: boolean; review_status: string }>("select applied,review_status from public.bids where id=$1", [target])).rows[0]).toMatchObject({ applied: false, review_status: "approved" });
   const appliedAt = (await db.query<{ stamp: string }>("select clock_timestamp() stamp")).rows[0].stamp;
@@ -2024,10 +2018,11 @@ it("managers can atomically apply selected bids without proof at a chosen time",
     [[{ id: target, version: targetVersion }], appliedAt, "Verified with employer", request],
   );
   expect(result.rows[0].result).toMatchObject({ applied: 1, unchanged: 0 });
-  const saved = (await db.query<{ applied: boolean; evidence_file_id: string | null; rate_cents: number; applied_at: string; first_applied_at: string; application_method: string; review_status: string }>(
-    "select applied,evidence_file_id,rate_cents,applied_at,first_applied_at,application_method,review_status from public.bids where id=$1", [target],
+  const saved = (await db.query<{ applied: boolean; evidence_file_id: string | null; applied_at: string; first_applied_at: string; application_method: string; review_status: string }>(
+    "select applied,evidence_file_id,applied_at,first_applied_at,application_method,review_status from public.bids where id=$1", [target],
   )).rows[0];
-  expect(saved).toMatchObject({ applied: true, evidence_file_id: null, rate_cents: expectedRate, application_method: "manual", review_status: "approved", applied_at: appliedAt, first_applied_at: appliedAt });
+  expect(saved).toMatchObject({ applied: true, evidence_file_id: null, application_method: "manual", review_status: "approved", applied_at: appliedAt, first_applied_at: appliedAt });
+  expect(await managerBidRate(target, client)).toBe(expectedRate);
   const reportDay = formatInTimeZone(new Date(appliedAt), "America/Chicago", "yyyy-MM-dd");
   const report = (await db.query<{ result: { totals: { count: number }; groups: { label: string; applied: number }[] } }>(
     "select public.earnings_performance($1,$1,$2,null,null,'profile') result", [reportDay, workspace],
@@ -2334,8 +2329,8 @@ it("does not deliver a queued admin alert after its device belongs to another us
   expect((await db.query("select * from public.claim_push_attempts(100)")).rows).toHaveLength(0);
 });
 
-it("returns a bounded, tenant-scoped dashboard report with a complete daily series", async () => {
-  await asUser(bidder);
+it("returns a bounded, tenant-scoped legacy manager dashboard report with a complete daily series", async () => {
+  await asUser(client);
   const result = await db.query<{ report: {
     daily: { date: string; found: number; foundApplied: number; applied: number }[];
     totals: { found: number; foundApplied: number };

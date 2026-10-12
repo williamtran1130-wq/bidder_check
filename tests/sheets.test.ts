@@ -46,9 +46,10 @@ it("reports required fields, bad URLs/enums and normalized duplicates by row", (
     ["company", "role_name", "url"],
     { arrangement: "remote", job_status: "open" },
   );
-  expect(validateImportRows(rows)).toContainEqual(
-    expect.objectContaining({ row: 2, field: "url" }),
-  );
+  expect(validateImportRows(rows)).toEqual([]);
+  expect(validateImportRows([{ ...rows[0], company: "" }, rows[1]])).toEqual([
+    expect.objectContaining({ row: 1, field: "company" }),
+  ]);
   expect(
     validateImportRows([
       {

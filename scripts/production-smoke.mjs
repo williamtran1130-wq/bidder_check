@@ -75,7 +75,25 @@ try {
   assert.deepEqual(ok(await client.from("inbox_notifications").select("id")), []);
   assert.deepEqual(ok(await client.from("workspaces").select("id")), []);
   assert.deepEqual(ok(await client.from("bids").select("id")), []);
+  // Run after financial enforcement (202610120004), never at the compatibility-only gate.
+  for (const [table, column] of [
+    ["bidders", "default_rate_cents"],
+    ["resumes", "rate_override_cents"],
+    ["bids", "rate_cents"],
+    ["retained_bid_daily_aggregates", "earned_cents"],
+    ["bid_events", "details"],
+  ]) {
+    const denied = await client.from(table).select(column).limit(1);
+    assert.equal(denied.error?.code, "42501", `Direct ${table}.${column} read must be denied after enforcement`);
+  }
+  const safeList = ok(await client.rpc("list_bids_v2", { p_query: {} }));
+  assert.deepEqual(safeList.rows, []);
+  assert.equal(safeList.total, 0);
   for (const [name, args] of [
+    ["manager_financial_values", {}],
+    ["dashboard_performance", { p_from: "2026-10-12", p_to: "2026-10-12" }],
+    ["earnings_performance", { p_from: "2026-10-12", p_to: "2026-10-12" }],
+    ["retained_aggregate_summary", {}],
     [
       "bulk_bid_state",
       { p_targets: [{ id: randomUUID(), version: 0 }], p_deleted: true },
@@ -141,7 +159,7 @@ try {
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page).toHaveURL(/\/auth\/login/);
   console.log(
-    "PASS production: designated admin active; signup creates private approval alerts; metadata cannot grant roles/approval; pending access denied including spreadsheet and bulk/purge RPCs; approval routing, password change and sign-out work",
+    "PASS production: designated admin active; signup creates private approval alerts; metadata cannot grant roles/approval; pending access denied including manager finance, legacy reports, spreadsheet and bulk/purge RPCs; direct financial columns denied and safe v2 listing works; approval routing, password change and sign-out work",
   );
 } finally {
   await browser?.close();

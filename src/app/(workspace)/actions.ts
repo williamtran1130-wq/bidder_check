@@ -8,7 +8,7 @@ import {
   chicagoDateRange,
 } from "@/lib/domain";
 import type { Database } from "@/lib/database.types";
-import type { BidListLoadResult, BidListQuery, BidListResult } from "@/lib/bid-list";
+import { BID_LIST_RPC, type BidListLoadResult, type BidListQuery, type BidListResult } from "@/lib/bid-list";
 import { createHash } from "node:crypto";
 import { fromZonedTime } from "date-fns-tz";
 import { z } from "zod";
@@ -22,6 +22,12 @@ import type {
   PurgeStatus,
 } from "@/lib/bulk-types";
 import { canRetryPurge } from "@/lib/purge-status";
+import { isCalendarPeriod, resolveCalendarPeriod } from "@/lib/calendar-period";
+import { readReport } from "@/lib/reporting-server";
+import { getManagerFinancialValues } from "@/lib/financial-data";
+import type { BidRow } from "@/lib/workspace-types";
+import type { DashboardReport, EarningsReport, InterviewReport, ReportQuery, GroupedReportQuery } from "@/lib/report-types";
+export type { DashboardReport, EarningsReport, InterviewReport } from "@/lib/report-types";
 
 type Result<T = undefined> = { data?: T; error?: string };
 export type BidRestoreIssue = { bidId: string; field: string; code: string; message: string };
@@ -54,17 +60,20 @@ async function rpc<N extends keyof Database["public"]["Functions"]>(
 ) {
   const { supabase } = await getContext();
   const { data, error } = await supabase.rpc(name, args);
-  if (error) throw Object.assign(new Error(error.message), { details: error.details });
+  if (error) throw Object.assign(new Error(error.message), { details: error.details, code: error.code });
   return data;
 }
 const text = (form: FormData, key: string) =>
   String(form.get(key) ?? "").trim();
 const id = (value: string) => (value ? z.uuid().parse(value) : null);
-export async function saveBid(form: FormData) {
-  return perform(async () => {
+export type SaveBidOutcome = { status: "saved"; id: string } | { status: "blocked" };
+export async function saveBid(form: FormData): Promise<Result<SaveBidOutcome>> {
+  return perform(async (): Promise<SaveBidOutcome> => {
     const url = normalizeJobUrl(text(form, "url"));
-    return await rpc("save_bid", {
-      p_id: id(text(form, "id")),
+    const bidId = id(text(form, "id"));
+    try {
+    const saved = await rpc("save_bid", {
+      p_id: bidId,
       p_resume: z.uuid().parse(text(form, "resume_id")),
       p_company: text(form, "company"),
       p_role: text(form, "role_name"),
@@ -73,6 +82,12 @@ export async function saveBid(form: FormData) {
       p_arrangement: text(form, "arrangement"),
       p_status: text(form, "job_status"),
     });
+    return { status: "saved", id: saved };
+    } catch (error) {
+      if (!bidId && error && typeof error === "object" && "code" in error && error.code === "PBC01")
+        return { status: "blocked" };
+      throw error;
+    }
   });
 }
 export async function saveResume(form: FormData) {
@@ -638,7 +653,7 @@ export async function getBidHistory(bidId: string) {
     const { supabase } = await getContext();
     const { data, error } = await supabase
       .from("bid_events")
-      .select("*")
+      .select("id,bid_id,actor_id,event,reason,file_id,created_at")
       .eq("bid_id", bidId)
       .order("created_at", { ascending: false });
     if (error) throw new Error(error.message);
@@ -665,11 +680,18 @@ export async function getBidRows(
     sortId: string;
   } | undefined;
   try {
-    const { supabase } = await getContext();
+    const { supabase, profile } = await getContext();
     const bounds = chicagoDateRange(mode, from, to);
-    const filters = Object.fromEntries(query.columnFilters.map((filter) => [filter.id, filter.value]));
+    const filters = Object.fromEntries(query.columnFilters.map((filter) => {
+      if ((filter.id === "found_at" || filter.id === "applied_at") && filter.value && typeof filter.value === "object" && "preset" in filter.value) {
+        const value = filter.value as { preset: string; from?: string; to?: string; presence?: string };
+        if (!isCalendarPeriod(value.preset)) throw new Error("Invalid period");
+        return [filter.id, { ...resolveCalendarPeriod({ preset: value.preset, from: value.from, to: value.to }), presence: value.presence }];
+      }
+      return [filter.id, filter.value];
+    }));
     diagnostic = {
-      dateMode: ["today", "yesterday", "all", "custom"].includes(mode) ? mode : "other",
+      dateMode: isCalendarPeriod(mode) ? mode : "other",
       trash,
       pageIndex: query.pageIndex,
       pageSize: query.pageSize,
@@ -682,7 +704,7 @@ export async function getBidRows(
         ? query.sorting[0]?.id ?? "found_at"
         : "other",
     };
-    const { data, error } = await supabase.rpc("list_bids", {
+    const { data, error } = await supabase.rpc(BID_LIST_RPC, {
       p_query: {
         search: z.string().max(500).parse(query.search),
         status: z.enum(["all", "applied", "unapplied", "pending_review"]).parse(query.status),
@@ -717,6 +739,10 @@ export async function getBidRows(
       };
     }
     const result = data as unknown as BidListResult;
+    if (profile.role !== "bidder" && result.rows.length) {
+      const financial = await getManagerFinancialValues(supabase, { bidIds: result.rows.map((row) => row.id) });
+      result.rows = result.rows.map((row) => ({ ...row, rate_cents: financial.bids[row.id] ?? null }));
+    }
     console.info("Bid list query", {
       ...diagnostic,
       durationMs: Math.round(performance.now() - startedAt),
@@ -755,7 +781,7 @@ export async function updateBidCell(
       })) as {
         ok?: boolean;
         conflict?: boolean;
-        row: import("@/lib/database.types").Row<"bids">;
+        row: BidRow;
       },
     false,
   );
@@ -974,56 +1000,13 @@ export async function recentBidPurges() {
   );
 }
 
-export type DashboardReport = {
-  daily: { date: string; found: number; foundApplied: number; applied: number; earningsCents: number; earningsCount: number }[];
-  totals: { found: number; foundApplied: number; appliedActivity: number; earningsCents: number; earningsCount: number; trackedApplications: number; trackedInterviews: number };
-  review: { pending: number; approved_unapplied: number; rejected: number };
-  sources: { label: string; value: number }[];
-  groups: { key: string; label: string; applied: number; interviews: number; conversion: number | null }[];
-};
-export async function getDashboardPerformance(input: {
-  from: string;
-  to: string;
-  workspace?: string;
-  bidder?: string;
-  profile?: string;
-  group?: "profile" | "bidder" | "assignment";
-}) {
-  return perform(async () => {
-    const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-    const result = await rpc("dashboard_performance", {
-      p_from: date.parse(input.from),
-      p_to: date.parse(input.to),
-      p_workspace: input.workspace ? z.uuid().parse(input.workspace) : null,
-      p_bidder: input.bidder ? z.uuid().parse(input.bidder) : null,
-      p_profile: input.profile ? z.uuid().parse(input.profile) : null,
-      p_group: z.enum(["profile", "bidder", "assignment"]).parse(input.group ?? "profile"),
-    });
-    return result as unknown as DashboardReport;
-  }, false);
+export async function getDashboardPerformance(input: ReportQuery) {
+  return readReport<DashboardReport>("dashboard_performance_v2", input);
 }
 
-export type EarningsReport = {
-  totals: { count: number; cents: number; resumes: number; retainedCount: number; trackedApplications: number; trackedInterviews: number; excludedInterviewCount: number };
-  groups: { id: string; label: string; sub: string; count: number; cents: number; applied: number; interviews: number }[];
-};
-export async function getEarningsPerformance(input: {
-  from?: string;
-  to?: string;
-  workspace?: string;
-  bidder?: string;
-  profile?: string;
-  group: "profile" | "bidder" | "assignment";
-}) {
-  return perform(async () => {
-    const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-    return (await rpc("earnings_performance", {
-      p_from: input.from ? date.parse(input.from) : null,
-      p_to: input.to ? date.parse(input.to) : null,
-      p_workspace: input.workspace ? z.uuid().parse(input.workspace) : null,
-      p_bidder: input.bidder ? z.uuid().parse(input.bidder) : null,
-      p_profile: input.profile ? z.uuid().parse(input.profile) : null,
-      p_group: z.enum(["profile", "bidder", "assignment"]).parse(input.group),
-    })) as unknown as EarningsReport;
-  }, false);
+export async function getEarningsPerformance(input: GroupedReportQuery) {
+  return readReport<EarningsReport>("earnings_performance_v2", input);
+}
+export async function getInterviewPerformance(input: GroupedReportQuery) {
+  return readReport<InterviewReport>("interview_performance", input);
 }
