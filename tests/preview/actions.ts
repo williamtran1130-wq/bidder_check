@@ -22,8 +22,12 @@ export const authenticate = unavailable,
   reviewBidsAction = unavailable,
   resubmitBidAction = unavailable,
   setBidInterviewAction = unavailable,
-  saveSettings = unavailable,
-  getFileUrl = unavailable;
+  saveSettings = unavailable;
+export async function getFileUrl() {
+  if (new URLSearchParams(location.search).has("screenshot-sizes"))
+    return { data: { url: "https://images.example.test/proof.png" } };
+  return unavailable();
+}
 export async function saveBid() {
   if (new URLSearchParams(window.location.search).has("single-blocked"))
     return { data: { status: "blocked" as const } };
@@ -51,7 +55,12 @@ export async function saveResumeAssignment(input: { id?: string; profileId: stri
   window.dispatchEvent(new CustomEvent("assignment-save", { detail: input }));
   return { data: input.id || crypto.randomUUID() };
 }
-export async function prepareUpload(_kind: string, target: string) {
+let preparedScreenshot: { target: string; bytes: number } | undefined;
+export async function prepareUpload(_kind: string, target: string, _name?: string, _mime?: string, bytes?: number) {
+  if (new URLSearchParams(location.search).has("screenshot-sizes")) {
+    preparedScreenshot = { target, bytes: bytes! };
+    return { data: { id: "fixture-screenshot-upload", storage_path: "fixture/screenshot.png" } };
+  }
   if (new URLSearchParams(location.search).has("assignment-upload"))
     return { data: { id: target, storage_path: "fixture/resume.pdf" } };
   if (new URLSearchParams(location.search).has("paste-screenshot")) {
@@ -62,6 +71,13 @@ export async function prepareUpload(_kind: string, target: string) {
   return unavailable();
 }
 export async function finalizeUpload(id: string) {
+  if (new URLSearchParams(location.search).has("screenshot-sizes") && preparedScreenshot) {
+    const { fixture } = await import("./sample-data");
+    const { target, bytes } = preparedScreenshot;
+    fixture.bids = fixture.bids.map((bid) => bid.id === target ? { ...bid, evidence_file_id: id, screenshot_size_bytes: bytes, applied: true, version: bid.version + 1 } : bid);
+    preparedScreenshot = undefined;
+    return { data: id };
+  }
   if (!new URLSearchParams(location.search).has("assignment-upload") && !new URLSearchParams(location.search).has("paste-screenshot")) return unavailable();
   if (new URLSearchParams(location.search).has("paste-screenshot")) document.documentElement.dataset.screenshotFinalized = id;
   return { data: id };
@@ -83,6 +99,7 @@ export async function getBidRows(
   )
     return { error: "Refresh unavailable" };
   const { fixture } = await import("./sample-data");
+  document.documentElement.dataset.bidListReads = String(Number(document.documentElement.dataset.bidListReads ?? 0) + 1);
   const { chicagoDateRange } = await import("@/lib/domain");
   const { calendarToday, resolveCalendarPeriod } = await import("@/lib/calendar-period");
   try {
@@ -113,9 +130,32 @@ export async function getBidRows(
           return actual.toLowerCase().includes(String(value).toLowerCase());
         });
     });
-    const sorted = [...filtered].sort((a, b) => {
+    const manager = fixture.profile.role !== "bidder";
+    const sizeScenario = new URLSearchParams(location.search).has("screenshot-sizes");
+    const sizes = new Map<number, number>();
+    if (manager && sizeScenario) for (const bid of filtered) {
+      if (bid.evidence_file_id && bid.screenshot_size_bytes != null)
+        sizes.set(bid.screenshot_size_bytes, (sizes.get(bid.screenshot_size_bytes) ?? 0) + 1);
+    }
+    const snapshot = filtered.map((bid) => manager && sizeScenario ? {
+      ...bid,
+      screenshot_size_bytes: bid.evidence_file_id ? bid.screenshot_size_bytes ?? null : null,
+      screenshot_size_match_count: bid.evidence_file_id && bid.screenshot_size_bytes != null ? sizes.get(bid.screenshot_size_bytes) ?? 0 : 0,
+    } : bid);
+    const sorted = [...snapshot].sort((a, b) => {
       const sort = query.sorting[0];
+      if (sort?.id === "screenshot_size_bytes" && manager) {
+        const av = a.screenshot_size_bytes, bv = b.screenshot_size_bytes;
+        if (av == null && bv != null) return 1;
+        if (bv == null && av != null) return -1;
+        const result = av != null && bv != null ? av - bv : 0;
+        return (sort.desc ? -result : result) || b.found_at.localeCompare(a.found_at) || a.id.localeCompare(b.id);
+      }
       if (!sort) return b.found_at.localeCompare(a.found_at);
+      if (sort.id === "screenshot") {
+        const result = Number(Boolean(a.evidence_file_id)) - Number(Boolean(b.evidence_file_id));
+        return (sort.desc ? -result : result) || b.found_at.localeCompare(a.found_at) || a.id.localeCompare(b.id);
+      }
       const result = String(a[sort.id as keyof typeof a] ?? "").localeCompare(String(b[sort.id as keyof typeof b] ?? ""));
       return sort.desc ? -result : result;
     });
@@ -141,7 +181,10 @@ export async function updateBidCell(
     return { error: "Required; maximum 200 characters" };
   const updated = { ...row, [field]: value, version: version + 1 };
   fixture.bids = fixture.bids.map((b) => (b.id === id ? updated : b));
-  return { data: { ok: true, row: updated } };
+  const safe = { ...updated };
+  // Inline RPCs return stored columns, not the derived list snapshot metadata.
+  delete safe.screenshot_size_bytes; delete safe.screenshot_size_match_count;
+  return { data: { ok: true, row: safe } };
 }
 export async function checkBidImport(
   _resume: string,

@@ -301,6 +301,11 @@ export function BidGrid({
               {group.headers.map((header) => (
                 <th
                   key={header.id}
+                  aria-sort={(() => {
+                    const sort = table.getState().sorting[0];
+                    if (sort?.id !== header.column.id && !(header.column.id === "screenshot" && sort?.id === "screenshot_size_bytes")) return undefined;
+                    return sort.desc ? "descending" : "ascending";
+                  })()}
                   className="whitespace-nowrap border px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
                 >
                   {header.isPlaceholder

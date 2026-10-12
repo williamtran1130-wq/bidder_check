@@ -13,6 +13,7 @@ import { chromium, expect as baseExpect } from "@playwright/test";
 const productionMode = process.argv.includes("--production-read-only");
 const stagingMode = process.argv.includes("--staging-read-only");
 const checkArrangements = process.argv.includes("--arrangements");
+const checkScreenshotSizes = process.argv.includes("--screenshot-sizes");
 const expectedUrl = stagingMode
   ? "https://kdmvludtvhuuewmhurpw.supabase.co"
   : "https://aizorlyfggwbewetnwqm.supabase.co";
@@ -330,6 +331,333 @@ async function boundary(role, client, sample) {
     }
   });
 }
+async function screenshotOracle(client) {
+  // The authenticated caller's RLS defines the same complete authorized scope
+  // as list_bids_v2 and /bids. Safe source projections remain independent of RPC DTOs.
+  const source = [];
+  for (let offset = 0; offset < 100000; offset += 1000) {
+    const rows = ok(
+      await client
+        .from("bids")
+        .select("id,workspace_id,bidder_id,evidence_file_id,found_at")
+        .is("deleted_at", null)
+        .order("id")
+        .range(offset, offset + 999),
+    );
+    source.push(...rows);
+    if (rows.length < 1000) break;
+    assert.ok(offset < 99000, "Scoped read exceeds smoke safety limit");
+  }
+  const fileIds = [
+    ...new Set(source.map((row) => row.evidence_file_id).filter(Boolean)),
+  ];
+  const files = new Map();
+  for (let offset = 0; offset < fileIds.length; offset += 100) {
+    for (const file of ok(
+      await client
+        .from("files")
+        .select("id,bid_id,workspace_id,bidder_id,kind,finalized,size_bytes")
+        .in("id", fileIds.slice(offset, offset + 100)),
+    ))
+      files.set(file.id, file);
+  }
+  const bytes = (row) => {
+    const file = files.get(row.evidence_file_id);
+    return file?.kind === "screenshot" &&
+      file.finalized &&
+      file.bid_id === row.id &&
+      file.workspace_id === row.workspace_id &&
+      file.bidder_id === row.bidder_id
+      ? file.size_bytes
+      : null;
+  };
+  return { source, bytes };
+}
+function screenshotUiExpected(oracle, bidderId) {
+  const rows = oracle.source.filter(
+    (row) => !bidderId || row.bidder_id === bidderId,
+  );
+  const sizes = rows.map(oracle.bytes).filter((size) => size !== null);
+  if (!sizes.length) return null;
+  const size = sizes.reduce((largest, value) => Math.max(largest, value), 0);
+  return { bytes: size, count: sizes.filter((value) => value === size).length };
+}
+async function screenshotSizes(role, client, sample, oracle) {
+  // No identities, names, bytes, response payloads or credentials are emitted.
+  await measure(role, "screenshot-sizes:rpc", async () => {
+    const source = oracle.source.filter(
+      (row) => row.bidder_id === sample.bidder_id,
+    );
+    const bytes = oracle.bytes;
+    const today = formatInTimeZone(new Date(), "America/Chicago", "yyyy-MM-dd");
+    const recent = new Date(`${today}T12:00:00Z`);
+    recent.setUTCDate(recent.getUTCDate() - 29);
+    for (const range of [
+      { name: "all", from: null },
+      { name: "recent", from: recent.toISOString() },
+    ]) {
+      const retained = source.filter(
+        (row) =>
+          !range.from || Date.parse(row.found_at) >= Date.parse(range.from),
+      );
+      const counts = new Map();
+      for (const row of retained) {
+        const size = bytes(row);
+        if (size !== null) counts.set(size, (counts.get(size) ?? 0) + 1);
+      }
+      for (const sort of [
+        { id: "found_at", desc: true },
+        { id: "screenshot_size_bytes", desc: false },
+        { id: "screenshot_size_bytes", desc: true },
+      ]) {
+        const expected = [...retained].sort((a, b) => {
+          let primary;
+          if (role === "manager" && sort.id === "screenshot_size_bytes") {
+            const sa = bytes(a),
+              sb = bytes(b);
+            if (sa === null && sb !== null) return 1;
+            if (sb === null && sa !== null) return -1;
+            primary = sa === null ? 0 : (sa - sb) * (sort.desc ? -1 : 1);
+          } else
+            primary =
+              (Date.parse(a.found_at) - Date.parse(b.found_at)) *
+              (sort.desc ? -1 : 1);
+          return (
+            primary ||
+            Date.parse(b.found_at) - Date.parse(a.found_at) ||
+            a.id.localeCompare(b.id)
+          );
+        });
+        const last = Math.max(0, Math.ceil(expected.length / 100) - 1);
+        for (const pageIndex of [
+          ...new Set([0, Math.min(1, last), Math.floor(last / 2), last]),
+        ]) {
+          assertionStage = `screenshot-rpc:${range.name}:${sort.desc ? "desc" : "asc"}`;
+          const data = ok(
+            await client.rpc("list_bids_v2", {
+              p_query: {
+                scopeBidderId: sample.bidder_id,
+                rangeFrom: range.from,
+                sorting: [sort],
+                pageSize: 100,
+                pageIndex,
+              },
+            }),
+          );
+          assert.equal(data.total, expected.length);
+          const page = expected.slice(pageIndex * 100, (pageIndex + 1) * 100);
+          assert.deepEqual(
+            data.rows.map((row) => row.id),
+            page.map((row) => row.id),
+          );
+          noMoney(data.rows);
+          for (let index = 0; index < data.rows.length; index++) {
+            const row = data.rows[index],
+              size = bytes(page[index]);
+            if (role === "bidder") {
+              assert.ok(!Object.hasOwn(row, "screenshot_size_bytes"));
+              assert.ok(!Object.hasOwn(row, "screenshot_size_match_count"));
+            } else {
+              assert.equal(row.screenshot_size_bytes, size);
+              assert.equal(
+                row.screenshot_size_match_count,
+                size === null ? 0 : counts.get(size),
+              );
+            }
+          }
+        }
+      }
+    }
+    // Missing real duplicate data is legitimate; explicitly record coverage only.
+    const available = source.filter((row) => bytes(row) !== null);
+    const byteCounts = new Map();
+    for (const row of available)
+      byteCounts.set(bytes(row), (byteCounts.get(bytes(row)) ?? 0) + 1);
+    results.push({
+      role,
+      check: "screenshot-sizes:data-coverage",
+      passed: true,
+      metadataAvailable: available.length > 0,
+      repeatedSizesAvailable: [...byteCounts.values()].some(
+        (count) => count > 1,
+      ),
+    });
+  });
+}
+function screenshotBidResponse(page, path, preset, sort) {
+  const pending = page.waitForResponse((response) => {
+    const request = response.request();
+    if (
+      request.method() !== "POST" ||
+      !request.headers()["next-action"] ||
+      new URL(request.url()).pathname !== path
+    )
+      return false;
+    try {
+      const args = JSON.parse(request.postData() ?? "[]");
+      const sorting = args[5]?.sorting?.[0];
+      return (
+        args[0] === preset &&
+        (!sort || (sorting?.id === sort.id && sorting?.desc === sort.desc))
+      );
+    } catch {
+      return false;
+    }
+  });
+  pending.catch(() => {});
+  return pending;
+}
+async function screenshotSizeUi(
+  role,
+  page,
+  sample,
+  clean,
+  oracle,
+  detail = false,
+) {
+  const path = detail ? `/users/${sample.bidder_id}` : "/bids";
+  await measure(
+    role,
+    detail ? "ui-screenshot-sizes:bidder-detail" : "ui-screenshot-sizes:bids",
+    async () => {
+      assertionStage = "screenshot-ui-default-period";
+      if (detail) {
+        await page.goto(`${origin}${path}`);
+        const initial = screenshotBidResponse(page, path, "today");
+        await page
+          .getByRole("tab", { name: "Bid activity", exact: true })
+          .click();
+        assert.equal((await initial).status(), 200);
+      } else {
+        const initial = screenshotBidResponse(page, path, "today");
+        await page.goto(`${origin}${path}`);
+        assert.equal((await initial).status(), 200);
+      }
+      await expect(
+        page.getByLabel("Found period", { exact: true }),
+      ).toHaveValue("today");
+      await expect(page.getByText(/Loading bid applications/)).toHaveCount(0);
+      const all = screenshotBidResponse(page, path, "all");
+      await page
+        .getByLabel("Found period", { exact: true })
+        .selectOption("all");
+      assert.equal((await all).status(), 200);
+      await expect(
+        page.getByLabel("Found period", { exact: true }),
+      ).toHaveValue("all");
+      await page
+        .getByRole("button", { name: "Filter Screenshot", exact: true })
+        .click();
+      await expect(
+        page.getByLabel("Screenshot filter", { exact: true }),
+      ).toBeVisible();
+      const smallest = page.getByRole("button", {
+        name: "Size: smallest first",
+        exact: true,
+      });
+      const largest = page.getByRole("button", {
+        name: "Size: largest first",
+        exact: true,
+      });
+      if (role === "bidder") {
+        assertionStage = "screenshot-ui-bidder-absence";
+        await expect(smallest).toHaveCount(0);
+        await expect(largest).toHaveCount(0);
+        await page.keyboard.press("Escape");
+        await expect(
+          page.getByRole("button", { name: /^Screenshot size:/ }),
+        ).toHaveCount(0);
+        await expect(
+          page.getByText("Size unavailable", { exact: true }),
+        ).toHaveCount(0);
+      } else {
+        assertionStage = "screenshot-ui-manager-controls";
+        await expect(smallest).toBeEnabled();
+        await expect(largest).toBeEnabled();
+        const ascending = screenshotBidResponse(page, path, "all", {
+          id: "screenshot_size_bytes",
+          desc: false,
+        });
+        await smallest.click();
+        assert.equal((await ascending).status(), 200);
+        await page
+          .getByRole("button", { name: "Filter Screenshot", exact: true })
+          .click();
+        await expect(smallest).toHaveAttribute("aria-pressed", "true");
+        const descending = screenshotBidResponse(page, path, "all", {
+          id: "screenshot_size_bytes",
+          desc: true,
+        });
+        await largest.click();
+        assert.equal((await descending).status(), 200);
+        await page
+          .getByRole("button", { name: "Filter Screenshot", exact: true })
+          .click();
+        await expect(largest).toHaveAttribute("aria-pressed", "true");
+        await page.keyboard.press("Escape");
+        await expect(page.getByText(/Loading bid applications/)).toHaveCount(0);
+        const badges = page.getByRole("button", { name: /^Screenshot size:/ });
+        const expected = screenshotUiExpected(
+          oracle,
+          detail ? sample.bidder_id : undefined,
+        );
+        // Largest-first puts an eligible screenshot on the first page whenever
+        // the independently authorized result has any valid current metadata.
+        if (expected) {
+          assertionStage = "screenshot-ui-exact-byte-popover";
+          const badge = badges.first();
+          await expect(badge).toBeVisible();
+          const accessible = await badge.getAttribute("aria-label");
+          const match =
+            /^Screenshot size: ([\d,]+) bytes; (\d+) screenshots? with this exact size in current results$/.exec(
+              accessible ?? "",
+            );
+          assert.ok(match);
+          assert.equal(Number(match[1].replaceAll(",", "")), expected.bytes);
+          assert.equal(Number(match[2]), expected.count);
+          const exactBytes = expected.bytes.toLocaleString("en-US");
+          const exactMatches = `${expected.count} screenshot${expected.count === 1 ? "" : "s"} with this exact size in current results (including this screenshot).`;
+          await badge.focus();
+          await page.keyboard.press("Enter");
+          await expect(
+            page.getByText(`${exactBytes} bytes`, { exact: true }),
+          ).toBeVisible();
+          await expect(
+            page.getByText(exactMatches, { exact: true }),
+          ).toBeVisible();
+          await expect(
+            page.getByText(
+              "Matching file size is a review aid; it does not prove identical image content.",
+              { exact: true },
+            ),
+          ).toBeVisible();
+          await page.keyboard.press("Escape");
+          await expect(badge).toBeFocused();
+          await badge.click();
+          await expect(
+            page.getByText(`${exactBytes} bytes`, { exact: true }),
+          ).toBeVisible();
+          await page.keyboard.press("Escape");
+        } else {
+          assertionStage = "screenshot-ui-no-eligible-metadata";
+          await expect(badges).toHaveCount(0);
+        }
+        results.push({
+          role,
+          check: detail
+            ? "screenshot-popover:detail-coverage"
+            : "screenshot-popover:bids-coverage",
+          passed: true,
+          metadataBadgeAvailable: expected !== null,
+          coverage: expected
+            ? "badge-and-popover-verified"
+            : "no-eligible-source-metadata",
+        });
+      }
+      await clean();
+    },
+  );
+}
 function reportResponse(page, path, preset, bidderId) {
   return page.waitForResponse((response) => {
     const request = response.request();
@@ -576,6 +904,10 @@ async function ui(role, session, sample) {
         });
       }
     }
+    if (checkScreenshotSizes) {
+      await screenshotSizeUi(role, page, sample, clean, session.screenshotOracle);
+      if (role === "manager") await screenshotSizeUi(role, page, sample, clean, session.screenshotOracle, true);
+    }
     if (role === "bidder")
       await measure(role, "ui-earnings-denied", async () => {
         await page.goto(`${origin}/earnings`);
@@ -613,6 +945,10 @@ async function main() {
     const session = await authenticate(service, actors[role]);
     await reports(role, session.client, actors.sample.workspace_id);
     await boundary(role, session.client, actors.sample);
+    if (checkScreenshotSizes) {
+      session.screenshotOracle = await screenshotOracle(session.client);
+      await screenshotSizes(role, session.client, actors.sample, session.screenshotOracle);
+    }
     await ui(role, session, actors.sample);
   }
   console.log(

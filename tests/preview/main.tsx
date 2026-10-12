@@ -13,6 +13,12 @@ import { Notifications } from "@/components/notifications";
 import { InterviewReport } from "@/components/interviews";
 import { fixture, longWorkspaceName } from "./sample-data";
 import "@/app/globals.css";
+if (new URLSearchParams(window.location.search).has("screenshot-sizes")) {
+  window.addEventListener("fixture-screenshot-change", (event) => {
+    const change = (event as CustomEvent<{ id: string; bytes: number }>).detail;
+    fixture.bids = fixture.bids.map((bid) => bid.id === change.id ? { ...bid, screenshot_size_bytes: change.bytes, version: bid.version + 1 } : bid);
+  });
+}
 const pages: Record<string, React.ReactNode> = {
   "/dashboard": <Dashboard data={fixture} />,
   "/bids": <BidWorkspace data={fixture} />,

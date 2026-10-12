@@ -699,7 +699,7 @@ export async function getBidRows(
       sortId: [
         "found_at", "resume_id", "company", "role_name", "url", "bidder_id", "source",
         "applied", "applied_at", "arrangement", "job_status", "review_status",
-        "interview_scheduled", "screenshot",
+        "interview_scheduled", "screenshot", "screenshot_size_bytes",
       ].includes(query.sorting[0]?.id ?? "found_at")
         ? query.sorting[0]?.id ?? "found_at"
         : "other",

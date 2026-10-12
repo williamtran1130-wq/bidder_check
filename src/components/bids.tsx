@@ -256,14 +256,21 @@ export function BidWorkspace({
   const editing = useRef(false);
   const deferredRefresh = useRef(false);
   const [isEditing, setIsEditing] = useState(false);
+  function refreshSnapshot() {
+    if (editing.current) deferredRefresh.current = true;
+    else setRevision((n) => n + 1);
+  }
   function editingChanged(value: boolean) {
+    const wasEditing = editing.current;
     editing.current = value;
     setIsEditing(value);
     if (!value) {
       setToday(formatInTimeZone(new Date(), BID_TIMEZONE, "yyyy-MM-dd"));
       setDebouncedSearch(search);
     }
-    if (!value && deferredRefresh.current) {
+    // Ending an edit also reloads conflicts/cancelled drafts: another action
+    // may have changed result membership or evidence while the grid was locked.
+    if (!value && (deferredRefresh.current || wasEditing)) {
       deferredRefresh.current = false;
       setRevision((n) => n + 1);
     }
@@ -485,6 +492,16 @@ export function BidWorkspace({
           <PopoverPrimitive.Root open={openFilter===id} onOpenChange={(open)=>setOpenFilter(open?id:null)}>
             <PopoverPrimitive.Trigger asChild><button type="button" aria-label={`Filter ${label}`} title={`Filter ${label}`} aria-expanded={openFilter===id} disabled={isEditing} className="rounded p-1 text-muted-foreground hover:bg-secondary"><SlidersHorizontal size={12}/></button></PopoverPrimitive.Trigger>
             <PopoverPrimitive.Portal><PopoverPrimitive.Content sideOffset={4} align="start" collisionPadding={8} className="z-50 max-h-[min(24rem,calc(100dvh-1rem))] w-56 overflow-y-auto rounded-md border bg-card p-3 text-foreground shadow-lg">
+            {id === "screenshot" && data.profile.role !== "bidder" && <div className="mb-3 space-y-1 border-b pb-3">
+              {[{ label: "Size: smallest first", desc: false }, { label: "Size: largest first", desc: true }].map((order) => <button
+                key={order.label}
+                type="button"
+                disabled={isEditing}
+                aria-pressed={sorting[0]?.id === "screenshot_size_bytes" && sorting[0]?.desc === order.desc}
+                className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-secondary aria-pressed:bg-secondary aria-pressed:font-medium disabled:opacity-50"
+                onClick={() => { setOpenFilter(null); setSorting([{ id: "screenshot_size_bytes", desc: order.desc }]); }}
+              >{order.label}</button>)}
+            </div>}
             {id === "found_at" || id === "applied_at" ? (() => {
               const range = (column.getFilterValue() as { preset?: CalendarPeriod; from?: string; to?: string; presence?: string } | undefined) ?? {};
               return <div className="space-y-2"><select aria-label={`${label} presence`} className="native-select" value={range.presence ?? "all"} onChange={(event)=>column.setFilterValue({...range,presence:event.target.value})}><option value="all">Any</option><option value="has">Has time</option><option value="empty">No time</option></select><PeriodSelector label={`${label} period`} value={{ preset: range.preset ?? (range.from && range.to ? "custom" : "all"), from: range.from, to: range.to }} onChange={(selection) => column.setFilterValue({ ...selection, presence: range.presence })} /></div>;
@@ -638,6 +655,8 @@ export function BidWorkspace({
       cell: ({ row }) => (
         <ScreenshotCell
           bid={row.original}
+          role={data.profile.role}
+          onUploaded={refreshSnapshot}
           disabled={isEditing || pending || row.original.review_status !== "approved"}
           onBusy={(value) => {
             setUploadBusy(value);
@@ -967,11 +986,12 @@ export function BidWorkspace({
               }
               table={table}
               data={data}
-              onRow={(row) =>
+              onRow={(row) => {
                 setList((current) =>
-                  current.map((b) => (b.id === row.id ? row : b)),
-                )
-              }
+                  current.map((b) => (b.id === row.id ? { ...b, ...row } : b)),
+                );
+                refreshSnapshot();
+              }}
               onBusy={editingChanged}
               onPaste={setPaste}
               onOpen={openBid}

@@ -14,15 +14,20 @@ import {
 import { FileUpload, uploadVerifiedFile } from "./file-upload";
 import { pastedImage } from "@/lib/clipboard-image";
 import { LoaderCircle } from "lucide-react";
+import { ScreenshotSizeBadge } from "./screenshot-size-badge";
 
 export function ScreenshotCell({
   bid,
   disabled,
   onBusy,
+  role,
+  onUploaded,
 }: {
   bid: BidRow;
   disabled?: boolean;
   onBusy?: (value: boolean) => void;
+  role: string;
+  onUploaded?: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
@@ -82,21 +87,24 @@ export function ScreenshotCell({
         return;
       }
       setPasteBusy(true);
+      onBusy?.(true);
       setPasteError("");
       void uploadVerifiedFile("screenshot", bid.id, image, (phase, progress) => {
         setPasteProgress(`${phase} ${progress}%`);
       }).then(() => {
+        onUploaded?.();
         router.refresh();
       }).catch((reason: unknown) => {
         setPasteError(reason instanceof Error ? reason.message : "Screenshot upload failed. Paste the image again to retry.");
       }).finally(() => {
         setPasteBusy(false);
         setPasteProgress("");
+        onBusy?.(false);
       });
     };
     window.addEventListener("paste", handlePaste, true);
     return () => window.removeEventListener("paste", handlePaste, true);
-  }, [bid.id, bid.deleted_at, bid.review_status, disabled, pasteBusy, router]);
+  }, [bid.id, bid.deleted_at, bid.review_status, disabled, pasteBusy, router, onBusy, onUploaded]);
   return (
     <div
       ref={ref}
@@ -108,9 +116,10 @@ export function ScreenshotCell({
       {pasteBusy && <span className="inline-flex items-center gap-1 text-[10px] text-primary" role="status"><LoaderCircle size={12} className="animate-spin" />{pasteProgress || "Uploading screenshot"}</span>}
       {pasteError && <p className="text-[10px] leading-4 text-destructive" role="alert">{pasteError}</p>}
       {!uploadOpen && !bid.deleted_at && bid.review_status === "approved" && <p className="text-[9px] leading-3 text-muted-foreground">Focus this cell and paste an image</p>}
+      <div className="flex items-center gap-1.5">
       {url && (
         <button
-          className="block w-full overflow-hidden rounded-md border focus-visible:outline-2 focus-visible:outline-primary"
+          className="block min-w-0 flex-1 overflow-hidden rounded-md border focus-visible:outline-2 focus-visible:outline-primary"
           onClick={() => setOpen(true)}
           aria-label={`Preview screenshot for ${bid.company}`}
         >
@@ -125,6 +134,8 @@ export function ScreenshotCell({
           />
         </button>
       )}
+      <ScreenshotSizeBadge bid={bid} role={role} />
+      </div>
       {error && (
         <Button
           variant="ghost"
@@ -169,6 +180,7 @@ export function ScreenshotCell({
           }
           onUploaded={() => {
             setUploadOpen(false);
+            onUploaded?.();
             router.refresh();
           }}
         />

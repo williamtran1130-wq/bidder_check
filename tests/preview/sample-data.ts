@@ -163,6 +163,26 @@ export const fixture: WorkspaceData = {
   })),
 };
 
+// Exact-byte scenarios exist only in this isolated visual fixture. The second
+// 102,400-byte screenshot starts off-page, while 102,401 rounds to the same KB.
+if (new URLSearchParams(window.location.search).has("screenshot-sizes")) {
+  const palette = new URLSearchParams(window.location.search).has("size-palette");
+  const sizes = palette ? Array.from({ length: 12 }, (_, index) => 102400 + index % 6) : [102400, 102401, 2048, null, null, 1572864, 1024, 3145728, 524288, 768000, 4096, 102400];
+  fixture.bids = fixture.bids.map((bid, index) => ({
+    ...bid,
+    evidence_file_id: index === 3 && !palette ? null : `screenshot-${index}`,
+    screenshot_size_bytes: sizes[index],
+    screenshot_size_match_count: sizes[index] === null ? 0 : sizes[index] === 102400 ? 2 : 1,
+    review_status: "approved",
+    applied: index !== 3,
+    bidder_id: index === 11 ? "bidder-0" : bid.bidder_id,
+    resume_id: index === 11 ? "resume-0" : bid.resume_id,
+  }));
+}
+if (new URLSearchParams(window.location.search).get("role") === "admin") {
+  fixture.profile = { ...fixture.profile, role: "admin" };
+}
+
 // A real bidder-shaped transport fixture: no monetary keys or teammate rows.
 if (new URLSearchParams(window.location.search).get("role") === "bidder") {
   fixture.profile = { ...people[0], role: "bidder" };
@@ -175,6 +195,10 @@ if (new URLSearchParams(window.location.search).get("role") === "bidder") {
   });
   fixture.candidateProfiles = fixture.candidateProfiles.filter((row) => fixture.resumes.some((assignment) => assignment.profile_id === row.id));
   fixture.bids = fixture.bids.filter((row) => row.bidder_id === fixture.profile.id).map((row) => {
-    const safe = { ...row }; delete safe.rate_cents; return safe;
+    const safe = { ...row }; delete safe.rate_cents;
+    if (!new URLSearchParams(window.location.search).has("leak-size-metadata")) {
+      delete safe.screenshot_size_bytes; delete safe.screenshot_size_match_count;
+    }
+    return safe;
   });
 }
