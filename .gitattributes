@@ -1,0 +1,2 @@
+# Keep SQL migrations and scripts on LF across platforms.
+*.sql text eol=lf
