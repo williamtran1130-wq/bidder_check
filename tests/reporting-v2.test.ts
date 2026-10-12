@@ -1,5 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
-import { beforeAll, afterAll, it, expect } from "vitest";
+import { beforeAll, afterAll, afterEach, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 interface Report {
   range: { from: string; to: string; bucketUnit: string; bucketSize: number };
@@ -28,6 +28,10 @@ interface Comparison {
   label: string;
   found: number;
   foundApplied: number;
+  arrangements: Record<
+    "remote" | "onsiteHybrid" | "unspecified",
+    { found: number; foundApplied: number }
+  >;
 }
 let db: PGlite;
 const owner = "00000000-0000-4000-8000-000000000001";
@@ -109,6 +113,10 @@ beforeAll(async () => {
   );
   await asUser(owner);
 }, 60000);
+afterEach(async () => {
+  await db.exec("rollback; reset role");
+  await asUser(owner);
+});
 afterAll(async () => {
   await db?.close();
 });
@@ -125,7 +133,17 @@ it("includes old retained all-time counts with a bounded series", async () => {
   });
   expect(v.financial).toEqual({ earningsCents: 1000, earningsCount: 3 });
   expect(v.comparisons.profiles).toEqual([
-    { id: p, label: "Profile", found: 4, foundApplied: 3 },
+    {
+      id: p,
+      label: "Profile",
+      found: 4,
+      foundApplied: 3,
+      arrangements: {
+        remote: { found: 2, foundApplied: 1 },
+        onsiteHybrid: { found: 0, foundApplied: 0 },
+        unspecified: { found: 2, foundApplied: 2 },
+      },
+    },
   ]);
 });
 it("preserves historical money and interviews in earnings groups", async () => {
@@ -228,6 +246,12 @@ it("merges shared profiles and bidders across assignments without duplicate keys
     );
   await asUser(owner);
   const v = await report("dashboard_performance_v2");
+  expect(v.comparisons.bidders.every((g) => g.label === "Same")).toBe(true);
+  expect(v.comparisons.profiles.find((g) => g.id === p)?.arrangements).toEqual({
+    remote: { found: 2, foundApplied: 1 },
+    onsiteHybrid: { found: 0, foundApplied: 0 },
+    unspecified: { found: 5, foundApplied: 5 },
+  });
   for (const groups of [v.comparisons.bidders, v.comparisons.profiles]) {
     expect(groups).toHaveLength(2);
     expect(new Set(groups.map((g) => g.id)).size).toBe(2);
@@ -249,7 +273,17 @@ it("merges shared profiles and bidders across assignments without duplicate keys
     );
   }
   await asUser(b2);
-  expect((await report("dashboard_performance_v2")).totals.found).toBe(3);
+  const own = await report("dashboard_performance_v2");
+  expect(own.totals.found).toBe(3);
+  expect(own.comparisons.profiles).toHaveLength(1);
+  expect(own.comparisons.profiles[0]).toMatchObject({
+    id: p,
+    arrangements: {
+      remote: { found: 0, foundApplied: 0 },
+      onsiteHybrid: { found: 0, foundApplied: 0 },
+      unspecified: { found: 3, foundApplied: 3 },
+    },
+  });
   await expect(
     db.query("select public.dashboard_performance_v2(null,null,null,$1,null)", [
       bidder,
@@ -376,64 +410,70 @@ it("keeps both timestamp bounds in generic-plan index conditions", async () => {
     await db.exec(
       "analyze public.bids; analyze public.retained_bid_daily_aggregates",
     );
-    const source = (
-      await db.query<{ prosrc: string }>(
-        "select prosrc from pg_proc where oid='private.report_events(date,date,uuid,uuid,uuid,boolean)'::regprocedure",
-      )
-    ).rows[0].prosrc;
-    const args = [
-      "p_from",
-      "p_to",
-      "p_workspace",
-      "p_bidder",
-      "p_profile",
-      "p_cohort_only",
-    ];
-    const query = args.reduce(
-      (sql, arg, index) =>
-        sql.replace(new RegExp(`\\b${arg}\\b`, "g"), `$${index + 1}`),
-      source,
-    );
-    await db.exec(
-      "set local plan_cache_mode='force_generic_plan'; set local enable_seqscan=off",
-    );
-    await db.exec(
-      `prepare report_events_generic(date,date,uuid,uuid,uuid,boolean) as ${query}`,
-    );
-    const plan = (
-      await db.query<{ "QUERY PLAN": unknown }>(
-        "explain (format json) execute report_events_generic('2024-01-01','2024-01-02',null,null,null,false)",
-      )
-    ).rows[0]["QUERY PLAN"];
-    const conditions: string[] = [];
-    function visit(value: unknown): void {
-      if (Array.isArray(value)) {
-        value.forEach(visit);
-      } else if (value && typeof value === "object") {
-        for (const [key, item] of Object.entries(value)) {
-          if (key === "Index Cond" && typeof item === "string")
-            conditions.push(item);
-          else visit(item);
+    for (const helper of ["report_events", "dashboard_report_events"]) {
+      const source = (
+        await db.query<{ prosrc: string }>(
+          "select prosrc from pg_proc where oid=$1::regprocedure",
+          [
+            `private.${helper}(date,date,uuid,uuid,uuid${helper === "report_events" ? ",boolean" : ""})`,
+          ],
+        )
+      ).rows[0].prosrc;
+      const args = [
+        "p_from",
+        "p_to",
+        "p_workspace",
+        "p_bidder",
+        "p_profile",
+        "p_cohort_only",
+      ];
+      if (helper === "dashboard_report_events") args.pop();
+      const query = args.reduce(
+        (sql, arg, index) =>
+          sql.replace(new RegExp(`\\b${arg}\\b`, "g"), `$${index + 1}`),
+        source,
+      );
+      await db.exec(
+        "set local plan_cache_mode='force_generic_plan'; set local enable_seqscan=off",
+      );
+      await db.exec(
+        `prepare report_events_generic(date,date,uuid,uuid,uuid${helper === "report_events" ? ",boolean" : ""}) as ${query}`,
+      );
+      const plan = (
+        await db.query<{ "QUERY PLAN": unknown }>(
+          `explain (format json) execute report_events_generic('2024-01-01','2024-01-02',null,null,null${helper === "report_events" ? ",false" : ""})`,
+        )
+      ).rows[0]["QUERY PLAN"];
+      const conditions: string[] = [];
+      function visit(value: unknown): void {
+        if (Array.isArray(value)) {
+          value.forEach(visit);
+        } else if (value && typeof value === "object") {
+          for (const [key, item] of Object.entries(value)) {
+            if (key === "Index Cond" && typeof item === "string")
+              conditions.push(item);
+            else visit(item);
+          }
         }
       }
+      visit(plan);
+      for (const column of [
+        "found_at",
+        "applied_at",
+        "first_applied_at",
+        "report_day",
+      ]) {
+        expect(
+          conditions.some(
+            (condition) =>
+              condition.includes(`${column} >=`) &&
+              condition.includes(`${column} <`),
+          ),
+          `${column} bounds must be indexable under a generic plan`,
+        ).toBe(true);
+      }
+      await db.exec("deallocate report_events_generic");
     }
-    visit(plan);
-    for (const column of [
-      "found_at",
-      "applied_at",
-      "first_applied_at",
-      "report_day",
-    ]) {
-      expect(
-        conditions.some(
-          (condition) =>
-            condition.includes(`${column} >=`) &&
-            condition.includes(`${column} <`),
-        ),
-        `${column} bounds must be indexable under a generic plan`,
-      ).toBe(true);
-    }
-    await db.exec("deallocate report_events_generic");
   } finally {
     await db.exec("rollback; reset role");
     await asUser(owner);
@@ -511,4 +551,107 @@ it("compresses same-day assignment events while preserving live and retained mea
     await db.exec("rollback; reset role");
     await asUser(owner);
   }
+});
+
+it("splits the found-date CT cohort by current arrangement and application state", async () => {
+  await db.exec("reset role; begin");
+  try {
+    await db.query(
+      `insert into public.bids(workspace_id,bidder_id,resume_id,company,role_name,url,normalized_url,arrangement,found_at,applied,application_method,rate_cents,applied_at,first_applied_at,deleted_at)
+      values ($1,$2,$3,'Remote','Engineer','https://mixed/remote','https://mixed/remote','remote','2024-07-01 05:00Z',true,'manual',100,'2024-08-01 05:00Z','2024-07-02 05:00Z',null),
+      ($1,$2,$3,'Onsite','Engineer','https://mixed/onsite','https://mixed/onsite','onsite','2024-07-02 04:59:59Z',true,'manual',100,'2024-08-01 05:00Z','2024-07-02 05:00Z',null),
+      ($1,$2,$3,'Hybrid','Engineer','https://mixed/hybrid','https://mixed/hybrid','hybrid','2024-07-01 12:00Z',false,null,null,null,null,null),
+      ($1,$2,$3,'Before','Engineer','https://mixed/before','https://mixed/before','remote','2024-07-01 04:59:59Z',false,null,null,null,null,null),
+      ($1,$2,$3,'After','Engineer','https://mixed/after','https://mixed/after','hybrid','2024-07-02 05:00Z',false,null,null,null,null,null),
+      ($1,$2,$3,'Trash','Engineer','https://mixed/trash','https://mixed/trash','onsite','2024-07-01 12:00Z',true,'manual',100,'2024-07-01 12:00Z','2024-07-01 12:00Z',now())`,
+      [w, bidder, r],
+    );
+    await asUser(owner);
+    const v = await report(
+      "dashboard_performance_v2",
+      "2024-07-01",
+      "2024-07-01",
+    );
+    expect(v.totals).toMatchObject({
+      found: 3,
+      foundApplied: 2,
+      appliedActivity: 0,
+    });
+    for (const g of [v.comparisons.bidders[0], v.comparisons.profiles[0]])
+      expect(g.arrangements).toEqual({
+        remote: { found: 1, foundApplied: 1 },
+        onsiteHybrid: { found: 2, foundApplied: 1 },
+        unspecified: { found: 0, foundApplied: 0 },
+      });
+    await db.exec("reset role");
+    await db.query(
+      "update public.bids set arrangement='hybrid' where url='https://mixed/remote'",
+    );
+    await asUser(owner);
+    expect(
+      (await report("dashboard_performance_v2", "2024-07-01", "2024-07-01"))
+        .comparisons.profiles[0].arrangements,
+    ).toEqual({
+      remote: { found: 0, foundApplied: 0 },
+      onsiteHybrid: { found: 3, foundApplied: 2 },
+      unspecified: { found: 0, foundApplied: 0 },
+    });
+  } finally {
+    await db.exec("rollback; reset role");
+    await asUser(owner);
+  }
+});
+it("compresses arrangement measures into one assignment-day event without losing legacy counts", async () => {
+  await db.exec("reset role; begin");
+  try {
+    await db.query(
+      `insert into public.bids(workspace_id,bidder_id,resume_id,company,role_name,url,normalized_url,arrangement,found_at,applied,application_method,rate_cents,applied_at,first_applied_at)
+      values($1,$2,$3,'R','Engineer','https://compress/r','https://compress/r','remote','2020-01-01 06:00Z',false,null,null,null,null),
+      ($1,$2,$3,'H','Engineer','https://compress/h','https://compress/h','hybrid','2020-01-01 06:00Z',true,'manual',200,'2024-01-02 06:00Z','2020-01-02 06:00Z')`,
+      [w, bidder, r],
+    );
+    await db.query(
+      `insert into public.retained_bid_daily_aggregates(workspace_id,bidder_id,profile_id,resume_id,report_day,metric,record_count,remote_count,onsite_count,hybrid_count)
+      values($1,$2,$3,$4,'2020-01-01','found',5,1,1,1)`,
+      [w, bidder, p, r],
+    );
+    const events = (
+      await db.query(
+        "select n::integer,found_applied::integer,remote_found::integer,remote_applied::integer,onsite_hybrid_found::integer,onsite_hybrid_applied::integer,unspecified_found::integer,unspecified_applied::integer from private.dashboard_report_events('2020-01-01','2020-01-01',null,null,null) where metric='found'",
+      )
+    ).rows;
+    expect(events).toEqual([
+      {
+        n: 8,
+        found_applied: 7,
+        remote_found: 3,
+        remote_applied: 2,
+        onsite_hybrid_found: 3,
+        onsite_hybrid_applied: 3,
+        unspecified_found: 2,
+        unspecified_applied: 2,
+      },
+    ]);
+  } finally {
+    await db.exec("rollback; reset role");
+    await asUser(owner);
+  }
+});
+it("revokes direct arrangement helper execution from every browser role", async () => {
+  await db.exec("reset role");
+  const permissions = (
+    await db.query<{ role: string; allowed: boolean }>(
+      "select r role,has_function_privilege(r,'private.dashboard_report_events(date,date,uuid,uuid,uuid)','execute') allowed from unnest(array['anon','authenticated']) r",
+    )
+  ).rows;
+  expect(permissions).toEqual([
+    { role: "anon", allowed: false },
+    { role: "authenticated", allowed: false },
+  ]);
+  await asUser(owner);
+  await expect(
+    db.query(
+      "select * from private.dashboard_report_events(null,null,null,null,null)",
+    ),
+  ).rejects.toThrow(/permission denied/);
 });
