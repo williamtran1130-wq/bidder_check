@@ -34,13 +34,15 @@ export async function manualApplyBidsAction(input: { targets: { id: string; vers
   window.dispatchEvent(new CustomEvent("manual-apply", { detail: input.targets.length }));
   return { data: { applied: input.targets.length, unchanged: 0 } };
 }
-export async function getEarningsPerformance() {
+export async function getEarningsPerformance(input: import("@/lib/report-types").GroupedReportQuery) {
+  document.documentElement.dataset.earningsQuery = JSON.stringify(input);
   return { data: {
     totals: { count: 1, cents: 1000, resumes: 1, retainedCount: 0, trackedApplications: 1, trackedInterviews: 0, excludedInterviewCount: 0 },
     groups: [{ id: "resume-1", label: "ENG-01", sub: "Jamie Parker", count: 1, cents: 1000, applied: 1, interviews: 0 }],
   } };
 }
-export async function getInterviewPerformance() {
+export async function getInterviewPerformance(input: import("@/lib/report-types").GroupedReportQuery) {
+  document.documentElement.dataset.interviewQuery = JSON.stringify(input);
   return { data: { totals: { applied: 1, interviews: 0, excludedApplications: 0 }, groups: [{ id: "profile-0", label: "ENG-01", applied: 1, interviews: 0, conversion: 0 }] } };
 }
 export async function getUnreadNotificationCount() { return { data: 0 }; }
@@ -196,7 +198,7 @@ export async function getDashboardPerformance(input: import("@/lib/report-types"
   document.documentElement.dataset.reportReads = String(reportReads);
   if (parameters.has("report-failure") && reportReads > 1)
     return { error: "This report is temporarily unavailable. Please retry.", code: "temporarily_unavailable" };
-  if (parameters.has("report-delay")) await new Promise((resolve) => setTimeout(resolve, input.period.preset === "this_month" ? 500 : 20));
+  if (parameters.has("report-delay")) await new Promise((resolve) => setTimeout(resolve, input.period.preset === "this_week" ? 500 : 20));
   document.documentElement.dataset.reportCompleted = input.period.preset;
   const range = resolveCalendarPeriod(input.period);
   const from = range.from ?? fixture.bids.map((row) => row.found_at.slice(0, 10)).sort()[0] ?? calendarToday();

@@ -43,7 +43,7 @@ function Comparison({ title, rows, loading, available }: { title: string; rows: 
 }
 
 export function Dashboard({ data }: { data: WorkspaceData }) {
-  const [period, setPeriod] = useState<PeriodSelection>({ preset: "this_month" });
+  const [period, setPeriod] = useState<PeriodSelection>({ preset: "this_week" });
   const [workspace, setWorkspace] = useState("");
   const [bidder, setBidder] = useState("");
   const [profile, setProfile] = useState("");

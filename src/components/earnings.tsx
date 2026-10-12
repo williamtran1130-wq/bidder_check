@@ -15,7 +15,7 @@ export function Earnings({
   bidderId?: string;
   embedded?: boolean;
 }) {
-  const [period, setPeriod] = useState<PeriodSelection>({ preset: "all" });
+  const [period, setPeriod] = useState<PeriodSelection>({ preset: "this_week" });
   const [group, setGroup] = useState("bidder");
   const day = useCalendarDay();
   const request = useCallback(() => getEarningsPerformance({ period, bidder: bidderId, group: group === "bidder" ? "bidder" : "assignment" }), [period, bidderId, group]);

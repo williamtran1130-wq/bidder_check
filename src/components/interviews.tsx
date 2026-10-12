@@ -9,7 +9,7 @@ import { useReport } from "./use-report";
 import { Button } from "./ui/button";
 
 export function InterviewReport() {
-  const [period, setPeriod] = useState<PeriodSelection>({ preset: "this_month" });
+  const [period, setPeriod] = useState<PeriodSelection>({ preset: "all" });
   const [group, setGroup] = useState<GroupedReportQuery["group"]>("profile");
   const day = useCalendarDay();
   const request = useCallback(() => getInterviewPerformance({ period, group }), [period, group]);

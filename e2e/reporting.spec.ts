@@ -10,16 +10,16 @@ test.beforeEach(async ({ page }) => {
 test("calendar filters share defaults and Monday through Sunday weeks", async ({ page }) => {
   await page.goto(`${preview}/dashboard`);
   const period = page.getByLabel("Period", { exact: true });
-  await expect(period).toHaveValue("this_month");
+  await expect(period).toHaveValue("this_week");
   await expect(period.locator("option")).toHaveText(periods);
   await period.selectOption("last_week");
   await expect(page.getByText("2026-10-05 – 2026-10-11 CT", { exact: true })).toBeVisible();
   await period.selectOption("this_week");
   await expect(page.getByText("2026-10-12 – 2026-10-12 CT", { exact: true })).toBeVisible();
   await page.goto(`${preview}/interviews`);
-  await expect(page.getByLabel("Cohort period", { exact: true })).toHaveValue("this_month");
+  await expect(page.getByLabel("Cohort period", { exact: true })).toHaveValue("all");
   await page.goto(`${preview}/earnings`);
-  await expect(page.getByLabel("First applied period", { exact: true })).toHaveValue("all");
+  await expect(page.getByLabel("First applied period", { exact: true })).toHaveValue("this_week");
   await page.goto(`${preview}/bids`);
   await expect(page.getByLabel("Found period", { exact: true })).toHaveValue("today");
   await page.getByLabel("Found period", { exact: true }).selectOption("all");
@@ -30,32 +30,63 @@ test("calendar filters share defaults and Monday through Sunday weeks", async ({
   await expect(page.getByText("1–1 of 1 bids", { exact: true })).toBeVisible();
 });
 
+test("earnings requests keep the selected period when grouping changes", async ({ page }) => {
+  await page.goto(`${preview}/earnings`);
+  await expect.poll(async () => {
+    const raw = await page.locator("html").getAttribute("data-earnings-query");
+    return raw ? JSON.parse(raw) : null;
+  }).toMatchObject({ period: { preset: "this_week" }, group: "bidder" });
+  await page.getByLabel("First applied period", { exact: true }).selectOption("last_week");
+  await page.getByRole("button", { name: "By resume", exact: true }).click();
+  await expect.poll(async () => {
+    const raw = await page.locator("html").getAttribute("data-earnings-query");
+    return raw ? JSON.parse(raw) : null;
+  }).toMatchObject({ period: { preset: "last_week" }, group: "assignment" });
+});
+
+test("interview requests keep the selected period when grouping changes", async ({ page }) => {
+  await page.goto(`${preview}/interviews`);
+  await expect.poll(async () => {
+    const raw = await page.locator("html").getAttribute("data-interview-query");
+    return raw ? JSON.parse(raw) : null;
+  }).toMatchObject({ period: { preset: "all" }, group: "profile" });
+  await page.getByLabel("Cohort period", { exact: true }).selectOption("last_week");
+  await page.getByLabel("Group by", { exact: true }).selectOption("bidder");
+  await expect.poll(async () => {
+    const raw = await page.locator("html").getAttribute("data-interview-query");
+    return raw ? JSON.parse(raw) : null;
+  }).toMatchObject({ period: { preset: "last_week" }, group: "bidder" });
+});
+
 test("custom dates stay drafts until valid and explicitly applied", async ({ page }) => {
   await page.goto(`${preview}/dashboard`);
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "1");
-  await expect(page.getByRole("img", { name: "Activity chart: 12 found, 8 applications." })).toBeVisible();
+  await expect(page.getByText("2026-10-12 – 2026-10-12 CT", { exact: true })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Activity chart: 1 found, 0 applications." })).toBeVisible();
   await page.getByLabel("Period", { exact: true }).selectOption("custom");
   await page.getByLabel("Period from CT", { exact: true }).fill("");
   await expect(page.getByRole("button", { name: "Apply range", exact: true })).toBeDisabled();
-  await page.getByLabel("Period from CT", { exact: true }).fill("2026-10-12");
+  await page.getByLabel("Period from CT", { exact: true }).fill("2026-10-11");
   await page.getByLabel("Period through CT", { exact: true }).fill("2026-10-01");
   await expect(page.getByRole("button", { name: "Apply range", exact: true })).toBeDisabled();
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "1");
   await page.getByLabel("Period through CT", { exact: true }).fill("2026-10-12");
   await page.getByRole("button", { name: "Apply range", exact: true }).click();
-  await expect(page.getByRole("img", { name: "Activity chart: 1 found, 0 applications." })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Activity chart: 2 found, 1 applications." })).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "2");
 });
 
 test("failed refresh keeps only same-filter results and retries once", async ({ page }) => {
   await page.goto(`${preview}/dashboard?report-failure`);
-  const existing = page.getByRole("img", { name: "Activity chart: 12 found, 8 applications." });
+  const existing = page.getByRole("img", { name: "Activity chart: 1 found, 0 applications." });
   await expect(existing).toBeVisible();
+  await expect(page.getByText("2026-10-12 – 2026-10-12 CT", { exact: true })).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-report-reads", "1");
   await page.getByRole("button", { name: "Refresh dashboard" }).click();
   await expect(page.getByRole("alert")).toContainText("Showing the last successful results for these filters.");
   await expect(existing).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "3");
-  await page.getByLabel("Period", { exact: true }).selectOption("today");
+  await page.getByLabel("Period", { exact: true }).selectOption("yesterday");
   await expect(existing).toHaveCount(0);
   await expect(page.getByRole("alert")).toContainText("This report is temporarily unavailable. Please retry.");
   await expect(page.getByRole("alert")).not.toContainText("last successful");
@@ -67,17 +98,17 @@ test("failed refresh keeps only same-filter results and retries once", async ({ 
 test("a late response cannot replace a newly selected period", async ({ page }) => {
   await page.goto(`${preview}/dashboard?report-delay`);
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "1");
-  await page.getByLabel("Period", { exact: true }).selectOption("today");
-  await expect(page.getByRole("img", { name: "Activity chart: 1 found, 0 applications." })).toBeVisible();
-  await expect(page.locator("html")).toHaveAttribute("data-report-completed", "this_month");
-  await expect(page.getByRole("img", { name: "Activity chart: 1 found, 0 applications." })).toBeVisible();
+  await page.getByLabel("Period", { exact: true }).selectOption("yesterday");
+  await expect(page.getByRole("img", { name: "Activity chart: 1 found, 1 applications." })).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-report-completed", "this_week");
+  await expect(page.getByRole("img", { name: "Activity chart: 1 found, 1 applications." })).toBeVisible();
 });
 
 test("overlapping focus refreshes reuse the request already in flight", async ({ page }) => {
   await page.goto(`${preview}/dashboard?report-delay`);
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "1");
   await page.evaluate(() => { for (let i = 0; i < 4; i++) window.dispatchEvent(new Event("focus")); });
-  await expect(page.getByRole("img", { name: "Activity chart: 12 found, 8 applications." })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Activity chart: 1 found, 0 applications." })).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "1");
 });
 
