@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { seedChunk } from "../scripts/screenshot-size-seed-reconciliation.mjs";
 
 const staging = "https://kdmvludtvhuuewmhurpw.supabase.co";
@@ -18,6 +18,7 @@ type Receipt = {
   workspaceIds: string[];
   accounts: { id: string }[];
   seedReconciliationCounts?: unknown;
+  seedReconciliationDiagnostics?: unknown;
 };
 type RequestRecord = {
   method: string;
@@ -100,11 +101,12 @@ function harness({
   committed?: number;
   writeError?: boolean;
   readError?: boolean;
-  adjust?: (actual: Row[]) => Row[];
+  adjust?: (actual: Row[], readIndex: number) => unknown;
 } = {}) {
   const requests: RequestRecord[] = [];
   const stored = new Map<string, Row>();
   const saves: unknown[] = [];
+  let readIndex = 0;
   const receipt = {
     target: staging,
     started: true,
@@ -165,7 +167,9 @@ function harness({
           : [];
       })
       .reverse();
-    return new Response(JSON.stringify(adjust(actual)), { status: 200 });
+    return new Response(JSON.stringify(adjust(actual, ++readIndex)), {
+      status: 200,
+    });
   };
   const service = createClient(staging, "stub-only-key", {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -372,4 +376,237 @@ it("rejects an out-of-receipt workspace before issuing any write", async () => {
   });
   await expect(h.run()).rejects.toBeDefined();
   expect(h.requests).toHaveLength(0);
+});
+
+async function finishConvergence(h: ReturnType<typeof harness>) {
+  vi.useFakeTimers();
+  const delays = vi.spyOn(globalThis, "setTimeout");
+  try {
+    const result = h.run().then(
+      () => ({ error: undefined }),
+      (error) => ({ error }),
+    );
+    await vi.runAllTimersAsync();
+    return {
+      ...(await result),
+      delays: delays.mock.calls.filter((call) => call[1] === 1000).length,
+    };
+  } finally {
+    delays.mockRestore();
+    vi.useRealTimers();
+  }
+}
+
+it("verifies a delayed final upsert on the third complete pass without resending", async () => {
+  const h = harness({
+    operation: "upsert",
+    adjust: (actual, read) =>
+      actual.map((row) => ({
+        ...row,
+        evidence_file_id: read <= 10 ? id(8000) : row.evidence_file_id,
+      })),
+  });
+  const result = await finishConvergence(h);
+  expect(result.error).toBeUndefined();
+  expect(result.delays).toBe(2);
+  expect(h.requests.filter((r) => r.method === "POST")).toHaveLength(1);
+  const reads = h.requests.filter((r) => r.method === "GET");
+  expect(reads).toHaveLength(15);
+  expect(reads.slice(0, 5).map((r) => r.ids)).toEqual(
+    reads.slice(5, 10).map((r) => r.ids),
+  );
+  expect(reads.slice(0, 5).map((r) => r.ids)).toEqual(
+    reads.slice(10, 15).map((r) => r.ids),
+  );
+  expect(h.receipt.seedReconciliationCounts).toEqual({
+    bidsUpsert: { attemptedChunks: 1, verifiedChunks: 1, verifiedRows: 500 },
+  });
+});
+
+it("stops a persistent mutable mismatch after exactly three complete passes", async () => {
+  const h = harness({
+    operation: "upsert",
+    adjust: (actual) => actual.map((row) => ({ ...row, applied: false })),
+  });
+  const result = await finishConvergence(h);
+  expect(result.error).toMatchObject({ code: "SEED_RECONCILIATION_MISMATCH" });
+  expect(result.delays).toBe(2);
+  expect(h.requests.filter((r) => r.method === "GET")).toHaveLength(15);
+  expect(h.requests.filter((r) => r.method === "POST")).toHaveLength(1);
+  expect(h.receipt.seedReconciliationCounts).toEqual({
+    bidsUpsert: { attemptedChunks: 1, verifiedChunks: 0, verifiedRows: 0 },
+  });
+  expect(h.receipt.seedReconciliationDiagnostics).toEqual([
+    {
+      operation: "bidsUpsert",
+      pass: 1,
+      reason: "field_value",
+      field: "applied",
+      expectedRows: 500,
+      actualRows: 500,
+    },
+    {
+      operation: "bidsUpsert",
+      pass: 2,
+      reason: "field_value",
+      field: "applied",
+      expectedRows: 500,
+      actualRows: 500,
+    },
+    {
+      operation: "bidsUpsert",
+      pass: 3,
+      reason: "field_value",
+      field: "applied",
+      expectedRows: 500,
+      actualRows: 500,
+    },
+  ]);
+  expect(JSON.stringify(h.receipt.seedReconciliationDiagnostics)).not.toContain(
+    marker,
+  );
+  expect(JSON.stringify(h.receipt.seedReconciliationDiagnostics)).not.toMatch(
+    /00000000|benchmark.invalid|100\"/,
+  );
+});
+
+it("requires all rows to match in one pass instead of accumulating matching subsets", async () => {
+  const h = harness({
+    operation: "upsert",
+    adjust: (actual, read) => {
+      const pass = Math.ceil(read / 5);
+      const slice = ((read - 1) % 5) + 1;
+      return actual.map((row) => ({
+        ...row,
+        applied: slice === pass ? false : row.applied,
+      }));
+    },
+  });
+  const result = await finishConvergence(h);
+  expect(result.error).toMatchObject({ code: "SEED_RECONCILIATION_MISMATCH" });
+  expect(h.requests.filter((r) => r.method === "GET")).toHaveLength(15);
+  expect(h.requests.filter((r) => r.method === "POST")).toHaveLength(1);
+});
+
+it("can reconcile a final upsert whose first complete read pass has missing rows", async () => {
+  const h = harness({
+    operation: "upsert",
+    adjust: (actual, read) => (read <= 5 ? actual.slice(1) : actual),
+  });
+  const result = await finishConvergence(h);
+  expect(result.error).toBeUndefined();
+  expect(result.delays).toBe(1);
+  expect(h.requests.filter((r) => r.method === "GET")).toHaveLength(10);
+  expect(h.requests.filter((r) => r.method === "POST")).toHaveLength(1);
+});
+
+it.each([
+  "workspace_id",
+  "bidder_id",
+  "resume_id",
+  "company",
+  "found_at",
+  "review_revision",
+])("never retries an immutable final-upsert %s mismatch", async (field) => {
+  const h = harness({
+    operation: "upsert",
+    adjust: (actual) => actual.map((row) => ({ ...row, [field]: "changed" })),
+  });
+  const result = await finishConvergence(h);
+  expect(result.error).toMatchObject({ code: "SEED_RECONCILIATION_MISMATCH" });
+  expect(result.delays).toBe(0);
+  expect(h.requests.filter((r) => r.method === "GET")).toHaveLength(1);
+  expect(h.requests.filter((r) => r.method === "POST")).toHaveLength(1);
+});
+
+it.each([
+  "duplicate",
+  "unplanned",
+  "missing-field",
+  "invalid-rows",
+  "wrong-row",
+])("immediately refuses unsafe %s final-upsert verification", async (bad) => {
+  const h = harness({
+    operation: "upsert",
+    adjust: (actual) => {
+      if (bad === "duplicate") return [...actual, actual[0]];
+      if (bad === "unplanned") return [{ ...actual[0], id: id(7000) }];
+      if (bad === "invalid-rows") return { rows: actual };
+      if (bad === "wrong-row") return [null];
+      const row = { ...actual[0] };
+      delete row.evidence_file_id;
+      return [row];
+    },
+  });
+  const result = await finishConvergence(h);
+  expect(result.error).toMatchObject({ code: "SEED_RECONCILIATION_MISMATCH" });
+  expect(result.delays).toBe(0);
+  expect(h.requests.filter((r) => r.method === "GET")).toHaveLength(1);
+  expect(h.requests.filter((r) => r.method === "POST")).toHaveLength(1);
+});
+
+it("does not retry final-upsert verification provider errors", async () => {
+  const h = harness({ operation: "upsert", readError: true });
+  const result = await finishConvergence(h);
+  expect(result.error).toMatchObject({ code: "42501" });
+  expect(result.delays).toBe(0);
+  expect(h.requests.filter((r) => r.method === "GET")).toHaveLength(1);
+  expect(h.requests.filter((r) => r.method === "POST")).toHaveLength(1);
+});
+
+it.each([
+  ["evidence_file_id", id(8000)],
+  ["applied", false],
+  ["application_method", "screenshot"],
+  ["rate_cents", 101],
+  ["applied_at", "2026-10-12T18:00:01Z"],
+  ["first_applied_at", "2026-10-12T18:00:01Z"],
+  ["deleted_at", "2026-10-12T18:00:00Z"],
+])(
+  "bounds read reconciliation for finalization field %s",
+  async (field, value) => {
+    const h = harness({
+      rows: bidRows(1),
+      operation: "upsert",
+      adjust: (actual) =>
+        actual.map((row) => ({ ...row, [String(field)]: value })),
+    });
+    const result = await finishConvergence(h);
+    expect(result.error).toMatchObject({
+      code: "SEED_RECONCILIATION_MISMATCH",
+    });
+    expect(result.delays).toBe(2);
+    expect(h.requests.filter((r) => r.method === "GET")).toHaveLength(3);
+    expect(h.requests.filter((r) => r.method === "POST")).toHaveLength(1);
+  },
+);
+
+it("bounds persistently missing final-upsert rows without a write retry", async () => {
+  const h = harness({ operation: "upsert", adjust: () => [] });
+  const result = await finishConvergence(h);
+  expect(result.error).toMatchObject({ code: "SEED_RECONCILIATION_MISMATCH" });
+  expect(result.delays).toBe(2);
+  expect(h.requests.filter((r) => r.method === "GET")).toHaveLength(15);
+  expect(h.requests.filter((r) => r.method === "POST")).toHaveLength(1);
+});
+
+it("validates immutable fields even when a final-upsert read is short", async () => {
+  const h = harness({
+    operation: "upsert",
+    adjust: (actual) => [{ ...actual[0], workspace_id: id(7000) }],
+  });
+  const result = await finishConvergence(h);
+  expect(result.error).toMatchObject({ code: "SEED_RECONCILIATION_MISMATCH" });
+  expect(result.delays).toBe(0);
+  expect(h.requests.filter((r) => r.method === "GET")).toHaveLength(1);
+  expect(h.requests.filter((r) => r.method === "POST")).toHaveLength(1);
+});
+
+it("leaves normal final-upsert acknowledgements without reconciliation reads or waits", async () => {
+  const h = harness({ operation: "upsert", transportLoss: false });
+  const result = await finishConvergence(h);
+  expect(result.error).toBeUndefined();
+  expect(result.delays).toBe(0);
+  expect(h.requests).toHaveLength(1);
+  expect(h.receipt.seedReconciliationDiagnostics).toBeUndefined();
 });

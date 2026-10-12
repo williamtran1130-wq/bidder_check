@@ -12,6 +12,41 @@ const TIMESTAMPS = new Set([
   "deleted_at",
 ]);
 
+const FINALIZATION_FIELDS = new Set([
+  "evidence_file_id",
+  "applied",
+  "application_method",
+  "rate_cents",
+  "applied_at",
+  "first_applied_at",
+  "deleted_at",
+]);
+const DIAGNOSTIC_FIELDS = new Set([
+  "id",
+  "workspace_id",
+  "bidder_id",
+  "resume_id",
+  "company",
+  "role_name",
+  "url",
+  "normalized_url",
+  "source",
+  "arrangement",
+  "found_at",
+  "review_status",
+  "review_revision",
+  ...FINALIZATION_FIELDS,
+  "bid_id",
+  "kind",
+  "filename",
+  "mime",
+  "size_bytes",
+  "storage_path",
+  "sha256",
+  "finalized",
+  "created_by",
+]);
+
 function utc(value) {
   if (
     typeof value !== "string" ||
@@ -87,35 +122,91 @@ export async function seedChunk({
   });
   counts.attemptedChunks++;
   await save();
-  for (let start = 0; start < rows.length; start += 100) {
-    const planned = rows.slice(start, start + 100);
-    const actual = check(
-      await service
-        .from(table)
-        .select(fields.join(","))
-        .in(
-          "id",
-          planned.map((row) => row.id),
-        )
-        .in("workspace_id", [
-          ...new Set(planned.map((row) => row.workspace_id)),
-        ]),
-    );
-    if (!Array.isArray(actual) || actual.length !== planned.length) mismatch();
-    const byId = new Map(actual.map((row) => [row.id, row]));
-    if (byId.size !== planned.length) mismatch();
-    for (const row of planned) {
-      const found = byId.get(row.id);
-      if (!found) mismatch();
-      for (const field of fields) {
-        if (!Object.hasOwn(found, field)) mismatch();
-        const want = TIMESTAMPS.has(field) ? utc(row[field]) : row[field];
-        const got = TIMESTAMPS.has(field) ? utc(found[field]) : found[field];
-        if (!isDeepStrictEqual(got, want)) mismatch();
+  const passes = key === "bidsUpsert" ? 3 : 1;
+  for (let pass = 1; pass <= passes; pass++) {
+    let disagreement;
+    let actualRows = 0;
+    const diagnostic = (reason, field) => {
+      receipt.seedReconciliationDiagnostics ??= [];
+      receipt.seedReconciliationDiagnostics.push({
+        operation: key,
+        pass,
+        reason,
+        ...(DIAGNOSTIC_FIELDS.has(field) ? { field } : {}),
+        expectedRows: rows.length,
+        actualRows,
+      });
+      // Bound setup-only diagnostics; never record IDs, values or error text.
+      if (receipt.seedReconciliationDiagnostics.length > 3)
+        receipt.seedReconciliationDiagnostics.shift();
+    };
+    const fail = async (reason, field) => {
+      diagnostic(reason, field);
+      await save();
+      mismatch();
+    };
+    // Every pass starts at the original first ID slice. Matching rows from a
+    // previous pass are never retained or used to complete this one.
+    for (let start = 0; start < rows.length; start += 100) {
+      const planned = rows.slice(start, start + 100);
+      const byId = new Map(planned.map((row) => [row.id, row]));
+      let actual;
+      try {
+        actual = check(
+          await service
+            .from(table)
+            .select(fields.join(","))
+            .in(
+              "id",
+              planned.map((row) => row.id),
+            )
+            .in("workspace_id", [
+              ...new Set(planned.map((row) => row.workspace_id)),
+            ]),
+        );
+      } catch (error) {
+        diagnostic("read_error");
+        await save();
+        throw error;
+      }
+      if (!Array.isArray(actual)) await fail("invalid_rows");
+      actualRows += actual.length;
+      const seen = new Set();
+      for (const found of actual) {
+        if (!found || typeof found !== "object" || Array.isArray(found))
+          await fail("invalid_row");
+        if (!Object.hasOwn(found, "id")) await fail("missing_field", "id");
+        if (seen.has(found.id)) await fail("duplicate_id", "id");
+        seen.add(found.id);
+        const row = byId.get(found.id);
+        if (!row) await fail("unplanned_id", "id");
+        for (const field of fields) {
+          if (!Object.hasOwn(found, field)) await fail("missing_field", field);
+          const want = TIMESTAMPS.has(field) ? utc(row[field]) : row[field];
+          const got = TIMESTAMPS.has(field) ? utc(found[field]) : found[field];
+          if (!isDeepStrictEqual(got, want)) {
+            if (key !== "bidsUpsert" || !FINALIZATION_FIELDS.has(field))
+              await fail("field_value", field);
+            disagreement ??= { reason: "field_value", field };
+          }
+        }
+      }
+      // Even a short result must have safe IDs and all immutable fields.
+      if (actual.length !== planned.length) {
+        if (key !== "bidsUpsert") await fail("row_count");
+        disagreement ??= { reason: "row_count" };
       }
     }
+    if (!disagreement) {
+      diagnostic("matched");
+      counts.verifiedChunks++;
+      counts.verifiedRows += rows.length;
+      await save();
+      return;
+    }
+    diagnostic(disagreement.reason, disagreement.field);
+    await save();
+    if (pass === passes) mismatch();
+    await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  counts.verifiedChunks++;
-  counts.verifiedRows += rows.length;
-  await save();
 }

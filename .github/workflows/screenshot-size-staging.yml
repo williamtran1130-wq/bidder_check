@@ -41,7 +41,7 @@ jobs:
           sha256sum --check <<'CHECKSUMS'
           77c1130ff2b556dc485aa2714165d9577307cd2c3d41a2925ddc3f1c23ba666f  scripts/screenshot-size-staging-benchmark.mjs
           f1ed9908aad487d732a5886fcb994ccd678409a010628cf8320034ddb6a10a4e  scripts/screenshot-size-benchmark-plan.mjs
-          19adf6da76a502badc2a949438e615f03677c0289994db2b45a8b3323dc4cec2  scripts/screenshot-size-seed-reconciliation.mjs
+          d2bb9ddf4df2b7faa0f5fcc143d8f9f5c661ee730dc7cbcbae1424c9bc52f741  scripts/screenshot-size-seed-reconciliation.mjs
           9e4a3293e35b78b84152b45e00c12a04bf1eb8e16a470c4077cccb96118e4db0  package-lock.json
           CHECKSUMS
           node --version
