@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, writeFileSync, existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
+import {
+  assertFreshPlan,
+  verifyUnusedPlan,
+  claimPlan,
+} from "../scripts/screenshot-size-benchmark-plan.mjs";
 
 const source = readFileSync(
   "scripts/screenshot-size-staging-benchmark.mjs",
@@ -44,6 +50,7 @@ type Scenario = {
   failure?: "provider" | "validation" | "scope" | "financial";
   failureCase?: number;
   before?: boolean;
+  usePlan?: boolean;
 };
 
 // Execute the actual measurement function, main case matrix, and final cleanup
@@ -58,6 +65,48 @@ async function runMatrix(scenario: Scenario = {}) {
   let signOutCalls = 0;
   let validationCalls = 0;
   const snapshots: Receipt[] = [];
+  const planPath = scenario.usePlan
+    ? path.join(
+        mkdtempSync(
+          ".superpowers/sdd/2026-10-12-screenshot-size-matching/matrix-plan-",
+        ),
+        "plan.json",
+      )
+    : undefined;
+  if (planPath) {
+    const marker = `screenshot-size-bench-${randomUUID()}`;
+    writeFileSync(
+      planPath,
+      JSON.stringify({
+        version: 1,
+        target: "https://staging.invalid",
+        marker,
+        mode: "after",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        fixtureBids: 25000,
+        accounts: ["owner", "admin", "bidder1", "bidder2", "outsider"].map(
+          (label) => ({
+            label,
+            id: randomUUID(),
+            email: `${marker}-${label}@example.com`,
+          }),
+        ),
+        workspaceIds: [],
+        results: [],
+        phase: "planned",
+        passed: false,
+        cleanupComplete: false,
+      }),
+    );
+  }
+  const args = scenario.before
+    ? ["--staging-ready", "--before"]
+    : [
+        "--staging-ready",
+        "--keep-fixture",
+        ...(planPath ? ["--use-plan", planPath] : []),
+      ];
   const processStub = {
     env: {
       NEXT_PUBLIC_SUPABASE_URL: "https://staging.invalid",
@@ -76,7 +125,10 @@ async function runMatrix(scenario: Scenario = {}) {
     const query = {
       select: () => query,
       eq: () => query,
-      in: () => query,
+      in: () => {
+        response.data = [];
+        return query;
+      },
       limit: () => query,
       insert: () => query,
       then: (resolve: (value: typeof response) => unknown) =>
@@ -139,9 +191,7 @@ async function runMatrix(scenario: Scenario = {}) {
     STAGING: processStub.env.NEXT_PUBLIC_SUPABASE_URL,
     PREFIX: "screenshot-size-bench-",
     LABELS: ["owner", "admin", "bidder1", "bidder2", "outsider"],
-    args: scenario.before
-      ? ["--staging-ready", "--before"]
-      : ["--staging-ready", "--keep-fixture"],
+    args,
     before: !!scenario.before,
     recovery: false,
     keep: !scenario.before,
@@ -153,17 +203,29 @@ async function runMatrix(scenario: Scenario = {}) {
     receiptPath: undefined,
     fixtureData: undefined,
     options: {},
-    option: () => undefined,
+    option: (name: string) =>
+      args.includes(name) ? args[args.indexOf(name) + 1] : undefined,
     guardedPath: (value: string) => value,
     validateReceipt: () => {},
-    createClient: () => ({ from: serviceQuery }),
-    save: async () => snapshots.push(structuredClone(context.receipt!)),
-    account: async (planned: { id: string }, role: string) => ({
-      id: planned.id,
-      workspace: "synthetic-workspace",
-      role,
-      client,
+    createClient: () => ({
+      from: serviceQuery,
+      auth: {
+        admin: { getUserById: async () => ({ error: { status: 404 } }) },
+      },
     }),
+    readFile,
+    assertFreshPlan,
+    verifyUnusedPlan,
+    claimPlan,
+    save: async () => snapshots.push(structuredClone(context.receipt!)),
+    account: async (planned: { id: string }, role: string) => {
+      if (planPath)
+        assert.ok(
+          existsSync(`${planPath}.used`),
+          "Claim must precede the first actor mutation",
+        );
+      return { id: planned.id, workspace: "synthetic-workspace", role, client };
+    },
     formatInTimeZone: () => "2026-10-12",
     fromZonedTime: () => new Date("2026-10-12T00:00:00Z"),
     shift: () => "2026-10-12",
@@ -314,6 +376,25 @@ describe("staging benchmark matrix latency gate", () => {
     expect(run.receipt.fixtureRetained).toBe(true);
     expect(run.cleanupCalls).toBe(0);
     expect(run.signOutCalls).toBe(1);
+  });
+
+  it("executes the same complete matrix using durably planned identities", async () => {
+    const run = await runMatrix({ usePlan: true });
+    expect(run.timedReads).toBe(525);
+    expect(run.results).toHaveLength(21);
+    expect(run.receipt.passed).toBe(true);
+    expect(run.receipt.fixtureRetained).toBe(true);
+    expect(run.cleanupCalls).toBe(0);
+  });
+
+  it("planned execution still fails and cleans every scope after a provider error", async () => {
+    const run = await runMatrix({ usePlan: true, failure: "provider" });
+    expect(run.timedReads).toBe(5);
+    expect(run.receipt.passed).toBe(false);
+    expect(run.cleanupCalls).toBe(1);
+    expect(run.receipt.cleanupComplete).toBe(true);
+    expect(run.receipt.fixtureRetained).toBe(false);
+    expect(run.exitCode).toBe(1);
   });
 
   it("also completes the six-case pre008 baseline before failing a latency gate and cleaning", async () => {

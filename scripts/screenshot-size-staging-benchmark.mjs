@@ -7,6 +7,11 @@ import { performance } from "node:perf_hooks";
 import { createClient } from "@supabase/supabase-js";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { seedChunk } from "./screenshot-size-seed-reconciliation.mjs";
+import {
+  assertFreshPlan,
+  verifyUnusedPlan,
+  claimPlan,
+} from "./screenshot-size-benchmark-plan.mjs";
 
 const STAGING = "https://kdmvludtvhuuewmhurpw.supabase.co";
 const PREFIX = "screenshot-size-bench-";
@@ -661,6 +666,8 @@ async function cleanup() {
   await save();
 }
 async function main() {
+  const planOnly = args.includes("--plan-only");
+  const usePlan = option("--use-plan");
   assert.equal(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
     STAGING,
@@ -679,10 +686,19 @@ async function main() {
     "--keep-fixture is allowed only for a passed post-migration benchmark",
   );
   assert.ok(
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY &&
-      process.env.SUPABASE_SECRET_KEY,
-    "Staging keys required",
+    !(planOnly && (before || recovery || keep || usePlan)),
+    "Plan creation is post-mode only and cannot write, retain or recover",
   );
+  assert.ok(
+    !(usePlan && (before || recovery || option("--receipt"))),
+    "Use a fresh post plan as the execution receipt",
+  );
+  if (!planOnly)
+    assert.ok(
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY &&
+        process.env.SUPABASE_SECRET_KEY,
+      "Staging keys required",
+    );
   for (let index = 0; index < args.length; index++) {
     assert.ok(
       [
@@ -691,12 +707,15 @@ async function main() {
         "--staging-ready",
         "--receipt",
         "--keep-fixture",
+        "--plan-only",
+        "--use-plan",
       ].includes(args[index]),
       "Unsupported flag",
     );
-    if (args[index] === "--receipt") index++;
+    if (["--receipt", "--use-plan"].includes(args[index])) index++;
   }
-  service = createClient(STAGING, process.env.SUPABASE_SECRET_KEY, options);
+  if (!planOnly)
+    service = createClient(STAGING, process.env.SUPABASE_SECRET_KEY, options);
   if (recovery) {
     assert.ok(option("--receipt"), "Recovery requires explicit --receipt");
     receiptPath = guardedPath(option("--receipt"));
@@ -705,12 +724,16 @@ async function main() {
     await cleanup();
     return;
   }
-  const marker = `${PREFIX}${randomUUID()}`;
+  const planBytes = usePlan ? await readFile(guardedPath(usePlan), "utf8") : null;
+  const planned = planBytes ? JSON.parse(planBytes) : null;
+  if (planned) assertFreshPlan(planned, validateReceipt);
+  const marker = planned?.marker ?? `${PREFIX}${randomUUID()}`;
   receiptPath = guardedPath(
-    option("--receipt") ??
+    usePlan ??
+      option("--receipt") ??
       `.superpowers/sdd/2026-10-12-screenshot-size-matching/hosted-receipts/${marker}-${before ? "before" : "after"}.json`,
   );
-  receipt = {
+  receipt = planned ?? {
     version: 1,
     target: STAGING,
     marker,
@@ -730,7 +753,20 @@ async function main() {
   };
   validateReceipt(receipt);
   // Never overwrite a previous receipt, and persist all planned Auth IDs before the first write.
-  await save(true);
+  if (!planned) await save(true);
+  if (planOnly) {
+    console.log(
+      JSON.stringify({
+        planned: true,
+        receipt: path.relative(process.cwd(), receiptPath),
+      }),
+    );
+    return;
+  }
+  if (planned) {
+    await verifyUnusedPlan(service, planned, ok);
+    await claimPlan(receiptPath, planBytes);
+  }
   receipt.started = true;
   await save();
   const sponsor = ok(
