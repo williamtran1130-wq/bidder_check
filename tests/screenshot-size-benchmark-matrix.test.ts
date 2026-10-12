@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { readFileSync, mkdtempSync, writeFileSync, existsSync } from "node:fs";
+import {
+  mkdirSync,
+  readFileSync,
+  mkdtempSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { runInNewContext } from "node:vm";
@@ -10,6 +16,10 @@ import {
   verifyUnusedPlan,
   claimPlan,
 } from "../scripts/screenshot-size-benchmark-plan.mjs";
+
+mkdirSync(".superpowers/sdd/2026-10-12-screenshot-size-matching", {
+  recursive: true,
+});
 
 const source = readFileSync(
   "scripts/screenshot-size-staging-benchmark.mjs",

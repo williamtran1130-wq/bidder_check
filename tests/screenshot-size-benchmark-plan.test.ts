@@ -1,5 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, existsSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  existsSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -13,6 +19,7 @@ import {
 
 const target = "https://kdmvludtvhuuewmhurpw.supabase.co";
 const root = ".superpowers/sdd/2026-10-12-screenshot-size-matching";
+mkdirSync(root, { recursive: true });
 const script = "scripts/screenshot-size-staging-benchmark.mjs";
 const source = readFileSync(script, "utf8");
 const validateReceipt = runInNewContext(

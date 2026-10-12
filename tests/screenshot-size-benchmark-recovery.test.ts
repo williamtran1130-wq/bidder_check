@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { readFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { readFile, writeFile, mkdir, open, rename } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
+
+mkdirSync(".superpowers/sdd/2026-10-12-screenshot-size-matching", {
+  recursive: true,
+});
 
 type Row = Record<string, unknown>;
 const source = readFileSync(
