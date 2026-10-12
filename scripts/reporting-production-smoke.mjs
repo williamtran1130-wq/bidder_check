@@ -1,7 +1,8 @@
-// Production reporting acceptance: read-only customer/application data.
+// Hosted reporting acceptance: read-only customer/application data.
 // Explicit auth exception: generate a no-email link for EXISTING accounts,
 // verify an isolated session, and revoke only that generated local session.
 // node --env-file=.env.local scripts/reporting-production-smoke.mjs --production-read-only
+// node --env-file=.env.staging scripts/reporting-production-smoke.mjs --staging-read-only
 import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";
 import { createClient } from "@supabase/supabase-js";
@@ -9,8 +10,14 @@ import { createServerClient } from "@supabase/ssr";
 import { formatInTimeZone } from "date-fns-tz";
 import { chromium, expect as baseExpect } from "@playwright/test";
 
-const expectedUrl = "https://aizorlyfggwbewetnwqm.supabase.co";
-const origin = "https://bidder-check.vercel.app";
+const productionMode = process.argv.includes("--production-read-only");
+const stagingMode = process.argv.includes("--staging-read-only");
+const expectedUrl = stagingMode
+  ? "https://kdmvludtvhuuewmhurpw.supabase.co"
+  : "https://aizorlyfggwbewetnwqm.supabase.co";
+const origin = stagingMode
+  ? "https://bidder-check-staging.vercel.app"
+  : "https://bidder-check.vercel.app";
 const expect = baseExpect.configure({ timeout: 45000 });
 const sessions = [];
 const results = [];
@@ -146,11 +153,18 @@ async function authenticate(service, actor) {
 }
 async function reports(role, client, workspace) {
   const today = formatInTimeZone(new Date(), "America/Chicago", "yyyy-MM-dd");
-  for (const preset of ["this_month", "all"]) {
+  const monday = new Date(`${today}T00:00:00Z`);
+  monday.setUTCDate(monday.getUTCDate() - (monday.getUTCDay() + 6) % 7);
+  for (const preset of ["this_week", "this_month", "all"]) {
     const range =
       preset === "all"
         ? { p_from: null, p_to: null }
-        : { p_from: `${today.slice(0, 7)}-01`, p_to: today };
+        : {
+            p_from: preset === "this_week"
+              ? monday.toISOString().slice(0, 10)
+              : `${today.slice(0, 7)}-01`,
+            p_to: today,
+          };
     const params = { ...range, p_workspace: workspace };
     const dashboard = await measure(role, `dashboard:${preset}`, async () => {
       const data = ok(await client.rpc("dashboard_performance_v2", params));
@@ -277,7 +291,7 @@ async function boundary(role, client, sample) {
     }
   });
 }
-function reportResponse(page, path, preset) {
+function reportResponse(page, path, preset, bidderId) {
   return page.waitForResponse((response) => {
     const request = response.request();
     return (
@@ -285,11 +299,21 @@ function reportResponse(page, path, preset) {
       !!request.headers()["next-action"] &&
       new URL(request.url()).pathname === path &&
       (request.postData() ?? "").match(/"preset"\s*:\s*"([^\"]+)"/)?.[1] ===
-        preset
+        preset &&
+      (!bidderId || JSON.parse(request.postData())[0]?.bidder === bidderId)
     );
   });
 }
-async function ui(role, session) {
+function bidResponse(page, path, preset, bidderId) {
+  return page.waitForResponse((response) => {
+    const request = response.request();
+    if (request.method() !== "POST" || !request.headers()["next-action"] ||
+        new URL(request.url()).pathname !== path) return false;
+    const args = JSON.parse(request.postData() ?? "[]");
+    return args[0] === preset && args[4] === bidderId;
+  });
+}
+async function ui(role, session, sample) {
   const context = await browser.newContext();
   try {
     await context.addCookies(
@@ -333,15 +357,19 @@ async function ui(role, session) {
         ),
       );
     };
+    const initialDashboardResponse = reportResponse(page, "/dashboard", "this_week");
     await page.goto(`${origin}/dashboard`);
+    assert.equal((await initialDashboardResponse).status(), 200);
     await expect(page).toHaveURL(`${origin}/dashboard`);
-    for (const preset of ["this_month", "all"]) {
+    await expect(page.getByLabel("Period", { exact: true })).toHaveValue("this_week");
+    for (const preset of ["this_week", "this_month", "all"]) {
       await measure(role, `ui-dashboard:${preset}`, async () => {
-        if (preset !== "this_month") {
+        if (await page.getByLabel("Period", { exact: true }).inputValue() !== preset) {
           const response = reportResponse(page, "/dashboard", preset);
           await page.getByLabel("Period", { exact: true }).selectOption(preset);
           assert.equal((await response).status(), 200);
         }
+        await expect(page.getByLabel("Period", { exact: true })).toHaveValue(preset);
         await expect(
           page.getByRole("button", { name: "Refresh dashboard", exact: true }),
         ).toBeEnabled();
@@ -387,14 +415,15 @@ async function ui(role, session) {
     const initialInterviewResponse = reportResponse(
       page,
       "/interviews",
-      "this_month",
+      "all",
     );
     await page.goto(`${origin}/interviews`);
     assert.equal((await initialInterviewResponse).status(), 200);
-    for (const preset of ["this_month", "all"]) {
+    await expect(page.getByLabel("Cohort period", { exact: true })).toHaveValue("all");
+    for (const preset of ["all", "this_month", "all"]) {
       await measure(role, `ui-interviews:${preset}`, async () => {
         assertionStage = "interview-cohort-period";
-        if (preset !== "this_month") {
+        if (await page.getByLabel("Cohort period", { exact: true }).inputValue() !== preset) {
           const response = reportResponse(page, "/interviews", preset);
           await page.getByLabel("Cohort period", { exact: true }).selectOption(preset);
           assert.equal((await response).status(), 200);
@@ -422,6 +451,58 @@ async function ui(role, session) {
         await clean();
       });
     }
+    if (role === "manager") {
+      const initialEarningsResponse = reportResponse(page, "/earnings", "this_week");
+      await page.goto(`${origin}/earnings`);
+      assert.equal((await initialEarningsResponse).status(), 200);
+      await expect(page).toHaveURL(`${origin}/earnings`);
+      await expect(page.getByLabel("First applied period", { exact: true })).toHaveValue("this_week");
+      for (const preset of ["this_week", "this_month", "all"]) {
+        await measure(role, `ui-earnings:${preset}`, async () => {
+          if (await page.getByLabel("First applied period", { exact: true }).inputValue() !== preset) {
+            const response = reportResponse(page, "/earnings", preset);
+            await page.getByLabel("First applied period", { exact: true }).selectOption(preset);
+            assert.equal((await response).status(), 200);
+          }
+          await expect(page.getByLabel("First applied period", { exact: true })).toHaveValue(preset);
+          await expect(page.getByText(/Loading earnings/)).toHaveCount(0);
+          await clean();
+        });
+      }
+      if (stagingMode) {
+        const path = `/users/${sample.bidder_id}`;
+        await page.goto(`${origin}${path}`);
+        await expect(page).toHaveURL(`${origin}${path}`);
+        const initialBidsResponse = bidResponse(page, path, "today", sample.bidder_id);
+        await page.getByRole("tab", { name: "Bid activity", exact: true }).click();
+        assert.equal((await initialBidsResponse).status(), 200);
+        await expect(page.getByLabel("Found period", { exact: true })).toHaveValue("today");
+        await measure(role, "ui-bidder-detail:bids-today-and-all", async () => {
+          await expect(page.getByText(/^\d+\u2013\d+ of \d+ bids$/)).toBeVisible();
+          await clean();
+          const response = bidResponse(page, path, "all", sample.bidder_id);
+          await page.getByLabel("Found period", { exact: true }).selectOption("all");
+          assert.equal((await response).status(), 200);
+          await expect(page.getByLabel("Found period", { exact: true })).toHaveValue("all");
+          await expect(page.getByText(/^\d+\u2013\d+ of \d+ bids$/)).toBeVisible();
+          await clean();
+        });
+        const initialDetailEarnings = reportResponse(page, path, "this_week", sample.bidder_id);
+        await page.getByRole("tab", { name: "Earnings", exact: true }).click();
+        assert.equal((await initialDetailEarnings).status(), 200);
+        await expect(page.getByLabel("First applied period", { exact: true })).toHaveValue("this_week");
+        await measure(role, "ui-bidder-detail:earnings-week-and-all", async () => {
+          await expect(page.getByText(/Loading earnings/)).toHaveCount(0);
+          await clean();
+          const response = reportResponse(page, path, "all", sample.bidder_id);
+          await page.getByLabel("First applied period", { exact: true }).selectOption("all");
+          assert.equal((await response).status(), 200);
+          await expect(page.getByLabel("First applied period", { exact: true })).toHaveValue("all");
+          await expect(page.getByText(/Loading earnings/)).toHaveCount(0);
+          await clean();
+        });
+      }
+    }
     if (role === "bidder")
       await measure(role, "ui-earnings-denied", async () => {
         await page.goto(`${origin}/earnings`);
@@ -434,15 +515,15 @@ async function ui(role, session) {
 }
 async function main() {
   if (
-    !process.argv.includes("--production-read-only") ||
+    productionMode === stagingMode ||
     process.env.NEXT_PUBLIC_SUPABASE_URL !== expectedUrl
   )
-    throw new Error("Requires exact production URL and --production-read-only");
+    throw new Error("Requires exactly one hosted read-only mode and its exact Supabase URL");
   if (
     !process.env.SUPABASE_SECRET_KEY ||
     !process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
   )
-    throw new Error("Missing required production credentials");
+    throw new Error("Missing required hosted credentials");
   const service = createClient(expectedUrl, process.env.SUPABASE_SECRET_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
@@ -454,12 +535,13 @@ async function main() {
     const session = await authenticate(service, actors[role]);
     await reports(role, session.client, actors.sample.workspace_id);
     await boundary(role, session.client, actors.sample);
-    await ui(role, session);
+    await ui(role, session, actors.sample);
   }
   console.log(
     JSON.stringify(
       {
         passed: true,
+        environment: stagingMode ? "staging" : "production",
         customerDataReadOnly: true,
         existingRolesChecked: 2,
         checks: results,
