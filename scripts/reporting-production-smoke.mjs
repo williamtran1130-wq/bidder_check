@@ -12,6 +12,7 @@ import { chromium, expect as baseExpect } from "@playwright/test";
 
 const productionMode = process.argv.includes("--production-read-only");
 const stagingMode = process.argv.includes("--staging-read-only");
+const checkArrangements = process.argv.includes("--arrangements");
 const expectedUrl = stagingMode
   ? "https://kdmvludtvhuuewmhurpw.supabase.co"
   : "https://aizorlyfggwbewetnwqm.supabase.co";
@@ -185,6 +186,44 @@ async function reports(role, client, workspace) {
         data.totals.foundApplied >= 0 &&
           data.totals.foundApplied <= data.totals.found,
       );
+      if (checkArrangements) {
+        for (const groups of Object.values(data.comparisons)) {
+          assert.equal(
+            groups.reduce((n, row) => n + row.found, 0),
+            data.totals.found,
+          );
+          assert.equal(
+            groups.reduce((n, row) => n + row.foundApplied, 0),
+            data.totals.foundApplied,
+          );
+          for (const row of groups) {
+            assert.deepEqual(Object.keys(row.arrangements).sort(), [
+              "onsiteHybrid",
+              "remote",
+              "unspecified",
+            ]);
+            const buckets = Object.values(row.arrangements);
+            for (const bucket of buckets) {
+              assert.ok(
+                Number.isSafeInteger(bucket.found) && bucket.found >= 0,
+              );
+              assert.ok(
+                Number.isSafeInteger(bucket.foundApplied) &&
+                  bucket.foundApplied >= 0 &&
+                  bucket.foundApplied <= bucket.found,
+              );
+            }
+            assert.equal(
+              buckets.reduce((n, bucket) => n + bucket.found, 0),
+              row.found,
+            );
+            assert.equal(
+              buckets.reduce((n, bucket) => n + bucket.foundApplied, 0),
+              row.foundApplied,
+            );
+          }
+        }
+      }
       if (role === "bidder") noMoney(data);
       else {
         assert.deepEqual(Object.keys(data.financial).sort(), [
@@ -394,6 +433,24 @@ async function ui(role, session, sample) {
         await expect(
           page.getByRole("heading", { name: "By profile", exact: true }),
         ).toBeVisible();
+        if (checkArrangements) {
+          assertionStage = "arrangement-breakdown";
+          await expect(
+            page.getByText("Breakdown unavailable", { exact: true }),
+          ).toHaveCount(0);
+          if (preset === "all")
+            await expect(
+              page.getByRole("img", { name: / Found: .*Remote/ }).first(),
+            ).toBeVisible();
+          for (const label of ["Bids", "Resumes", "Interviews"])
+            await expect(
+              page.getByRole("link", { name: label, exact: true }),
+            ).toBeVisible();
+          if (role === "manager")
+            await expect(
+              page.getByRole("link", { name: "Profiles", exact: true }),
+            ).toBeVisible();
+        }
         assertionStage = "no-embedded-grid";
         await expect(page.getByRole("grid")).toHaveCount(0);
         if (role === "manager") {

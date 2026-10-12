@@ -27,6 +27,7 @@ const options = {
 };
 const service = createClient(url, secret, options);
 const fixtureCount = 25000;
+const checkArrangements = process.argv.includes("--arrangements");
 const marker = `report-bench-${randomUUID()}`,
   password = `Bench-${randomUUID()}!`;
 const users = [],
@@ -51,6 +52,7 @@ const receipt = {
   marker,
   at: new Date().toISOString(),
   fixtureBids: fixtureCount,
+  checkArrangements,
   syntheticUserIds: users,
   syntheticWorkspaceIds: workspaces,
   ranges,
@@ -192,6 +194,48 @@ function validate(name, data, e, actor) {
       data.groups.length,
     );
 }
+function validateArrangements(data, actor, range) {
+  const inRange = (day) =>
+    (!range.from || day >= range.from) && (!range.to || day <= range.to);
+  const profileFor = new Map(
+    assignments.map((row) => [row.id, row.profile_id]),
+  );
+  for (const [kind, groups] of Object.entries(data.comparisons)) {
+    for (const group of groups) {
+      const counts = {
+        remote: { found: 0, foundApplied: 0 },
+        onsiteHybrid: { found: 0, foundApplied: 0 },
+        unspecified: { found: 0, foundApplied: 0 },
+      };
+      const matches = (row) =>
+        (actor.role !== "bidder" || row.bidder_id === actor.id) &&
+        (kind === "bidders"
+          ? row.bidder_id === group.id
+          : (row.profile_id ?? profileFor.get(row.resume_id)) === group.id);
+      for (const row of live.filter(matches)) {
+        if (row.deleted_at || !inRange(row.found_at.slice(0, 10))) continue;
+        const bucket =
+          row.arrangement === "remote" ? counts.remote : counts.onsiteHybrid;
+        bucket.found++;
+        bucket.foundApplied += Number(row.applied);
+      }
+      for (const row of history.filter(matches)) {
+        if (row.metric !== "found" || !inRange(row.report_day)) continue;
+        const remote = row.remote_count ?? 0;
+        const onsiteHybrid = (row.onsite_count ?? 0) + (row.hybrid_count ?? 0);
+        for (const [key, count] of Object.entries({
+          remote,
+          onsiteHybrid,
+          unspecified: row.record_count - remote - onsiteHybrid,
+        })) {
+          counts[key].found += count;
+          counts[key].foundApplied += count;
+        }
+      }
+      assert.deepEqual(group.arrangements, counts);
+    }
+  }
+}
 async function cleanup() {
   if (!users.length) return;
   const owned = ok(
@@ -317,7 +361,7 @@ try {
       role_name: "Benchmark engineer",
       url: `https://benchmark.invalid/${marker}/${i}`,
       normalized_url: `https://benchmark.invalid/${marker}/${i}`,
-      arrangement: "remote",
+      arrangement: ["remote", "onsite", "hybrid"][Math.floor(i / 7) % 3],
       found_at: `${found}T18:00:00Z`,
       applied,
       application_method: applied ? "manual" : null,
@@ -344,6 +388,13 @@ try {
           earned_cents: metric === "earning" ? 1500 : 0,
           tracked_count: metric === "earning" ? 10 : 0,
           interview_count: metric === "earning" ? 2 : 0,
+          ...(checkArrangements
+            ? {
+                remote_count: metric === "found" && day === today ? 5 : 0,
+                onsite_count: metric === "found" && day === today ? 4 : 0,
+                hybrid_count: metric === "found" && day === today ? 3 : 0,
+              }
+            : {}),
         });
   ok(await service.from("retained_bid_daily_aggregates").insert(history));
   receipt.fixtureRetainedRows = history.length;
@@ -384,7 +435,12 @@ try {
                 assert.notEqual(response.error.code, "57014");
                 assert.equal(response.error.message, "Access denied");
                 denials++;
-              } else validate(name, ok(response), e, actor);
+              } else {
+                const data = ok(response);
+                validate(name, data, e, actor);
+                if (checkArrangements && name === "dashboard_performance_v2")
+                  validateArrangements(data, actor, range);
+              }
               samples.push(durationMs);
             }),
           );
