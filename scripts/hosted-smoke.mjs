@@ -1251,8 +1251,14 @@ try {
       reviewed_at: new Date().toISOString(),
     };
   });
-  for (let start = 0; start < seedRows.length; start += 1000)
-    ok(await admin.from("bids").insert(seedRows.slice(start, start + 1000)));
+  const benchmarkBidIds = [];
+  for (let start = 0; start < seedRows.length; start += 1000) {
+    const inserted = ok(await admin.from("bids").insert(seedRows.slice(start, start + 1000)).select("id"));
+    assert.equal(inserted.length, Math.min(1000, seedRows.length - start));
+    benchmarkBidIds.push(...inserted.map((row) => row.id));
+  }
+  assert.equal(benchmarkBidIds.length, 10_000);
+  assert.equal(new Set(benchmarkBidIds).size, 10_000);
 
   const allDatesQuery = {
     trash: false,
@@ -1300,6 +1306,7 @@ try {
     }));
     const elapsedMs = Math.round(performance.now() - started);
     assert.equal(result.ids.length, count);
+    benchmarkBidIds.push(...result.ids);
     // The direct SQL receipt keeps internal validation data; the server action
     // and browser completion expose only added IDs/counts.
     assert.equal(result.skipped.length, 0);
@@ -1309,6 +1316,25 @@ try {
   await benchmarkBatch(476);
   await benchmarkBatch(500);
   pass("Hosted import performance: 476- and 500-row atomic batches succeed against 10,000 retained applications");
+
+  // All latency assertions above run against the full benchmark cohort. Remove
+  // only its captured IDs before the unrelated service-only maintenance reset:
+  // that pre-existing procedure has an 8-second limit. Its original file,
+  // delayed-cleanup, retention, and account-preservation fixtures remain intact.
+  assert.equal(benchmarkBidIds.length, 10_976);
+  assert.equal(new Set(benchmarkBidIds).size, 10_976);
+  // UUID filters are encoded in the PostgREST URL; keep them below gateway limits.
+  for (let start = 0; start < benchmarkBidIds.length; start += 100) {
+    const ids = benchmarkBidIds.slice(start, start + 100);
+    const files = await admin.from("files").select("id", { count: "exact", head: true }).in("bid_id", ids);
+    ok(files);
+    assert.equal(files.count, 0, "Benchmark cohort must not contain file fixtures");
+    ok(await admin.from("bid_events").delete().in("bid_id", ids));
+    ok(await admin.from("bids").delete().in("id", ids));
+    const remaining = await admin.from("bids").select("id", { count: "exact", head: true }).in("id", ids);
+    ok(remaining);
+    assert.equal(remaining.count, 0);
+  }
 
   ok(
     await client.rpc("update_bidder", {

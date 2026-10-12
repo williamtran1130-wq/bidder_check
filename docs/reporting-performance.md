@@ -24,6 +24,14 @@ All interview and permitted earnings p95 values were at most 723 ms. The slowest
 
 Both staging and production reported PostgreSQL 17.6, `work_mem=2184kB`, `shared_buffers=224MB`, and 60 maximum connections. The production write gate remained open. No database capacity, timeout or memory settings were changed. The provider's billing/compute tier was not independently queried.
 
+After production compatibility migrations 001-003, the same authenticated current-month diagnostic completed through `dashboard_performance_v2` in **146.343 ms**, with 10,178 shared-buffer hits, 14 shared reads and **zero temporary reads/writes**. This is one database execution comparison against the earlier 6,666 ms legacy measurement, not a production p95 claim. The repeated percentile evidence above comes from staging.
+
+## Separate maintenance-reset limit
+
+The full staging workflow passed the application, financial-boundary, import, and retention checks, then its existing service-only `reset_application_library` operation hit SQLSTATE `57014` while removing the combined 10,976-row import benchmark fixture. That routine takes exclusive table locks, fingerprints its scope, updates every bid and performs per-row foreign-key checks. It is inaccessible to authenticated application users and is not called by the report or import workflows. Prior hosted reset statistics already included a 7,263 ms execution against the eight-second API deadline. Isolated 25,000-row local runs took 3,011 ms with the new reporting indexes and 2,662 ms without them; they establish existing bulk work, not a new reporting algorithm regression.
+
+The hosted smoke now captures every benchmark ID, preserves the existing full-volume list/import latency assertions, checks the benchmark rows own no file fixtures, and removes only those benchmark rows/events in bounded batches before the separate reset behavior check. The original uploaded files, applications, account-preservation assertions and delayed storage verification remain in that reset check. No global timeout was increased and no production reset was run. Large operational resets still require their own maintenance procedure with a fresh inventory/fingerprint and explicit transaction-local statement/lock deadlines; the ordinary REST reset should not be assumed to handle arbitrary workspace sizes within eight seconds.
+
 ## Initial pre-release hosted state
 
 The command used the existing environment files without printing their values. Production uses `.env.local`; staging uses `.env.staging`. Results were collected at approximately 12:14 UTC. API requests used HEAD for exact table counts, returned no private rows, and had an eight-second client deadline.

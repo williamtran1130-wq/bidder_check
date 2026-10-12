@@ -16,6 +16,7 @@ const sessions = [];
 const results = [];
 let browser;
 let step = "configuration";
+let assertionStage = "none";
 function ok(result) {
   if (result.error) throw result.error;
   return result.data;
@@ -310,7 +311,21 @@ async function ui(role, session) {
     const page = await context.newPage();
     page.setDefaultTimeout(45000);
     const clean = async () => {
-      await expect(page.getByRole("alert")).toHaveCount(0);
+      // Next's accessibility route announcer is an alert in its own shadow root.
+      // Retain every application alert; exclude only the framework host.
+      const alertCounts = () => page.getByRole("alert").evaluateAll((alerts) => {
+        let framework = 0;
+        let application = 0;
+        for (const alert of alerts) {
+          const root = alert.getRootNode();
+          if (root instanceof ShadowRoot && root.host.tagName === "NEXT-ROUTE-ANNOUNCER") framework++;
+          else application++;
+        }
+        return { framework, application };
+      });
+      await expect.poll(async () => (await alertCounts()).application).toBe(0);
+      const counts = await alertCounts();
+      console.log(JSON.stringify({ role, check: "ui-alert-classification", ...counts }));
       const text = await page.locator("body").innerText();
       assert.ok(
         !/SQLSTATE|PGRST\d+|permission denied for|57014|function public\..*does not exist|column .*does not exist/i.test(
@@ -330,23 +345,29 @@ async function ui(role, session) {
         await expect(
           page.getByRole("button", { name: "Refresh dashboard", exact: true }),
         ).toBeEnabled();
+        assertionStage = "activity-chart";
         await expect(
           page.getByRole("img", { name: /^Activity chart: \d/ }),
         ).toBeVisible();
+        assertionStage = "application-activity-heading";
         await expect(
           page.getByRole("heading", {
             name: "Application activity",
             exact: true,
           }),
         ).toBeVisible();
+        assertionStage = "by-profile-heading";
         await expect(
           page.getByRole("heading", { name: "By profile", exact: true }),
         ).toBeVisible();
+        assertionStage = "no-embedded-grid";
         await expect(page.getByRole("grid")).toHaveCount(0);
         if (role === "manager") {
+          assertionStage = "by-bidder-heading";
           await expect(
             page.getByRole("heading", { name: "By bidder", exact: true }),
           ).toBeVisible();
+          assertionStage = "earned-label";
           await expect(page.getByText("Earned", { exact: true })).toBeVisible();
         } else {
           await expect(
@@ -359,6 +380,7 @@ async function ui(role, session) {
             page.getByRole("link", { name: "Earnings", exact: true }),
           ).toHaveCount(0);
         }
+        assertionStage = "no-report-alert-or-sql-errors";
         await clean();
       });
     }
@@ -371,27 +393,32 @@ async function ui(role, session) {
     assert.equal((await initialInterviewResponse).status(), 200);
     for (const preset of ["this_month", "all"]) {
       await measure(role, `ui-interviews:${preset}`, async () => {
+        assertionStage = "interview-cohort-period";
         if (preset !== "this_month") {
           const response = reportResponse(page, "/interviews", preset);
-          await page.getByLabel("Period", { exact: true }).selectOption(preset);
+          await page.getByLabel("Cohort period", { exact: true }).selectOption(preset);
           assert.equal((await response).status(), 200);
         }
-        await expect(page.getByLabel("Period", { exact: true })).toHaveValue(
+        await expect(page.getByLabel("Cohort period", { exact: true })).toHaveValue(
           preset,
         );
+        assertionStage = "interview-performance-heading";
         await expect(
           page.getByRole("heading", {
             name: "Interview performance",
             exact: true,
           }),
         ).toBeVisible();
+        assertionStage = "applied-applications-column";
         await expect(
           page.getByRole("columnheader", {
             name: "Applied applications",
             exact: true,
           }),
         ).toBeVisible();
+        assertionStage = "interview-loading-complete";
         await expect(page.getByText(/Loading interview report/)).toHaveCount(0);
+        assertionStage = "no-report-alert-or-sql-errors";
         await clean();
       });
     }
@@ -451,6 +478,8 @@ try {
       passed: false,
       customerDataReadOnly: true,
       step,
+      assertionStage,
+      strictLocatorAmbiguity: String(error?.message ?? "").includes("strict mode violation"),
       code: error?.code ?? error?.name ?? "Error",
       completedChecks: results.length,
     }),

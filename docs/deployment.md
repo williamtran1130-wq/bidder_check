@@ -1,6 +1,53 @@
 # Deployment handoff
 
-## Latest release — signup alerts and workflow fixes, 2026-10-05
+## Latest release — reliable reporting and private bidder workflows, 2026-10-12
+
+Implementation commit `3b4f1e4` was initially promoted to production as
+`dpl_55zg66qBd5tnkXKmoW2AwKqCaHuX` at https://bidder-check.vercel.app.
+The compatible staging application is `dpl_72wNQuRjHPCRL2WT4xi9waXhPpEx`
+at https://bidder-check-staging.vercel.app. Both databases have all four
+`202610120001` through `202610120004` migrations. Compatibility migrations
+001-003 were applied first, followed by the app, then financial enforcement 004.
+Both deployment dry runs were reviewed; no historical migration was rewritten
+and no production customer-data reset was performed.
+
+The release adds calendar periods in Central Time, a focused dashboard with
+cohort comparisons, manager-only financial values, status-only import previews,
+reliable batch retries and complete assignment loading. Dashboard reporting
+now materializes authorized scope once and compresses dated events before
+aggregation. The same authenticated current-month production diagnostic fell
+from 6,666 ms on the legacy function to 146 ms on v2, with no temporary spill.
+This is a single execution comparison, not a production percentile.
+
+The staging report acceptance benchmark passed 450 authenticated requests at
+five-reader concurrency against 25,000 synthetic bids plus retained history.
+The slowest dashboard p95 was 1,041 ms; all expected bidder financial denials
+and fixture reconciliation checks passed, with no reporting statement timeout.
+The independent [GitHub verification run](https://github.com/DevTech06130324/bidder-check/actions/runs/38253491942)
+passed lint, typecheck, build, 175 unit/database tests and all 120 desktop/mobile
+browser tests. Production signup/approval/password/sign-out, worker auth, safe
+listing and direct financial-column denial checks passed; their single synthetic
+pending account was removed.
+
+The live production reporting smoke passed all 21 API/browser checks using
+temporary sessions for existing manager and bidder accounts. Both roles loaded
+This month and All time dashboards and interview reports. Manager earnings
+reconciled with dashboard totals; bidder financial fields and legacy endpoints
+were denied, and `/earnings` redirected to the dashboard. All eight report
+page/period checks had zero application error alerts. Only Next.js's separate
+accessibility route announcement is excluded by the smoke assertion. Verification
+sessions were signed out without modifying customer applications.
+
+An existing service-only bulk-reset routine reached its eight-second REST
+deadline when the hosted smoke combined its maintenance test with the entire
+large benchmark fixture. Benchmark thresholds remain unchanged; captured
+benchmark IDs are now removed separately before the original reset/file-cleanup
+behavior check. This routine is not part of dashboard or bid-entry requests.
+See [the measured evidence and maintenance limit](reporting-performance.md).
+Post-enforcement rollback must retain the compatible safe projections and v2
+list/report calls; do not roll back to the older broad financial reads.
+
+## Previous release — signup alerts and workflow fixes, 2026-10-05
 
 Implementation commit `54cc5fe` is pushed to `main` and READY in production as
 `dpl_CXK9o3BC9hyAesqfQrSzEB283EhU` at https://bidder-check.vercel.app.
