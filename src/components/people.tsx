@@ -404,20 +404,22 @@ export function People({
         key={p.id}
         className={`flex flex-wrap items-center gap-3 p-4 ${highlightId === p.id ? "bg-primary/5 ring-2 ring-inset ring-primary" : ""}`}
       >
-        <span className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
-          {initials(p.display_name || p.email)}
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="font-semibold">
-            {b ? (
-              <Link className="hover:text-primary" href={`/users/${p.id}`}>
-                {p.display_name}
-              </Link>
-            ) : (
-              p.display_name
-            )}
-          </p>
-          <p className="break-all text-xs text-muted-foreground">{p.email}</p>
+        <div className="flex w-full min-w-0 items-center gap-3 sm:w-auto sm:flex-1">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+            {initials(p.display_name || p.email)}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold">
+              {b ? (
+                <Link className="hover:text-primary" href={`/users/${p.id}`}>
+                  {p.display_name}
+                </Link>
+              ) : (
+                p.display_name
+              )}
+            </p>
+            <p className="break-all text-xs text-muted-foreground">{p.email}</p>
+          </div>
         </div>
         {p.role === "client" && (
           <Badge variant="secondary" className="capitalize">

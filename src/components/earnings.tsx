@@ -31,6 +31,21 @@ export function Earnings({
           description="Earnings from saved bid rates and first application dates."
         />
       )}
+      <div className="panel mb-6 flex flex-wrap items-end justify-between gap-4 p-5">
+        <div className="flex gap-1">
+          {["bidder", "resume"].map((g) => (
+            <Button
+              key={g}
+              size="sm"
+              variant={group === g ? "secondary" : "ghost"}
+              onClick={() => setGroup(g)}
+            >
+              By {g}
+            </Button>
+          ))}
+        </div>
+        <PeriodSelector label="First applied period" value={period} onChange={setPeriod} />
+      </div>
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         {[
           { label: "Total earned", value: total ? usd(total.cents) : "—", icon: Wallet },
@@ -57,21 +72,6 @@ export function Earnings({
         ))}
       </div>
       <section className="panel p-5">
-        <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
-          <div className="flex gap-1">
-            {["bidder", "resume"].map((g) => (
-              <Button
-                key={g}
-                size="sm"
-                variant={group === g ? "secondary" : "ghost"}
-                onClick={() => setGroup(g)}
-              >
-                By {g}
-              </Button>
-            ))}
-          </div>
-          <PeriodSelector label="First applied period" value={period} onChange={setPeriod} />
-        </div>
         {error && <p role="alert" className="mb-4 text-sm text-destructive">{error}{report ? " Showing the last successful results for these filters." : ""} <Button size="sm" variant="outline" disabled={loading} onClick={refresh}>Retry</Button></p>}
         {loading && <p className="py-8 text-center text-sm text-muted-foreground" role="status">Loading earnings…</p>}
         {!loading && report && !groups.length ? (

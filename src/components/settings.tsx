@@ -109,7 +109,7 @@ export function Settings({ data }: { data: WorkspaceData }) {
           <p className="mb-5 mt-1 text-xs text-muted-foreground">
             Choose the view that feels right.
           </p>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             {[
               { name: "Light", value: "light", icon: Sun },
               { name: "Dark", value: "dark", icon: Moon },
@@ -127,7 +127,7 @@ export function Settings({ data }: { data: WorkspaceData }) {
             ))}
           </div>
         </section>
-        <section className="panel flex items-center justify-between gap-4 p-6">
+        <section className="panel flex flex-col items-start gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="font-semibold">Account security</h2>
             <p className="mt-1 text-xs text-muted-foreground">
