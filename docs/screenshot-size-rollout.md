@@ -2,7 +2,9 @@
 
 This release adds exact-byte metadata to manager `list_bids_v2` rows and manager screenshot controls in Bids and embedded bidder activity. Matching size is a review aid, not proof of matching image content. Existing file access, screenshot-presence controls, period defaults and bidder views stay in place.
 
-Apply the forward migration `202610120008_screenshot_size_matching.sql` after the existing migrations through `202610120007`. Deploy migrations first: additional manager JSON fields and supported sort IDs are compatible with the previous application. The new application's optional metadata transport renders an attached screenshot with unavailable metadata as **Size unavailable**. Do not deploy the feature before the migration and then interpret that fallback as successful feature verification. Keep financial enforcement and invoker/RLS safeguards in place during application rollback; do not remove earlier migrations or regrant financial columns.
+Apply the forward migrations `202610120008_screenshot_size_matching.sql` and `202610120009_file_read_scope.sql` after the existing migrations through `202610120007`. Deploy migrations first: additional manager JSON fields and supported sort IDs are compatible with the previous application. The new application's optional metadata transport renders an attached screenshot with unavailable metadata as **Size unavailable**. Do not deploy the feature before these migrations and then interpret that fallback as successful feature verification. Keep financial enforcement and invoker/RLS safeguards in place during application rollback; do not remove earlier migrations or regrant financial columns.
+
+The hosted staging benchmark against frozen migration 008 failed its first ordinary found-date case with statement-timeout code `57014`. The measured plan exposed repeated file RLS work and repeated size aggregate/count joins. Migration 009 is an additive performance follow-up: it expresses the equivalent file SELECT scope through the existing readable-bid scope and computes each full-result size count once in the materialized evidence snapshot. It retains the invoker function, role boundaries, explicit safe projections, filter/sort/period contracts and existing upload/storage grants. Migration 008 remains unchanged. A new complete benchmark after 009 must pass before staging application acceptance or production rollout; the failed 008 run is not a release pass.
 
 ## Local and staging gates
 
@@ -14,7 +16,7 @@ node scripts/screenshot-size-staging-benchmark.mjs --self-test
 node --check scripts/reporting-production-smoke.mjs
 ```
 
-Run the baseline **before** migration008, with the current schema through007. Use process-scoped staging credentials from the established approved mechanism or an existing dedicated staging environment file; never edit the original environment files. The URL must be exactly `https://kdmvludtvhuuewmhurpw.supabase.co` and `--staging-ready` is mandatory even for cleanup. Choose a fresh receipt filename for every run; an existing receipt is never overwritten by a new benchmark.
+Run the baseline **before** migration 008, with the current schema through 007. If 008 is already applied, preserve the completed pre008 baseline receipt rather than running `--before` against the new response shape. Use process-scoped staging credentials from the established approved mechanism or an existing dedicated staging environment file; never edit the original environment files. The URL must be exactly `https://kdmvludtvhuuewmhurpw.supabase.co` and `--staging-ready` is mandatory even for cleanup. Choose a fresh receipt filename for every run; an existing receipt is never overwritten by a new benchmark.
 
 ```powershell
 node --env-file=.env.staging scripts/screenshot-size-staging-benchmark.mjs --before --staging-ready --receipt .superpowers/sdd/2026-10-12-screenshot-size-matching/hosted-receipts/before-008.json
@@ -23,14 +25,14 @@ if ($LASTEXITCODE -ne 0) { throw "Baseline or cleanup failed; inspect the saniti
 
 Baseline mode exercises only ordinary found-date ordering and requires the pre008 response without metadata fields. It seeds the same metadata fixture shape as the post run, including 25,000 main-workspace bids, five additional bids in a separate synthetic workspace and finalized/current, unique, repeated, near-equal, manual, missing, unfinalized, historical, mismatched-scope and trashed examples. It cleans the whole fixture before proceeding. Require `passed: true`, `cleanupComplete: true`, zero `cleanupCounts` and `signupNotificationCount: 0` in the baseline receipt.
 
-Use an isolated Supabase CLI workdir linked explicitly to the dedicated staging project. Inspect migration history and `db push --linked --dry-run`; require exactly008 pending and resolve any history mismatch before applying. Apply that reviewed artifact, wait for PostgREST schema-cache refresh and run the post benchmark:
+Use an isolated Supabase CLI workdir linked explicitly to the dedicated staging project. Preserve the frozen 008 migration and failed `after-008.json` receipt, and require complete cleanup of that failed fixture. Inspect migration history and `db push --linked --dry-run`; on staging where 008 is applied, require exactly 009 pending. On a fresh target through 007, require exactly 008 and 009 pending. Resolve any history mismatch before applying. Review 009's authorization-equivalence and differential query tests, apply the reviewed additive artifact, wait for PostgREST schema-cache refresh and rerun the unchanged full-size benchmark with a new receipt:
 
 ```powershell
-node --env-file=.env.staging scripts/screenshot-size-staging-benchmark.mjs --staging-ready --keep-fixture --receipt .superpowers/sdd/2026-10-12-screenshot-size-matching/hosted-receipts/after-008.json
+node --env-file=.env.staging scripts/screenshot-size-staging-benchmark.mjs --staging-ready --keep-fixture --receipt .superpowers/sdd/2026-10-12-screenshot-size-matching/hosted-receipts/after-009.json
 if ($LASTEXITCODE -ne 0) { throw "Post benchmark failed; inspect fixture cleanup receipt" }
 ```
 
-The post gate covers authenticated client, admin and bidder sessions, full and recent date ranges, found-date ordering and both size directions. Each role/range/sort case uses five concurrent readers and at least25 samples across first, second, middle and last pages. It independently computes the full filtered result's exact counts, NULLS LAST and tie order, and verifies bidder field omission/unsupported-sort fallback, cross-workspace/bidder restrictions and denied direct financial-column reads. Additional cases check admin results across both isolated workspaces, a bidder-restricted manager filter and existing screenshot-presence ordering. Every measured case requires raw p95 below2,000ms; any provider error, including `57014`, fails. Preserve both receipts; compare ordinary baseline/post cases and resolve regressions even when a new-feature case meets the threshold.
+The post009 gate covers authenticated client, admin and bidder sessions, full and recent date ranges, found-date ordering and both size directions. Keep the same 25,000 main bids, representative metadata, five concurrent readers and at least 25 samples per role/range/sort case across first, second, middle and last pages. It independently computes the full filtered result's exact counts, NULLS LAST and tie order, and verifies bidder field omission/unsupported-sort fallback, cross-workspace/bidder restrictions and denied direct financial-column reads. Additional cases check admin results across both isolated workspaces, a bidder-restricted manager filter and existing screenshot-presence ordering. Every measured case requires raw p95 below 2,000ms; any provider error, including `57014`, fails. Preserve the pre008 baseline, failed 008 and new 009 receipts; compare ordinary baseline/post cases and resolve regressions even when a new-feature case meets the threshold. Do not increase statement timeouts, reduce the fixture/concurrency/sample counts or waive cleanup to obtain a pass.
 
 The bootstrap account uses a uniquely marked `client_provisions` reservation with a single existing active approved **staging** admin UUID as `created_by`. That admin is read only and is never authenticated or updated. All other provisions reference the synthetic owner. Planned reservation/Auth IDs and marked emails are flushed to the receipt before writes. Managed provisioning avoids public signup notifications/pushes; no public signup fallback exists. No customer workspace is seeded or cleaned.
 
@@ -52,11 +54,18 @@ The benchmark does **not** upload storage objects. Its synthetic metadata can ex
 Run after staged app acceptance, including when acceptance fails:
 
 ```powershell
-node --env-file=.env.staging scripts/screenshot-size-staging-benchmark.mjs --cleanup-only --staging-ready --receipt .superpowers/sdd/2026-10-12-screenshot-size-matching/hosted-receipts/after-008.json
+node --env-file=.env.staging scripts/screenshot-size-staging-benchmark.mjs --cleanup-only --staging-ready --receipt .superpowers/sdd/2026-10-12-screenshot-size-matching/hosted-receipts/after-009.json
 if ($LASTEXITCODE -ne 0) { throw "Fixture cleanup incomplete; preserve receipt for recovery" }
 ```
 
-The same command is idempotent after partial cleanup or a killed process. For a failed/interrupted baseline use its original receipt:
+The same command is idempotent after partial cleanup or a killed process. For the failed 008 run, recover only its original fixture before applying 009 or seeding another benchmark:
+
+```powershell
+node --env-file=.env.staging scripts/screenshot-size-staging-benchmark.mjs --cleanup-only --staging-ready --receipt .superpowers/sdd/2026-10-12-screenshot-size-matching/hosted-receipts/after-008.json
+if ($LASTEXITCODE -ne 0) { throw "Failed 008 fixture cleanup incomplete" }
+```
+
+For a failed/interrupted baseline use its original receipt:
 
 ```powershell
 node --env-file=.env.staging scripts/screenshot-size-staging-benchmark.mjs --cleanup-only --staging-ready --receipt .superpowers/sdd/2026-10-12-screenshot-size-matching/hosted-receipts/before-008.json
@@ -68,11 +77,11 @@ Cleanup deletes scoped bid events, clears bid/resume file pointers, then removes
 
 ## Production gate
 
-After staged acceptance and complete fixture cleanup, verify production's existing history through007, dry-run the same immutable migration artifact and require only008 pending. Apply the migration first, then deploy the **exact tested complete Git SHA** using production environment variables. Record the production deployment ID/alias, artifact SHA/checksum and migration receipt; do not substitute a new working-tree build or a different commit. Run:
+After the unchanged full benchmark passes on 009, staged application acceptance and complete fixture cleanup, verify production's existing history through 007. Dry-run the same immutable migration artifact and require exactly 008 and 009 pending. Apply both migrations first, then deploy the **exact tested complete Git SHA** using production environment variables. Record the production deployment ID/alias, artifact SHA/checksum, both migration receipts and passing post009 performance/cleanup evidence; do not substitute a new working-tree build or a different commit. Run:
 
 ```powershell
 node --env-file=.env.local scripts/reporting-production-smoke.mjs --production-read-only --arrangements --screenshot-sizes
 if ($LASTEXITCODE -ne 0) { throw "Production read-only smoke failed" }
 ```
 
-Production read-only reconciliation can encounter active edits between its independent source read and RPC snapshot. If this produces a mismatch, preserve sanitized phase/exit evidence, investigate the concurrent change and rerun read only; do not relax exact counts or write customers to manufacture a pass. Record unavailable-data coverage honestly. If the app must roll back, use the previous financial-safe compatible SHA and retain the additive migration. No backfill or screenshot download is required for this release.
+Production read-only reconciliation can encounter active edits between its independent source read and RPC snapshot. If this produces a mismatch, preserve sanitized phase/exit evidence, investigate the concurrent change and rerun read only; do not relax exact counts or write customers to manufacture a pass. Record unavailable-data coverage honestly. If the app must roll back, use the previous financial-safe compatible SHA and retain both additive migrations. No backfill or screenshot download is required for this release.
