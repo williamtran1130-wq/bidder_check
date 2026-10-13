@@ -56,8 +56,29 @@ type Measurement = {
   passed: boolean;
   samples: number;
   concurrency: number;
+  requests: RequestTiming[];
+};
+type RequestTiming = {
+  wave: number;
+  reader: number;
+  pageIndex: number;
+  durationMs: number;
+  errorCode: string | null;
+};
+type BenchmarkFailure = {
+  caseNumber: number;
+  role: string;
+  range: string;
+  scope: string;
+  sort: string;
+  descending: boolean;
+  mode: string;
+  status: string;
+  wave: number;
+  requests: RequestTiming[];
 };
 type Receipt = {
+  phase?: string;
   matrixKind?: "full" | "ordinary-baseline";
   representativeBids?: number;
   fixtureVolumeMultiple?: number;
@@ -68,14 +89,26 @@ type Receipt = {
   cleanupComplete: boolean;
   failure?: { code: string; phase: string };
   results: Measurement[];
+  benchmarkFailure?: BenchmarkFailure;
+  diagnosticHold?: {
+    seconds: number;
+    completed: boolean;
+    skipped?: boolean;
+    elapsedMs?: number;
+  };
 };
 type Scenario = {
   ordinaryOnly?: boolean;
   representativeBids?: string | null;
   slowCase?: number;
   slowMs?: number;
-  failure?: "provider" | "validation" | "scope" | "financial";
+  failure?: "provider" | "validation" | "scope" | "financial" | "seed";
   failureCase?: number;
+  failureReads?: number[];
+  providerCode?: string;
+  holdSeconds?: string;
+  holdSaveFailure?: boolean;
+  holdOvershoot?: boolean;
   before?: boolean;
   usePlan?: boolean;
 };
@@ -95,6 +128,9 @@ async function runMatrix(scenario: Scenario = {}) {
   const snapshots: Receipt[] = [];
   const queries: Record<string, unknown>[] = [];
   const featureChecks: boolean[] = [];
+  const holdWaits: number[] = [];
+  const holdLogs: Record<string, unknown>[] = [];
+  let holdClock = 0;
   const planPath = scenario.usePlan
     ? path.join(
         mkdtempSync(
@@ -140,6 +176,8 @@ async function runMatrix(scenario: Scenario = {}) {
   if (scenario.representativeBids !== null)
     args.push("--representative-bids", scenario.representativeBids ?? "12000");
   if (scenario.ordinaryOnly) args.push("--ordinary-only");
+  if (scenario.holdSeconds !== undefined)
+    args.push("--diagnostic-hold-seconds", scenario.holdSeconds);
   const processStub = {
     env: {
       NEXT_PUBLIC_SUPABASE_URL: "https://staging.invalid",
@@ -187,8 +225,14 @@ async function runMatrix(scenario: Scenario = {}) {
         data: {},
         error:
           scenario.failure === "provider" &&
-          timedReads === (scenario.failureCase ?? 0) * 25 + 1
-            ? { code: "57014" }
+          (scenario.failureReads ?? [1]).includes(
+            timedReads - (scenario.failureCase ?? 0) * 25,
+          )
+            ? {
+                code: scenario.providerCode ?? "57014",
+                message: "PRIVATE raw provider message",
+                details: "PRIVATE token and row values",
+              }
             : null,
       };
     },
@@ -220,7 +264,13 @@ async function runMatrix(scenario: Scenario = {}) {
     }),
     randomUUID,
     path,
-    console: { log: () => {}, error: () => {} },
+    console: {
+      log: (value: string) => {
+        const event = JSON.parse(value);
+        if (event.diagnosticHold) holdLogs.push(event);
+      },
+      error: () => {},
+    },
     process: processStub,
     STAGING: processStub.env.NEXT_PUBLIC_SUPABASE_URL,
     PREFIX: "screenshot-size-bench-",
@@ -230,6 +280,7 @@ async function runMatrix(scenario: Scenario = {}) {
     recovery: false,
     keep: !scenario.before,
     failed: false,
+    diagnosticHoldSeconds: 0,
     results: [] as Measurement[],
     sessions: [client],
     service: undefined,
@@ -254,7 +305,14 @@ async function runMatrix(scenario: Scenario = {}) {
     assertFreshPlan,
     verifyUnusedPlan,
     claimPlan,
-    save: async () => snapshots.push(structuredClone(context.receipt!)),
+    save: async () => {
+      if (
+        scenario.holdSaveFailure &&
+        context.receipt?.phase === "diagnostic-hold"
+      )
+        throw new Error("Synthetic receipt save failure");
+      snapshots.push(structuredClone(context.receipt!));
+    },
     account: async (planned: { id: string }, role: string) => {
       if (planPath)
         assert.ok(
@@ -267,7 +325,10 @@ async function runMatrix(scenario: Scenario = {}) {
     fromZonedTime: () => new Date("2026-10-12T00:00:00Z"),
     shift: () => "2026-10-12",
     fixture: () => ({ files: [], assignments: [], bids: [], finalBids: [] }),
-    chunks: async () => {},
+    chunks: async () => {
+      if (scenario.failure === "seed")
+        throw new Error("Synthetic seed failure");
+    },
     ok: (response: { error: { code: string } | null; data: unknown }) => {
       if (response.error) throw Object.assign(new Error(), response.error);
       return response.data;
@@ -291,6 +352,7 @@ async function runMatrix(scenario: Scenario = {}) {
     },
     performance: {
       now: () => {
+        if (context.receipt?.phase === "diagnostic-hold") return holdClock;
         const caseIndex = Math.floor(clockCalls / 50);
         const wavePosition = clockCalls++ % 10;
         return wavePosition < 5
@@ -299,6 +361,11 @@ async function runMatrix(scenario: Scenario = {}) {
             ? (scenario.slowMs ?? 11000)
             : 1000;
       },
+    },
+    setTimeout: (resolve: () => void, milliseconds: number) => {
+      holdWaits.push(milliseconds);
+      holdClock += scenario.holdOvershoot ? 180000 : milliseconds;
+      resolve();
     },
     cleanup: async () => {
       cleanupCalls++;
@@ -323,10 +390,204 @@ async function runMatrix(scenario: Scenario = {}) {
     setupCalls,
     queries,
     featureChecks,
+    holdWaits,
+    holdLogs,
   };
 }
 
 describe("staging benchmark matrix latency gate", () => {
+  it("holds only explicit benchmark failures for a fixed monotonic bound after saving context, then cleans", async () => {
+    const run = await runMatrix({ failure: "provider", holdSeconds: "120" });
+    expect(run.holdWaits).toEqual([30000, 30000, 30000, 30000]);
+    expect(run.holdLogs.map((event) => event.remainingSeconds)).toEqual([
+      120, 90, 60, 30, 0,
+    ]);
+    const failureSaved = run.snapshots.findIndex(
+      (snapshot) =>
+        snapshot.failure?.code === "57014" && !!snapshot.benchmarkFailure,
+    );
+    const holdSaved = run.snapshots.findIndex(
+      (snapshot) => snapshot.diagnosticHold?.seconds === 120,
+    );
+    expect(failureSaved).toBeGreaterThanOrEqual(0);
+    expect(holdSaved).toBeGreaterThan(failureSaved);
+    expect(run.receipt.diagnosticHold).toMatchObject({
+      seconds: 120,
+      completed: true,
+      elapsedMs: 120000,
+    });
+    expect(run.timedReads).toBe(5);
+    expect(run.cleanupCalls).toBe(1);
+    expect(run.receipt.cleanupComplete).toBe(true);
+    expect(run.exitCode).toBe(1);
+    expect(run.signOutCalls).toBe(1);
+  });
+  it("does not reset the hold deadline after an external delay", async () => {
+    const run = await runMatrix({
+      failure: "provider",
+      holdSeconds: "120",
+      holdOvershoot: true,
+    });
+    expect(run.holdWaits).toEqual([30000]);
+    expect(run.receipt.diagnosticHold).toMatchObject({
+      completed: true,
+      elapsedMs: 180000,
+    });
+    expect(run.cleanupCalls).toBe(1);
+  });
+  it.each([undefined, "0"])(
+    "keeps default/zero hold behavior immediate",
+    async (holdSeconds) => {
+      const run = await runMatrix({ failure: "provider", holdSeconds });
+      expect(run.holdWaits).toEqual([]);
+      expect(run.receipt.diagnosticHold).toBeUndefined();
+      expect(run.cleanupCalls).toBe(1);
+    },
+  );
+  it("skips holds for nonbenchmark failures and fully passed runs", async () => {
+    for (const scenario of [{ failure: "seed" as const }, {}]) {
+      const run = await runMatrix({ ...scenario, holdSeconds: "120" });
+      expect(run.holdWaits).toEqual([]);
+      expect(run.receipt.diagnosticHold).toBeUndefined();
+    }
+  });
+  it("skips an unpersisted diagnostic hold and still executes cleanup", async () => {
+    const run = await runMatrix({
+      failure: "provider",
+      holdSeconds: "120",
+      holdSaveFailure: true,
+    });
+    expect(run.holdWaits).toEqual([]);
+    expect(run.receipt.diagnosticHold).toMatchObject({
+      completed: false,
+      skipped: true,
+    });
+    expect(run.receipt.failure?.code).toBe("57014");
+    expect(run.cleanupCalls).toBe(1);
+    expect(run.exitCode).toBe(1);
+  });
+  it.each(["", "-1", "121", "1.5", "Infinity", "1e2", "NaN"])(
+    "rejects invalid hold %s before hosted setup",
+    async (holdSeconds) => {
+      const run = await runMatrix({ holdSeconds });
+      expect(run.setupCalls).toBe(0);
+      expect(run.receipt).toBeUndefined();
+      expect(run.holdWaits).toEqual([]);
+      expect(run.exitCode).toBe(1);
+    },
+  );
+
+  it("persists every settled reader in a failed later wave before cleanup, including successful siblings", async () => {
+    const run = await runMatrix({
+      failure: "provider",
+      failureCase: 6,
+      failureReads: [11, 14],
+    });
+    expect(run.timedReads).toBe(165);
+    expect(run.results).toHaveLength(6);
+    const diagnostic = run.receipt.benchmarkFailure;
+    expect(diagnostic).toMatchObject({
+      caseNumber: 7,
+      role: "client",
+      range: "recent",
+      scope: "main",
+      sort: "found_at",
+      descending: true,
+      mode: "ordinary",
+      status: "all",
+      wave: 3,
+    });
+    expect(diagnostic?.requests).toHaveLength(15);
+    expect(diagnostic?.requests.slice(-5)).toEqual([
+      {
+        wave: 3,
+        reader: 1,
+        pageIndex: 0,
+        durationMs: 1000,
+        errorCode: "57014",
+      },
+      { wave: 3, reader: 2, pageIndex: 1, durationMs: 1000, errorCode: null },
+      { wave: 3, reader: 3, pageIndex: 2, durationMs: 1000, errorCode: null },
+      {
+        wave: 3,
+        reader: 4,
+        pageIndex: 3,
+        durationMs: 1000,
+        errorCode: "57014",
+      },
+      { wave: 3, reader: 5, pageIndex: 4, durationMs: 1000, errorCode: null },
+    ]);
+    expect(
+      run.snapshots.some(
+        (snapshot) =>
+          snapshot.benchmarkFailure?.requests.length === 15 &&
+          !snapshot.cleanupComplete,
+      ),
+    ).toBe(true);
+    expect(run.receipt.failure?.code).toBe("57014");
+    expect(run.cleanupCalls).toBe(1);
+    expect(run.receipt.cleanupComplete).toBe(true);
+    expect(run.exitCode).toBe(1);
+    expect(JSON.stringify(diagnostic)).not.toMatch(
+      /PRIVATE|synthetic|p_query|search|workspace_id|bidder_id|token|message|details/,
+    );
+  });
+
+  it("stores raw per-request timings for every completed case without changing matrix volume or p95", async () => {
+    const run = await runMatrix({ slowCase: 56, slowMs: 9999.999 });
+    expect(run.timedReads).toBe(1425);
+    expect(run.results).toHaveLength(57);
+    expect(
+      run.results.every((measurement) => measurement.requests?.length === 25),
+    ).toBe(true);
+    expect(
+      run.results[56].requests?.map((request) => request.durationMs),
+    ).toEqual(Array(25).fill(9999.999));
+    expect(run.results[56]).toMatchObject({
+      p95Ms: 9999.999,
+      maxMs: 10000,
+      passed: true,
+      samples: 25,
+      concurrency: 5,
+    });
+    expect(
+      run.results[56].requests
+        ?.slice(0, 5)
+        .map((request) => [
+          request.wave,
+          request.reader,
+          request.pageIndex,
+          request.errorCode,
+        ]),
+    ).toEqual([
+      [1, 1, 0, null],
+      [1, 2, 1, null],
+      [1, 3, 2, null],
+      [1, 4, 3, null],
+      [1, 5, 4, null],
+    ]);
+    expect(run.receipt.benchmarkFailure).toBeUndefined();
+  });
+
+  it("captures validation failures after their original raw RPC timing and withholds unrecognized provider codes", async () => {
+    const validation = await runMatrix({ failure: "validation" });
+    expect(validation.receipt.benchmarkFailure?.requests).toHaveLength(5);
+    expect(validation.receipt.benchmarkFailure?.requests[0]).toMatchObject({
+      durationMs: 1000,
+      errorCode: "ERR_ASSERTION",
+    });
+    const provider = await runMatrix({
+      failure: "provider",
+      providerCode: "PRIVATE-secret-code",
+    });
+    expect(provider.receipt.benchmarkFailure?.requests[0].errorCode).toBe(
+      "UNKNOWN",
+    );
+    expect(JSON.stringify(provider.receipt.benchmarkFailure)).not.toContain(
+      "PRIVATE",
+    );
+  });
+
   it("records all 57 cases after a latency failure, then fails and cleans despite keep", async () => {
     const run = await runMatrix({ slowCase: 0 });
     expect(run.results).toHaveLength(57);

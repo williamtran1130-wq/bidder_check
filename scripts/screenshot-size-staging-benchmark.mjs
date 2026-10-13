@@ -27,6 +27,7 @@ const results = [];
 const sessions = [];
 let service, receipt, receiptPath;
 let failed = false;
+let diagnosticHoldSeconds = 0;
 
 function option(name) {
   const index = args.indexOf(name);
@@ -408,6 +409,14 @@ async function benchmark(
 ) {
   const e = expected(fixtureData, actor, range, sort, scope, search, mode);
   const samples = [];
+  const requests = [];
+  // Never include provider messages/details, identities, or query values.
+  const diagnosticCode = (error) => {
+    const code = String(error?.code ?? "");
+    return /^(?:[0-9A-Z]{5}|PGRST\d{3}|ERR_ASSERTION|[1-5]\d{2})$/.test(code)
+      ? code
+      : "UNKNOWN";
+  };
   const pageSize = 100;
   const last = Math.max(0, Math.ceil(e.rows.length / pageSize) - 1);
   const pages = [
@@ -418,35 +427,73 @@ async function benchmark(
     last,
   ];
   for (let wave = 0; wave < 5; wave++) {
+    const waveRequests = new Array(pages.length);
     const settled = await Promise.allSettled(
-      pages.map(async (pageIndex) => {
+      pages.map(async (pageIndex, reader) => {
         const start = performance.now();
-        const data = ok(
-          await actor.client.rpc("list_bids_v2", {
-            p_query: {
-              search,
-              scopeBidderId: scope ?? undefined,
-              rangeFrom: range.from,
-              rangeTo: range.to,
-              pageIndex,
-              pageSize,
-              sorting: [sort],
-              status: mode.status ?? "all",
-              arrangement: mode.arrangement,
-              columnFilters: {
-                screenshot: mode.repeated ? "Repeated sizes only" : "",
+        let duration;
+        try {
+          const data = ok(
+            await actor.client.rpc("list_bids_v2", {
+              p_query: {
+                search,
+                scopeBidderId: scope ?? undefined,
+                rangeFrom: range.from,
+                rangeTo: range.to,
+                pageIndex,
+                pageSize,
+                sorting: [sort],
+                status: mode.status ?? "all",
+                arrangement: mode.arrangement,
+                columnFilters: {
+                  screenshot: mode.repeated ? "Repeated sizes only" : "",
+                },
               },
-            },
-          }),
-        );
-        const duration = performance.now() - start;
-        validate(data, e, actor, pageIndex, pageSize, checkFeature);
-        samples.push(duration);
+            }),
+          );
+          duration = performance.now() - start;
+          validate(data, e, actor, pageIndex, pageSize, checkFeature);
+          samples.push(duration);
+          waveRequests[reader] = {
+            wave: wave + 1,
+            reader: reader + 1,
+            pageIndex,
+            durationMs: duration,
+            errorCode: null,
+          };
+        } catch (error) {
+          waveRequests[reader] = {
+            wave: wave + 1,
+            reader: reader + 1,
+            pageIndex,
+            durationMs: duration ?? performance.now() - start,
+            errorCode: diagnosticCode(error),
+          };
+          throw error;
+        }
       }),
     );
     // Wait for every reader before cleanup, even when a sibling fails.
+    requests.push(...waveRequests);
     for (const result of settled)
-      if (result.status === "rejected") throw result.reason;
+      if (result.status === "rejected") {
+        receipt.benchmarkFailure = {
+          caseNumber: results.length + 1,
+          role: actor.role,
+          range: range.name,
+          scope: label,
+          sort: sort.id,
+          descending: sort.desc,
+          mode: mode.repeated ? "repeated" : "ordinary",
+          status: mode.status ?? "all",
+          wave: wave + 1,
+          requests,
+        };
+        // Best effort here, then the existing failure handler retries save
+        // before cleanup. Preserve the original first reader rejection.
+        await save().catch(() => {});
+        throw result.reason;
+      }
   }
   samples.sort((a, b) => a - b);
   const p95 = samples[Math.ceil(samples.length * 0.95) - 1];
@@ -466,11 +513,65 @@ async function benchmark(
     p95Ms: p95,
     maxMs: Math.round(samples.at(-1)),
     passed: p95 < P95_LIMIT_MS,
+    requests,
   };
   results.push(measurement);
   receipt.results = results;
   await save();
   console.log(JSON.stringify(measurement));
+}
+
+async function diagnosticHold() {
+  if (
+    !diagnosticHoldSeconds ||
+    !receipt?.started ||
+    recovery ||
+    receipt.failure?.phase !== "benchmark"
+  )
+    return;
+  const previousPhase = receipt.phase;
+  receipt.phase = "diagnostic-hold";
+  const start = performance.now();
+  const deadline = start + diagnosticHoldSeconds * 1000;
+  const wallStart = Date.now();
+  const hold = {
+    seconds: diagnosticHoldSeconds,
+    startedAt: new Date(wallStart).toISOString(),
+    expiresAt: new Date(wallStart + diagnosticHoldSeconds * 1000).toISOString(),
+    completed: false,
+  };
+  receipt.diagnosticHold = hold;
+  try {
+    await save();
+  } catch {
+    hold.skipped = true;
+    receipt.phase = previousPhase;
+    return;
+  }
+  const update = (remainingSeconds) =>
+    console.log(
+      JSON.stringify({
+        diagnosticHold: true,
+        phase: "diagnostic-hold",
+        remainingSeconds,
+      }),
+    );
+  update(diagnosticHoldSeconds);
+  try {
+    for (;;) {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) break;
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(30000, remaining)),
+      );
+      update(Math.max(0, Math.ceil((deadline - performance.now()) / 1000)));
+    }
+  } finally {
+    hold.completed = true;
+    hold.elapsedMs = performance.now() - start;
+    receipt.phase = previousPhase;
+    await save().catch(() => {});
+  }
 }
 
 async function verifyCleanupScope() {
@@ -766,14 +867,28 @@ async function main() {
         "--use-plan",
         "--representative-bids",
         "--ordinary-only",
+        "--diagnostic-hold-seconds",
       ].includes(args[index]),
       "Unsupported flag",
     );
     if (
-      ["--receipt", "--use-plan", "--representative-bids"].includes(args[index])
+      [
+        "--receipt",
+        "--use-plan",
+        "--representative-bids",
+        "--diagnostic-hold-seconds",
+      ].includes(args[index])
     )
       index++;
   }
+  const holdSeconds = option("--diagnostic-hold-seconds") ?? "0";
+  assert.ok(
+    /^\d+$/.test(holdSeconds) &&
+      Number(holdSeconds) <= 120 &&
+      args.filter((arg) => arg === "--diagnostic-hold-seconds").length <= 1,
+    "Diagnostic hold must be one integer from 0 through 120 seconds",
+  );
+  diagnosticHoldSeconds = Number(holdSeconds);
   const representative =
     !planOnly && !recovery ? option("--representative-bids") : null;
   if (!planOnly && !recovery) {
@@ -1152,8 +1267,12 @@ if (args.includes("--self-test")) {
         passed: false,
         code: error.code ?? error.name,
         phase: receipt?.phase ?? "configuration",
+        benchmark: receipt?.benchmarkFailure,
       }),
     );
+    // External read-only plan capture may use this explicit bounded window.
+    // Never retain a failed fixture or bypass the existing cleanup finally.
+    await diagnosticHold().catch(() => {});
   } finally {
     for (const client of sessions)
       await client.auth.signOut({ scope: "local" }).catch(() => {});
