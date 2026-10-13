@@ -1,7 +1,8 @@
 import "server-only";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "./database.types";
-export function adminClient(bounded = false) {
+type RequestBudget = { deadlineAt: number; signal?: AbortSignal };
+export function adminClient(bounded: boolean | RequestBudget = false) {
   const key = process.env.SUPABASE_SECRET_KEY;
   if (!key)
     throw new Error(
@@ -12,8 +13,38 @@ export function adminClient(bounded = false) {
     ...(bounded
       ? {
           global: {
-            fetch: (input: RequestInfo | URL, init?: RequestInit) =>
-              fetch(input, { ...init, signal: AbortSignal.timeout(15000) }),
+            fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+              const remaining =
+                typeof bounded === "boolean"
+                  ? 15000
+                  : Math.min(15000, bounded.deadlineAt - Date.now());
+              if (remaining <= 0) throw new Error("Worker budget expired");
+              const timeout = new AbortController();
+              const timer = setTimeout(
+                () => timeout.abort(new Error("Worker request budget expired")),
+                remaining,
+              );
+              // fetch resolves at headers. Keep cancellation active through body
+              // consumption; an unref timer cannot hold the worker open.
+              timer.unref?.();
+              const callerSignal =
+                init?.signal ??
+                (input instanceof Request ? input.signal : undefined);
+              const signals = [
+                timeout.signal,
+                callerSignal,
+                typeof bounded === "boolean" ? undefined : bounded.signal,
+              ].filter((signal): signal is AbortSignal => !!signal);
+              try {
+                return await fetch(input, {
+                  ...init,
+                  signal: AbortSignal.any(signals),
+                });
+              } catch (error) {
+                clearTimeout(timer);
+                throw error;
+              }
+            },
           },
         }
       : {}),

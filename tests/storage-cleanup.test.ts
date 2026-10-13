@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const { rpc, remove, worker } = vi.hoisted(() => ({
   rpc: vi.fn(),
   remove: vi.fn(),
@@ -27,9 +27,9 @@ it("removes objects through Storage and records failures for a later retry", asy
     failed: 1,
   });
   expect(remove).toHaveBeenCalledWith(["private/path"]);
-  expect(rpc).toHaveBeenLastCalledWith("finish_storage_cleanup", {
-    p_task: "task",
-    p_lease: "lease",
+  expect(rpc).toHaveBeenLastCalledWith("finish_storage_cleanup_batch", {
+    p_tasks: ["task"],
+    p_leases: ["lease"],
     p_success: false,
   });
 });
@@ -41,9 +41,9 @@ it("does not mark a rejected Storage request successful", async () => {
     .mockResolvedValue({ error: null });
   remove.mockRejectedValue(new Error("Network timeout"));
   await runStorageCleanup();
-  expect(rpc).toHaveBeenLastCalledWith("finish_storage_cleanup", {
-    p_task: "task",
-    p_lease: "lease",
+  expect(rpc).toHaveBeenLastCalledWith("finish_storage_cleanup_batch", {
+    p_tasks: ["task"],
+    p_leases: ["lease"],
     p_success: false,
   });
 });
@@ -55,9 +55,9 @@ it("passes successful removal to the database verification state", async () => {
     .mockResolvedValue({ error: null });
   remove.mockResolvedValue({ error: null });
   await runStorageCleanup();
-  expect(rpc).toHaveBeenLastCalledWith("finish_storage_cleanup", {
-    p_task: "task",
-    p_lease: "lease",
+  expect(rpc).toHaveBeenLastCalledWith("finish_storage_cleanup_batch", {
+    p_tasks: ["task"],
+    p_leases: ["lease"],
     p_success: true,
   });
 });
@@ -127,4 +127,93 @@ it("logs counts only, never file paths or Storage error text", async () => {
   expect(logged).not.toMatch(/private|secret/);
   log.mockRestore();
   info.mockRestore();
+});
+
+afterEach(() => vi.useRealTimers());
+it("uses one shared absolute deadline and reserves five seconds before claiming more work", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(0);
+  rpc.mockImplementation(async (name: string) => {
+    if (name === "claim_storage_cleanup") {
+      await new Promise((resolve) => setTimeout(resolve, 14000));
+      return { data: batch(50), error: null };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 14000));
+    return { error: null };
+  });
+  remove.mockImplementation(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 14000));
+    return { error: null };
+  });
+  const result = runStorageCleanup(undefined, {
+    maxBatches: 20,
+    deadlineAt: 50000,
+  });
+  let settled = false;
+  const observed = result.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  await vi.advanceTimersByTimeAsync(50001);
+  expect(settled).toBe(true);
+  await observed;
+  expect(
+    rpc.mock.calls.filter(([name]) => name === "claim_storage_cleanup"),
+  ).toHaveLength(2);
+  expect(remove).toHaveBeenCalledOnce();
+});
+it("does not begin a claim inside the deadline's five-second completion reserve", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(46000);
+  expect(
+    await runStorageCleanup(undefined, { maxBatches: 20, deadlineAt: 50000 }),
+  ).toEqual({ attempted: 0, succeeded: 0, failed: 0 });
+  expect(rpc).not.toHaveBeenCalled();
+});
+it("acknowledges a known successful batch once with every task's lease", async () => {
+  rpc
+    .mockResolvedValueOnce({ data: batch(50) })
+    .mockResolvedValue({ error: null });
+  remove.mockResolvedValue({ error: null });
+  expect(await runStorageCleanup()).toEqual({
+    attempted: 50,
+    succeeded: 50,
+    failed: 0,
+  });
+  const finishes = rpc.mock.calls.filter(
+    ([name]) => name !== "claim_storage_cleanup",
+  );
+  expect(finishes).toEqual([
+    [
+      "finish_storage_cleanup_batch",
+      {
+        p_tasks: Array.from({ length: 50 }, (_, i) => `p${i}`),
+        p_leases: Array.from({ length: 50 }, (_, i) => `l${i}`),
+        p_success: true,
+      },
+    ],
+  ]);
+});
+it("does not infer per-object success from an errored removal response", async () => {
+  rpc
+    .mockResolvedValueOnce({ data: batch(2) })
+    .mockResolvedValue({ error: null });
+  remove.mockResolvedValue({
+    data: [{ name: "private/p0" }],
+    error: { message: "partial or uncertain" },
+  });
+  expect(await runStorageCleanup()).toEqual({
+    attempted: 2,
+    succeeded: 0,
+    failed: 2,
+  });
+  expect(rpc).toHaveBeenLastCalledWith("finish_storage_cleanup_batch", {
+    p_tasks: ["p0", "p1"],
+    p_leases: ["l0", "l1"],
+    p_success: false,
+  });
 });

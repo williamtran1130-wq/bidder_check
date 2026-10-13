@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { Agent } from "node:https";
 import webpush from "web-push";
 import { adminClient } from "@/lib/admin";
+import { pushPreview } from "@/lib/push-preview";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -41,14 +42,16 @@ function authorized(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const deadline = Date.now() + 40000;
   if (!authorized(request))
     return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const deadline = Date.now() + 40000;
   const run = <T>(request: () => PromiseLike<T>) =>
     boundedRequest(request, deadline, 15000);
   let phase = "admin-client";
+  let accepted = 0;
+  let completionPending = 0;
   try {
-    const admin = adminClient(true);
+    const admin = adminClient({ deadlineAt: deadline, signal: request.signal });
     phase = "scheduled-messages";
     const { data: schedule, error: scheduleError } = await run(() =>
       admin.rpc("process_due_messages", {
@@ -76,7 +79,6 @@ export async function POST(request: Request) {
     webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
     phase = "push-attempts";
     let claimed = 0;
-    let accepted = 0;
     let retried = 0;
     let skipped = 0;
     while (claimed < 100 && Date.now() < deadline) {
@@ -99,8 +101,9 @@ export async function POST(request: Request) {
       }>;
       if (!attempts?.length) break;
       claimed += attempts.length;
-      await Promise.all(
+      const settled = await Promise.allSettled(
         (attempts ?? []).map(async (attempt) => {
+          let providerAccepted = false;
           try {
             const { data: notification, error: notificationError } = await run(
               () =>
@@ -216,14 +219,12 @@ export async function POST(request: Request) {
                         auth: attempt.auth_secret,
                       },
                     },
-                    JSON.stringify({
-                      title: attempt.title,
-                      body: attempt.body,
-                      url:
-                        notification.href ??
-                        `/notifications?notification=${encodeURIComponent(attempt.notification_id)}`,
-                      notificationId: attempt.notification_id,
-                    }),
+                    pushPreview(
+                      attempt.title,
+                      attempt.body,
+                      notification.href,
+                      attempt.notification_id,
+                    ),
                     {
                       TTL: 300,
                       urgency: "normal",
@@ -234,6 +235,8 @@ export async function POST(request: Request) {
                 deadline,
                 5000,
               );
+              providerAccepted = true;
+              accepted++;
             } finally {
               providerAgent.destroy();
             }
@@ -246,8 +249,28 @@ export async function POST(request: Request) {
               }),
             );
             if (error) throw new Error(error.message);
-            accepted++;
           } catch (error) {
+            if (providerAccepted) {
+              // Retry only the successful completion, never the send or a failure
+              // transition. A crash before durable completion can still duplicate
+              // delivery after lease expiry: provider delivery is at least once.
+              try {
+                const { error: acknowledgementError } = await run(() =>
+                  admin.rpc("finish_push_attempt", {
+                    p_attempt: attempt.attempt_id,
+                    p_lease: attempt.lease_id,
+                    p_error: null,
+                    p_expired: false,
+                  }),
+                );
+                if (acknowledgementError)
+                  throw new Error(acknowledgementError.message);
+              } catch (acknowledgementError) {
+                completionPending++;
+                throw acknowledgementError;
+              }
+              return;
+            }
             // The durable lease expires even if there is no time for a completion RPC.
             if (Date.now() >= deadline) {
               retried++;
@@ -272,6 +295,8 @@ export async function POST(request: Request) {
           }
         }),
       );
+      const failure = settled.find((result) => result.status === "rejected");
+      if (failure?.status === "rejected") throw failure.reason;
     }
     return Response.json(
       { schedule, pushConfigured: true, claimed, accepted, retried, skipped },
@@ -280,7 +305,11 @@ export async function POST(request: Request) {
   } catch {
     console.error("[notifications] worker failed", { phase });
     return Response.json(
-      { error: "Notification delivery is queued for retry" },
+      {
+        error: "Notification delivery is queued for retry",
+        accepted,
+        completionPending,
+      },
       { status: 503 },
     );
   }
