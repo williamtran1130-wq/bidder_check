@@ -7,6 +7,14 @@ const bidder = "00000000-0000-4000-8000-000000000002";
 const pageSize = 25;
 const count = 2000;
 let db: PGlite;
+let fixture: {
+  id: string;
+  n: number;
+  found: number;
+  size: number | null;
+  applied: boolean;
+  pending: boolean;
+}[];
 
 type PlanNode = {
   "Node Type": string;
@@ -14,6 +22,10 @@ type PlanNode = {
   "Actual Rows": number;
   "Actual Loops": number;
   "Rows Removed by Join Filter"?: number;
+  "Plan Rows": number;
+  "Subplan Name"?: string;
+  "Relation Name"?: string;
+  Alias?: string;
   Plans?: PlanNode[];
 };
 
@@ -65,14 +77,14 @@ beforeAll(async () => {
   ).rows[0].id;
   await db.query(
     `insert into public.bids(workspace_id,bidder_id,resume_id,company,role_name,url,normalized_url,source,arrangement,found_at,review_status,review_revision)
-    select $1,$2,$3,'Plan '||n,'Engineer','https://query-plan.test/'||n,'https://query-plan.test/'||n,'synthetic','remote','2026-10-10 12:00Z'::timestamptz-n*interval '1 minute','approved',1
+    select $1,$2,$3,'Plan '||n,'Engineer','https://query-plan.test/'||n,'https://query-plan.test/'||n,'synthetic','remote',case when n%4=0 then '2010-01-01 18:00Z'::timestamptz else '2026-10-10 12:00Z'::timestamptz-n*interval '1 minute' end,'approved',1
     from generate_series(1,$4::integer) n`,
     [workspace, bidder, resume, count],
   );
   await db.query(
     `insert into public.files(workspace_id,bidder_id,kind,bid_id,filename,mime,size_bytes,storage_path,created_by,finalized,sha256,review_revision)
     select workspace_id,bidder_id,'screenshot',id,'synthetic.png','image/png',
-      case when split_part(company,' ',2)::integer<=2 then 100005 else 10240+split_part(company,' ',2)::integer%2 end,
+      case when split_part(company,' ',2)::integer=2000 then 1 when split_part(company,' ',2)::integer<=2 then 100005 else 10240+split_part(company,' ',2)::integer%2 end,
       id::text,$1,true,$2,review_revision from public.bids`,
     [owner, "a".repeat(64)],
   );
@@ -82,7 +94,35 @@ beforeAll(async () => {
       rate_cents=case when split_part(company,' ',2)::integer%4 in (0,1) then 100 end,
       applied_at=case when split_part(company,' ',2)::integer%4 in (0,1) then found_at end,
       review_status=case when split_part(company,' ',2)::integer%4=3 then 'pending' else 'approved' end;
+    update public.bids set evidence_file_id=null,application_method='manual' where company='Plan 1997';
+    update public.files set finalized=false where bid_id=(select id from public.bids where company='Plan 1998');
+    update public.files set bid_id=(select id from public.bids where company='Plan 1996') where bid_id=(select id from public.bids where company='Plan 1999');
     analyze public.bids; analyze public.files; analyze public.profiles; analyze public.bidders;`);
+  fixture = (
+    await db.query<{ id: string; company: string }>(
+      "select id,company from public.bids",
+    )
+  ).rows.map((row) => {
+    const n = Number(row.company.split(" ")[1]);
+    return {
+      id: row.id,
+      n,
+      found:
+        n % 4 === 0
+          ? Date.parse("2010-01-01T18:00Z")
+          : Date.parse("2026-10-10T12:00Z") - n * 60000,
+      size:
+        n >= 1997 && n <= 1999
+          ? null
+          : n === 2000
+            ? 1
+            : n <= 2
+              ? 100005
+              : 10240 + (n % 2),
+      applied: n % 4 === 0 || n % 4 === 1,
+      pending: n % 4 === 3,
+    };
+  });
   await db.exec("set role authenticated");
   await db.query(
     "select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claim.role','authenticated',false)",
@@ -94,13 +134,25 @@ afterAll(async () => {
   await db.close();
 });
 
-async function listingPlan(desc: boolean) {
+async function listingPlan(
+  desc: boolean,
+  repeated = true,
+  recent = false,
+  pageIndex = 20,
+  canViewSizes = true,
+) {
   const query = {
     search: "Plan",
     sorting: [{ id: "screenshot_size_bytes", desc }],
-    columnFilters: { screenshot: "Repeated sizes only" },
+    columnFilters: { screenshot: repeated ? "Repeated sizes only" : "" },
+    ...(recent
+      ? {
+          rangeFrom: "2026-09-13T05:00:00.000Z",
+          rangeTo: "2026-10-13T05:00:00.000Z",
+        }
+      : {}),
     pageSize,
-    pageIndex: 20,
+    pageIndex,
   };
   const body = (
     await db.query<{ body: string }>(
@@ -108,21 +160,21 @@ async function listingPlan(desc: boolean) {
     )
   ).rows[0].body;
   let statement = body.slice(
-    body.indexOf("with filtered as materialized"),
+    body.search(/with filtered as (?:not )?materialized/),
     body.indexOf(" into result;"),
   );
   const locals = {
     p_query: "($1::jsonb)",
-    page_index: "20",
+    page_index: String(pageIndex),
     page_size: String(pageSize),
-    sort_id: "'screenshot_size_bytes'",
+    sort_id: canViewSizes ? "'screenshot_size_bytes'" : "'found_at'",
     sort_desc: String(desc),
-    columns: '\'{"screenshot":"Repeated sizes only"}\'::jsonb',
+    columns: `'${JSON.stringify(canViewSizes ? query.columnFilters : { screenshot: "" })}'::jsonb`,
     bidder_filter: "''",
     resume_filter: "''",
     bidder_matches: "'{}'::uuid[]",
     resume_matches: "'{}'::uuid[]",
-    can_view_sizes: "true",
+    can_view_sizes: String(canViewSizes),
   };
   for (const [name, value] of Object.entries(locals))
     statement = statement.replace(new RegExp(`\\b${name}\\b`, "g"), value);
@@ -164,17 +216,177 @@ it.each([false, true])(
         };
       }>("select public.list_bids_v2($1::jsonb) value", [JSON.stringify(query)])
     ).rows[0].value;
-    expect(value.total).toBe(2000);
+    expect(value.total).toBe(1996);
     expect(value.statusCounts).toEqual({
-      all: 2000,
-      applied: 999,
-      unapplied: 999,
-      pending_review: 500,
+      all: 1996,
+      applied: 997,
+      unapplied: 997,
+      pending_review: 499,
     });
     expect(value.rows).toHaveLength(pageSize);
     expect(
-      value.rows.every((row) => row.screenshot_size_match_count === 999),
+      value.rows.every((row) => row.screenshot_size_match_count === 997),
     ).toBe(true);
   },
   60000,
 );
+
+// Derive expected membership from the known synthetic inputs, independently of
+// SQL joins/windows. Includes tiny unique bytes, invalid/missing evidence, date/tie ordering.
+function expectedRows(repeated: boolean, recent: boolean, desc: boolean) {
+  const base = fixture.filter((row) => !recent || row.n % 4 !== 0);
+  const counts = (rows: typeof fixture) => {
+    const sizes = new Map<number, number>();
+    for (const row of rows)
+      if (row.size !== null)
+        sizes.set(row.size, (sizes.get(row.size) ?? 0) + 1);
+    return sizes;
+  };
+  const sizes = counts(base);
+  const eligible = (rows: typeof fixture) => {
+    const groups = counts(rows);
+    return repeated
+      ? rows.filter((row) => row.size !== null && groups.get(row.size)! >= 2)
+      : rows;
+  };
+  const rows = eligible(base).sort((a, b) => {
+    const sizeOrder =
+      a.size === null
+        ? b.size === null
+          ? 0
+          : 1
+        : b.size === null
+          ? -1
+          : (a.size - b.size) * (desc ? -1 : 1);
+    return sizeOrder || b.found - a.found || a.id.localeCompare(b.id);
+  });
+  return {
+    rows,
+    sizes,
+    statusCounts: {
+      all: rows.length,
+      applied: eligible(base.filter((row) => row.applied)).length,
+      unapplied: eligible(base.filter((row) => !row.applied)).length,
+      pending_review: eligible(base.filter((row) => row.pending)).length,
+    },
+  };
+}
+
+it.each([
+  [false, false],
+  [false, true],
+  [true, false],
+  [true, true],
+])(
+  "keeps snapshot scans linear and returns every benchmark page (repeated=%s, descending=%s)",
+  async (repeated, desc) => {
+    for (const recent of [false, true]) {
+      const expected = expectedRows(repeated, recent, desc);
+      const last = Math.ceil(expected.rows.length / pageSize) - 1;
+      for (const pageIndex of [0, 1, Math.floor(last / 2), last - 1, last]) {
+        const { result, query } = await listingPlan(
+          desc,
+          repeated,
+          recent,
+          pageIndex,
+        );
+        const nodes: PlanNode[] = [];
+        const visit = (node: PlanNode) => {
+          nodes.push(node);
+          node.Plans?.forEach(visit);
+        };
+        visit(result.Plan);
+        const base = nodes.find(
+          (node) => node["Relation Name"] === "bids" && node.Alias === "b",
+        )!;
+        const evidence = nodes.find(
+          (node) => node["Subplan Name"] === "CTE current_evidence_sizes",
+        )!;
+        // Unique-PK LEFT JOIN keeps the authorized base's cardinality estimate.
+        expect(evidence["Plan Rows"]).toBe(base["Plan Rows"]);
+        expect(evidence["Actual Rows"]).toBe(base["Actual Rows"]);
+        const scans = nodes.filter(
+          (node) =>
+            node["CTE Name"] === "current_evidence_sizes" ||
+            node["CTE Name"] === "filtered" ||
+            node["Relation Name"] === "files",
+        );
+        expect(
+          Math.max(
+            ...scans
+              .filter((node) => node["Node Type"] !== "Index Scan")
+              .map((node) => node["Actual Loops"]),
+          ),
+        ).toBe(1);
+        const value = (
+          await db.query<{
+            value: {
+              total: number;
+              statusCounts: Record<string, number>;
+              rows: {
+                id: string;
+                company: string;
+                screenshot_size_bytes: number | null;
+                screenshot_size_match_count: number;
+              }[];
+            };
+          }>("select public.list_bids_v2($1::jsonb) value", [
+            JSON.stringify(query),
+          ])
+        ).rows[0].value;
+        expect(value.total).toBe(expected.rows.length);
+        expect(value.statusCounts).toEqual(expected.statusCounts);
+        expect(value.rows.map((row) => row.id)).toEqual(
+          expected.rows
+            .slice(pageIndex * pageSize, (pageIndex + 1) * pageSize)
+            .map((row) => row.id),
+        );
+        for (const row of value.rows) {
+          const input = fixture.find((input) => input.id === row.id)!;
+          expect(row.screenshot_size_bytes).toBe(input.size);
+          expect(row.screenshot_size_match_count).toBe(
+            input.size === null ? 0 : expected.sizes.get(input.size),
+          );
+        }
+      }
+    }
+  },
+  60000,
+);
+
+it("does no file scan or private metadata window work for an authenticated bidder", async () => {
+  await db.query("select set_config('request.jwt.claim.sub',$1,false)", [
+    bidder,
+  ]);
+  try {
+    const { result, query } = await listingPlan(true, true, true, 0, false);
+    const nodes: PlanNode[] = [];
+    const visit = (node: PlanNode) => {
+      nodes.push(node);
+      node.Plans?.forEach(visit);
+    };
+    visit(result.Plan);
+    expect(nodes.some((node) => node["Relation Name"] === "files")).toBe(false);
+    expect(
+      nodes.filter((node) => node["Node Type"] === "WindowAgg"),
+    ).toHaveLength(1); // only pagination row_number
+    const value = (
+      await db.query<{ value: { rows: Record<string, unknown>[] } }>(
+        "select public.list_bids_v2($1::jsonb) value",
+        [JSON.stringify(query)],
+      )
+    ).rows[0].value;
+    expect(value.rows).toHaveLength(pageSize);
+    expect(
+      value.rows.every(
+        (row) =>
+          !("screenshot_size_bytes" in row) &&
+          !("screenshot_size_match_count" in row),
+      ),
+    ).toBe(true);
+  } finally {
+    await db.query("select set_config('request.jwt.claim.sub',$1,false)", [
+      owner,
+    ]);
+  }
+});

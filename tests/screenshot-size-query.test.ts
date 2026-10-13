@@ -77,7 +77,7 @@ async function explainListing(canViewSizes: boolean, sort: string) {
     )
   ).rows[0].body;
   let statement = body.slice(
-    body.indexOf("with filtered as materialized"),
+    body.search(/with filtered as (?:not )?materialized/),
     body.indexOf(" into result;"),
   );
   const locals: Record<string, string> = {
