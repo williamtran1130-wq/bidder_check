@@ -1,9 +1,15 @@
 import "server-only";
 import { z } from "zod";
+import { unstable_rethrow } from "next/navigation";
 import { getActor } from "./auth";
-import * as reads from "./read-services";
-import * as notifications from "./notification-reads";
-import { readReport } from "./reporting-server";
+import { createReadServices } from "./read-services";
+import { createNotificationReads } from "./notification-reads";
+import { createReportReader } from "./reporting-server";
+// These hold functions only, never an actor/client. Services still check live
+// authorization; typed denials reach this HTTP boundary without Next redirects.
+const reads = createReadServices(getActor);
+const notifications = createNotificationReads(getActor);
+const readReport = createReportReader(getActor);
 const bidInput = z.tuple([
   z.string(),
   z.string(),
@@ -161,6 +167,7 @@ export async function handleRead(
     }
     return json(result);
   } catch (error) {
+    unstable_rethrow(error);
     const destination =
       error && typeof error === "object" && "destination" in error
         ? error.destination

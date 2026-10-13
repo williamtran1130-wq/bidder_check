@@ -3,14 +3,8 @@ import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "./server";
 import type { Row } from "./database.types";
-export class AuthorizationError extends Error {
-  constructor(
-    public readonly destination:
-      "/auth/login" | "/auth/approval" | "/auth/inactive",
-  ) {
-    super("Your access has changed. Please sign in again.");
-  }
-}
+import { AuthorizationError } from "./authorization-error";
+export { AuthorizationError } from "./authorization-error";
 /** React cache is request-local. Every new request confirms the live Auth user. */
 export const getActor = cache(async () => {
   const supabase = await createClient();

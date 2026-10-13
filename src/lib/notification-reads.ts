@@ -1,7 +1,8 @@
 import "server-only";
 import { z } from "zod";
 import { unstable_rethrow } from "next/navigation";
-import { getContext } from "@/lib/auth";
+import { getContext, type getActor } from "@/lib/auth";
+import { AuthorizationError } from "./authorization-error";
 import type { Database } from "@/lib/database.types";
 import type {
   InboxNotification,
@@ -38,6 +39,7 @@ async function perform<T>(
     return { data: await run() };
   } catch (error) {
     unstable_rethrow(error);
+    if (error instanceof AuthorizationError) throw error;
     return {
       error:
         error instanceof z.ZodError
@@ -48,64 +50,83 @@ async function perform<T>(
     };
   }
 }
-async function rpc<N extends keyof Database["public"]["Functions"]>(
-  name: N,
-  args: Database["public"]["Functions"][N]["Args"],
+/** Preserve default action redirects while allowing explicit transport errors. */
+export function createNotificationReads(
+  getReadContext: typeof getActor = () => getContext({ actorOnly: true }),
 ) {
-  const { supabase } = await getContext({ actorOnly: true });
-  const { data, error } = await supabase.rpc(name, args);
-  if (error) throw new Error(error.message);
-  return data;
+  async function rpc<N extends keyof Database["public"]["Functions"]>(
+    name: N,
+    args: Database["public"]["Functions"][N]["Args"],
+  ) {
+    const { supabase } = await getReadContext();
+    const { data, error } = await supabase.rpc(name, args);
+    if (error) throw new Error(error.message);
+    return data;
+  }
+  async function getNotificationPage(
+    query: NotificationQuery,
+  ): Promise<
+    NotificationResult<
+      NotificationPage<InboxNotification | NotificationMessage>
+    >
+  > {
+    return perform(
+      async () =>
+        (await rpc("notification_page", {
+          p_kind: z.enum(["inbox", "messages"]).parse(query.kind),
+          p_workspace: query.workspace_id
+            ? z.uuid().parse(query.workspace_id)
+            : null,
+          p_status:
+            query.status === undefined ? null : z.string().parse(query.status),
+          p_cursor: query.cursor
+            ? z
+                .object({
+                  created_at: z.iso.datetime({ offset: true }),
+                  id: z.uuid(),
+                })
+                .parse(query.cursor)
+            : null,
+        })) as NotificationPage<InboxNotification | NotificationMessage>,
+    );
+  }
+  async function getNotificationById(
+    id: string,
+  ): Promise<NotificationResult<InboxNotification>> {
+    return perform(
+      async () =>
+        (await rpc("notification_by_id", {
+          p_id: z.uuid().parse(id),
+        })) as InboxNotification,
+    );
+  }
+  async function getNotificationUnreadCount(): Promise<
+    NotificationResult<number>
+  > {
+    return perform(async () =>
+      Number(await rpc("notification_unread_count", {})),
+    );
+  }
+  async function getNotificationDeviceEnabled(
+    endpoint: string,
+  ): Promise<NotificationResult<boolean>> {
+    return perform(
+      async () =>
+        (await rpc("notification_device_enabled", {
+          p_endpoint: z.url().parse(endpoint),
+        })) as boolean,
+    );
+  }
+  return {
+    getNotificationPage,
+    getNotificationById,
+    getNotificationUnreadCount,
+    getNotificationDeviceEnabled,
+  };
 }
-export async function getNotificationPage(
-  query: NotificationQuery,
-): Promise<
-  NotificationResult<NotificationPage<InboxNotification | NotificationMessage>>
-> {
-  return perform(
-    async () =>
-      (await rpc("notification_page", {
-        p_kind: z.enum(["inbox", "messages"]).parse(query.kind),
-        p_workspace: query.workspace_id
-          ? z.uuid().parse(query.workspace_id)
-          : null,
-        p_status:
-          query.status === undefined ? null : z.string().parse(query.status),
-        p_cursor: query.cursor
-          ? z
-              .object({
-                created_at: z.iso.datetime({ offset: true }),
-                id: z.uuid(),
-              })
-              .parse(query.cursor)
-          : null,
-      })) as NotificationPage<InboxNotification | NotificationMessage>,
-  );
-}
-export async function getNotificationById(
-  id: string,
-): Promise<NotificationResult<InboxNotification>> {
-  return perform(
-    async () =>
-      (await rpc("notification_by_id", {
-        p_id: z.uuid().parse(id),
-      })) as InboxNotification,
-  );
-}
-export async function getNotificationUnreadCount(): Promise<
-  NotificationResult<number>
-> {
-  return perform(async () =>
-    Number(await rpc("notification_unread_count", {})),
-  );
-}
-export async function getNotificationDeviceEnabled(
-  endpoint: string,
-): Promise<NotificationResult<boolean>> {
-  return perform(
-    async () =>
-      (await rpc("notification_device_enabled", {
-        p_endpoint: z.url().parse(endpoint),
-      })) as boolean,
-  );
-}
+export const {
+  getNotificationPage,
+  getNotificationById,
+  getNotificationUnreadCount,
+  getNotificationDeviceEnabled,
+} = createNotificationReads();
