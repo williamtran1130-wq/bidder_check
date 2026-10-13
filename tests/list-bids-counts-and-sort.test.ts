@@ -2,6 +2,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { fixture as buildFixture } from "../scripts/screenshot-size-benchmark-helpers.mjs";
 
 const migration =
   "supabase/migrations/202610120012_list_bids_counts_and_sort.sql";
@@ -149,32 +150,8 @@ beforeAll(async () => {
     );
     actors[label] = { id, workspace, role };
   }
-  // Reuse the real benchmark's pure fixture builder without importing its hosted main.
-  const benchmark = readFileSync(
-    "scripts/screenshot-size-staging-benchmark.mjs",
-    "utf8",
-  );
-  const source = benchmark.slice(
-    benchmark.indexOf("function fixture("),
-    benchmark.indexOf("function selected("),
-  );
-  expect(source.startsWith("function fixture(")).toBe(true);
-  const shift = (day: string, amount: number) => {
-    const date = new Date(`${day}T12:00:00Z`);
-    date.setUTCDate(date.getUTCDate() + amount);
-    return date.toISOString().slice(0, 10);
-  };
-  const builder = new Function(
-    "randomUUID",
-    "shift",
-    `${source};return fixture;`,
-  )(randomUUID, shift) as (
-    actors: Record<string, Actor>,
-    marker: string,
-    today: string,
-    count: number,
-  ) => Fixture;
-  const fixture = builder(actors, "Count", "2026-10-12", 1200);
+  // Import the shared pure fixture directly; importing it never runs hosted work.
+  const fixture = buildFixture(actors, "Count", "2026-10-12", 1200) as Fixture;
   for (const a of fixture.assignments) {
     await db.query(
       "insert into public.bidders(workspace_id,user_id) values($1,$2)",
