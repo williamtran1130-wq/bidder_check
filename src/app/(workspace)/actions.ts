@@ -31,6 +31,8 @@ import { canRetryPurge } from "@/lib/purge-status";
 import { isCalendarPeriod, resolveCalendarPeriod } from "@/lib/calendar-period";
 import { readReport } from "@/lib/reporting-server";
 import { getManagerFinancialValues } from "@/lib/financial-data";
+import { submitAccountOperation, resumeAccountOperation, accountRecoveryList, abandonAccountOperation } from "@/lib/account-operation-server";
+import type { AccountKind } from "@/lib/account-operation-types";
 import type { BidRow } from "@/lib/workspace-types";
 import type { DashboardReport, EarningsReport, InterviewReport, ReportQuery, GroupedReportQuery } from "@/lib/report-types";
 export type { DashboardReport, EarningsReport, InterviewReport } from "@/lib/report-types";
@@ -364,52 +366,11 @@ export async function archiveResume(resumeId: string, archived: boolean) {
       await rpc("archive_resume", { p_id: z.uuid().parse(resumeId), p_archived: z.boolean().parse(archived) }),
   );
 }
-async function changeManagedEmail(form: FormData, role: "client" | "bidder") {
-  const account = z.uuid().parse(text(form, "user_id"));
-  const allowed = await rpc("can_manage_account", { p_account: account });
-  if (!allowed) throw new Error("Access denied");
-  const { supabase } = await getContext();
-  const { data: target } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", account)
-    .single();
-  if (target?.role !== role) throw new Error("Account type does not match");
-  const email = text(form, "email");
-  if (email) {
-    z.email().parse(email);
-    const { error } = await adminClient().auth.admin.updateUserById(account, {
-      email: email.toLowerCase(),
-      email_confirm: true,
-    });
-    if (error) throw new Error(error.message);
-  }
+export async function updateBidder(form: FormData, requestId?: string) {
+  return submitAccountOperation("update_bidder", form, requestId);
 }
-export async function updateBidder(form: FormData) {
-  return perform(async () => {
-    const rate = moneyToCents(text(form, "rate"));
-    if (!text(form, "display_name")) throw new Error("Name required");
-    await changeManagedEmail(form, "bidder");
-    await rpc("update_bidder", {
-      p_bidder: text(form, "user_id"),
-      p_name: text(form, "display_name"),
-      p_rate: rate,
-      p_archived: text(form, "archived") === "true",
-    });
-  });
-}
-export async function updateClient(form: FormData) {
-  return perform(async () => {
-    const { profile } = await getContext();
-    if (profile.role !== "admin") throw new Error("Access denied");
-    if (!text(form, "display_name")) throw new Error("Name required");
-    await changeManagedEmail(form, "client");
-    await rpc("update_client", {
-      p_client: text(form, "user_id"),
-      p_name: text(form, "display_name"),
-      p_archived: text(form, "archived") === "true",
-    });
-  });
+export async function updateClient(form: FormData, requestId?: string) {
+  return submitAccountOperation("update_client", form, requestId);
 }
 export async function reviewClient(
   account: string,
@@ -424,51 +385,22 @@ export async function reviewClient(
     }),
   );
 }
-export async function resetManagedPassword(
-  account: string,
-  confirmed: boolean,
-) {
-  return perform(async () => {
-    if (confirmed !== true) throw new Error("Confirm the password reset first");
-    if (
-      !(await rpc("can_manage_account", { p_account: z.uuid().parse(account) }))
-    )
-      throw new Error("Access denied");
-    const { error } = await adminClient().auth.admin.updateUserById(account, {
-      password: "123456",
-    });
-    if (error) throw new Error(error.message);
-    await rpc("record_account_event", {
-      p_account: account,
-      p_event: "password_reset",
-    });
-  });
+export async function resetManagedPassword(account: string, confirmed: boolean, requestId?: string) {
+  if (confirmed !== true) return { error: "Confirm the password reset first" };
+  const form = new FormData();
+  form.set("user_id", account);
+  return submitAccountOperation("reset_password", form, requestId);
 }
-export async function createClientAccount(form: FormData) {
-  return perform(async () => {
-    const { profile } = await getContext();
-    if (profile.role !== "admin") throw new Error("Access denied");
-    const email = z.email().parse(text(form, "email")).toLowerCase();
-    const name = z.string().min(1).max(100).parse(text(form, "display_name"));
-    const reservation = await rpc("reserve_client_account", { p_email: email, p_name: name });
-    const { data, error } = await adminClient().auth.admin.createUser({
-      id: reservation,
-      email,
-      password: "123456",
-      email_confirm: true,
-      user_metadata: { display_name: name },
-    });
-    if (error) throw new Error(error.message);
-    await rpc("review_client", {
-      p_client: data.user.id,
-      p_status: "approved",
-      p_reason: null,
-    });
-    await rpc("record_account_event", {
-      p_account: data.user.id,
-      p_event: "created",
-    });
-  });
+export async function createClientAccount(form: FormData, requestId?: string) {
+  return submitAccountOperation("create_client", form, requestId);
+}
+export async function getManagedAccountOperations() { return accountRecoveryList(); }
+export async function resumeManagedAccountOperation(request: string) { return resumeAccountOperation(request); }
+export async function abandonManagedAccountOperation(request: string) { return abandonAccountOperation(request); }
+export async function submitManagedAccountOperation(request: string, kind: AccountKind, fields: Record<string, string>) {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(fields)) form.set(key, value);
+  return submitAccountOperation(kind, form, request);
 }
 export async function trashBid(bid: string, deleted: boolean): Promise<{ data?: undefined; error?: string; issues?: BidRestoreIssue[] }> {
   try {
@@ -502,32 +434,8 @@ function restorationIssues(error: unknown, fallbackId: string): BidRestoreIssue[
     return undefined;
   }
 }
-export async function createBidder(form: FormData) {
-  return perform(async () => {
-    const { supabase } = await getContext();
-    const admin = adminClient();
-    const email = z.email().parse(text(form, "email")).toLowerCase();
-    const { data: reservation, error } = await supabase.rpc("invite_bidder", {
-      p_workspace: text(form, "workspace_id"),
-      p_email: email,
-      p_name: text(form, "display_name"),
-      p_rate: moneyToCents(text(form, "rate")),
-    });
-    if (error) throw new Error(error.message);
-    if (!reservation)
-      throw new Error("Account reservation failed. Please retry.");
-    const { error: createError } = await admin.auth.admin.createUser({
-      id: reservation,
-      email,
-      password: "123456",
-      email_confirm: true,
-      user_metadata: { display_name: text(form, "display_name") },
-    });
-    if (createError)
-      throw new Error(
-        `Account creation could not finish: ${createError.message}. Retry from pending accounts.`,
-      );
-  });
+export async function createBidder(form: FormData, requestId?: string) {
+  return submitAccountOperation("create_bidder", form, requestId);
 }
 export async function unapplyBid(bidId: string, reason: string) {
   return perform(

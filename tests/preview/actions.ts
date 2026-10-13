@@ -389,3 +389,15 @@ export async function retryPurgeCleanup() {
   verified = true;
   return { data: { status: purgeFixture(), outcome: "processed" } };
 }
+export async function getManagedAccountOperations() {
+  if(new URLSearchParams(location.search).has('account-recovery')) return (await import('./account-actions')).list();
+  const {fixture}=await import('./sample-data');
+  return {data:{actorId:fixture.profile.id,admin:fixture.profile.role==='admin',operations:[]}};
+}
+export async function resumeManagedAccountOperation(request:string) {
+  return new URLSearchParams(location.search).has('account-recovery') ? (await import('./account-actions')).resume(request) : unavailable();
+}
+export async function abandonManagedAccountOperation() { return unavailable(); }
+export async function submitManagedAccountOperation(request:string,kind:import('@/lib/account-operation-types').AccountKind,fields:Record<string,string>) {
+  return new URLSearchParams(location.search).has('account-recovery') ? (await import('./account-actions')).submit(request,kind,fields) : unavailable();
+}

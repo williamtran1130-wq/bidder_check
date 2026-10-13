@@ -9,13 +9,23 @@ import type { Row } from "@/lib/database.types";
 import type { BidderRow } from "@/lib/workspace-types";
 import { usd, initials } from "@/lib/domain";
 import {
-  createBidder,
-  updateBidder,
-  updateClient,
-  createClientAccount,
   reviewClient,
-  resetManagedPassword,
+  getManagedAccountOperations,
+  resumeManagedAccountOperation,
+  abandonManagedAccountOperation,
+  submitManagedAccountOperation,
 } from "@/app/(workspace)/actions";
+import {
+  freezeAccountRequest,
+  readAccountRequest,
+  clearAccountRequest,
+  type FrozenAccountRequest,
+} from "@/lib/account-operation-client";
+import type {
+  AccountActionResult,
+  AccountKind,
+  AccountOperation,
+} from "@/lib/account-operation-types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Badge } from "./ui/badge";
@@ -34,6 +44,298 @@ import {
   SaveButton,
   EmptyState,
 } from "./common";
+
+function useAccountRequest(open: boolean, scope: string) {
+  const [actor, setActor] = useState<string | null>(null);
+  const [saved, setSaved] = useState<FrozenAccountRequest | null>(null);
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    if (!open) return;
+    let current = true;
+    getManagedAccountOperations()
+      .then((result) => {
+        if (!current) return;
+        if (!result.data) {
+          setMessage(result.error ?? "Account recovery is unavailable.");
+          return;
+        }
+        setActor(result.data.actorId);
+        try {
+          setSaved(
+            readAccountRequest(localStorage, result.data.actorId, scope),
+          );
+        } catch {
+          setMessage(
+            "The saved request could not be read. Use Pending account changes to review it.",
+          );
+        }
+      })
+      .catch(() => {
+        if (current)
+          setMessage(
+            "Account recovery is unavailable. Reopen this dialog to retry.",
+          );
+      });
+    return () => {
+      current = false;
+    };
+  }, [open, scope]);
+  async function run(
+    request: FrozenAccountRequest,
+  ): Promise<AccountActionResult> {
+    try {
+      const result = await submitManagedAccountOperation(
+        request.requestId,
+        request.kind,
+        request.fields,
+      );
+      if (
+        result.operation?.status === "completed" ||
+        result.operation?.status === "abandoned" ||
+        result.notStarted
+      ) {
+        clearAccountRequest(localStorage, actor!, scope);
+        setSaved(null);
+      }
+      setMessage(result.error ?? "");
+      window.dispatchEvent(new Event("managed-account-change"));
+      return result;
+    } catch {
+      const error =
+        "The response was lost. The saved request is unchanged. Check and resume it before making another change.";
+      setMessage(error);
+      window.dispatchEvent(new Event("managed-account-change"));
+      return { error };
+    }
+  }
+  async function submit(
+    kind: AccountKind,
+    form: FormData,
+  ): Promise<AccountActionResult> {
+    if (!actor)
+      return { error: "Account recovery is still loading. Please retry." };
+    try {
+      const request = freezeAccountRequest(localStorage, actor, scope, {
+        kind,
+        fields: Object.fromEntries(
+          Array.from(form.entries()).map(([key, value]) => [
+            key,
+            String(value),
+          ]),
+        ),
+      });
+      setSaved(request);
+      return run(request);
+    } catch {
+      const error =
+        "The request could not be saved for recovery. Enable browser storage before continuing.";
+      setMessage(error);
+      return { error };
+    }
+  }
+  return {
+    ready: !!actor,
+    saved,
+    message,
+    submit,
+    retry: () =>
+      saved
+        ? run(saved)
+        : Promise.resolve({ error: "No saved request" } as AccountActionResult),
+  };
+}
+function AccountRequestNotice({
+  request,
+  pending,
+  retry,
+}: {
+  request: ReturnType<typeof useAccountRequest>;
+  pending: boolean;
+  retry: () => void;
+}) {
+  if (!request.saved && !request.message) return null;
+  return (
+    <div className="space-y-2 rounded-md border p-3 text-sm" role="status">
+      <p>
+        {request.message ||
+          "This request has a saved recovery record. Its original values will be used when you resume."}
+      </p>
+      {request.saved && (
+        <>
+          <p className="break-all text-xs">
+            Request: {request.saved.requestId}
+          </p>
+          <dl className="space-y-1">
+            {Object.entries(request.saved.fields)
+              .filter(([name]) =>
+                ["display_name", "email", "rate", "archived"].includes(name),
+              )
+              .map(([name, value]) => (
+                <div key={name} className="break-all">
+                  <dt className="inline font-medium">
+                    {
+                      {
+                        display_name: "Name",
+                        email: "Email",
+                        rate: "Rate (USD)",
+                        archived: "Archived",
+                      }[name]
+                    }
+                    :{" "}
+                  </dt>
+                  <dd className="inline">{value || "Not set"}</dd>
+                </div>
+              ))}
+          </dl>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={pending}
+            onClick={retry}
+          >
+            Check and resume saved request
+          </Button>
+        </>
+      )}
+    </div>
+  );
+}
+function AccountRecovery() {
+  const [items, setItems] = useState<AccountOperation[]>([]);
+  const [actor, setActor] = useState("");
+  const [admin, setAdmin] = useState(false);
+  const [pending, start] = useTransition();
+  const [message, setMessage] = useState("");
+  const router = useRouter();
+  async function load() {
+    const result = await getManagedAccountOperations();
+    if (result.data) {
+      setItems(result.data.operations);
+      setActor(result.data.actorId);
+      setAdmin(result.data.admin);
+    } else setMessage(result.error ?? "Account recovery is unavailable.");
+  }
+  useEffect(() => {
+    let live = true;
+    const refresh = () => {
+      void getManagedAccountOperations()
+        .then((result) => {
+          if (!live) return;
+          if (result.data) {
+            setItems(result.data.operations);
+            setActor(result.data.actorId);
+            setAdmin(result.data.admin);
+          } else setMessage(result.error ?? "Account recovery is unavailable.");
+        })
+        .catch(() => {
+          if (live)
+            setMessage(
+              "Account recovery is unavailable. Refresh to check pending changes.",
+            );
+        });
+    };
+    refresh();
+    window.addEventListener("managed-account-change", refresh);
+    return () => {
+      live = false;
+      window.removeEventListener("managed-account-change", refresh);
+    };
+  }, []);
+  if (!items.length && !message) return null;
+  return (
+    <section
+      className="panel mb-6 space-y-3 p-4"
+      aria-label="Pending account changes"
+    >
+      <h2 className="font-semibold">Pending account changes</h2>
+      {message && (
+        <p role="status" className="text-sm">
+          {message}
+        </p>
+      )}
+      {items.map((op) => (
+        <div
+          key={op.requestId}
+          className="space-y-2 rounded border p-3 text-sm"
+        >
+          <p className="break-all">
+            {op.payload.email || op.targetId}: {op.kind.replaceAll("_", " ")}
+          </p>
+          <p>
+            {op.authStep === "accepted"
+              ? "Sign-in change confirmed; account details or audit completion remain pending."
+              : "Completion is unconfirmed. Check this saved request before making another change."}
+          </p>
+          <p className="break-all text-xs">Request: {op.requestId}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              disabled={pending || op.actorId !== actor}
+              onClick={() =>
+                start(async () => {
+                  try {
+                    const result = await resumeManagedAccountOperation(
+                      op.requestId,
+                    );
+                    setMessage(result.error ?? "Account change completed.");
+                    await load();
+                    router.refresh();
+                  } catch {
+                    setMessage(
+                      "The response was lost. Check this same request again.",
+                    );
+                  }
+                })
+              }
+            >
+              Check and resume
+            </Button>
+            {admin && (
+              <Button
+                variant="outline"
+                disabled={pending}
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      "Abandon the remaining work? Confirmed sign-in changes will remain. The administrator and original request will be recorded.",
+                    )
+                  )
+                    return;
+                  start(async () => {
+                    try {
+                      const result = await abandonManagedAccountOperation(
+                        op.requestId,
+                      );
+                      setMessage(
+                        result.error ??
+                          result.operation?.disposition ??
+                          "Remaining work abandoned.",
+                      );
+                      await load();
+                      router.refresh();
+                    } catch {
+                      setMessage(
+                        "Disposition could not be confirmed. Check this request again.",
+                      );
+                    }
+                  });
+                }}
+              >
+                Abandon remaining work
+              </Button>
+            )}
+          </div>
+          {op.actorId !== actor && (
+            <p>
+              The original manager must resume this request. An administrator
+              can review and abandon the remaining work.
+            </p>
+          )}
+        </div>
+      ))}
+    </section>
+  );
+}
 export function CreateBidderDialog({
   data,
   invitation,
@@ -46,6 +348,18 @@ export function CreateBidderDialog({
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
   const router = useRouter();
+  const request = useAccountRequest(
+    open,
+    `create-bidder:${invitation?.id ?? workspaceId ?? "new"}`,
+  );
+  function completed(result: AccountActionResult) {
+    if (result.error) toast.error(result.error);
+    else if (result.operation?.status === "completed") {
+      toast.success("Bidder account created. Initial password: 123456");
+      setOpen(false);
+      router.refresh();
+    }
+  }
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -69,69 +383,73 @@ export function CreateBidderDialog({
           className="space-y-4"
           action={(form) =>
             start(async () => {
-              const result = await createBidder(form);
-              if (result.error) toast.error(result.error);
-              else {
-                toast.success(
-                  "Bidder account created. Initial password: 123456",
-                );
-                setOpen(false);
-                router.refresh();
-              }
+              completed(await request.submit("create_bidder", form));
             })
           }
         >
-          <SelectField
-            label="Workspace"
-            name="workspace_id"
-            defaultValue={
-              invitation?.workspace_id ?? workspaceId ?? data.workspaces[0]?.id
-            }
-            required
+          <fieldset
+            disabled={pending || !!request.saved || !request.ready}
+            className="space-y-4"
           >
-            {data.workspaces
-              .filter((w) => {
-                const owner = data.profiles.find((p) => p.id === w.owner_id);
-                return (
-                  !owner?.archived && owner?.approval_status === "approved"
-                );
-              })
-              .map((w) => (
-                <option value={w.id} key={w.id}>
-                  {w.name}
-                </option>
-              ))}
-          </SelectField>
-          <Field
-            label="Full name"
-            name="display_name"
-            required
-            defaultValue={invitation?.display_name}
-          />
-          <Field
-            label="Email address"
-            name="email"
-            type="email"
-            required
-            defaultValue={invitation?.email}
-          />
-          <Field
-            label="Default rate per bid (USD)"
-            name="rate"
-            type="number"
-            min="0"
-            step="0.01"
-            defaultValue={
-              invitation?.default_rate_cents != null
-                ? invitation.default_rate_cents / 100
-                : ""
-            }
-            placeholder="Set later"
-          />
-          <div className="flex justify-end pt-2">
-            <SaveButton pending={pending} label="Create bidder" />
-          </div>
+            <SelectField
+              label="Workspace"
+              name="workspace_id"
+              defaultValue={
+                invitation?.workspace_id ??
+                workspaceId ??
+                data.workspaces[0]?.id
+              }
+              required
+            >
+              {data.workspaces
+                .filter((w) => {
+                  const owner = data.profiles.find((p) => p.id === w.owner_id);
+                  return (
+                    !owner?.archived && owner?.approval_status === "approved"
+                  );
+                })
+                .map((w) => (
+                  <option value={w.id} key={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+            </SelectField>
+            <Field
+              label="Full name"
+              name="display_name"
+              required
+              defaultValue={invitation?.display_name}
+            />
+            <Field
+              label="Email address"
+              name="email"
+              type="email"
+              required
+              defaultValue={invitation?.email}
+            />
+            <Field
+              label="Default rate per bid (USD)"
+              name="rate"
+              type="number"
+              min="0"
+              step="0.01"
+              defaultValue={
+                invitation?.default_rate_cents != null
+                  ? invitation.default_rate_cents / 100
+                  : ""
+              }
+              placeholder="Set later"
+            />
+            <div className="flex justify-end pt-2">
+              <SaveButton pending={pending} label="Create bidder" />
+            </div>
+          </fieldset>
         </form>
+        <AccountRequestNotice
+          request={request}
+          pending={pending}
+          retry={() => start(async () => completed(await request.retry()))}
+        />
       </DialogContent>
     </Dialog>
   );
@@ -146,6 +464,15 @@ export function EditPerson({
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
   const router = useRouter();
+  const request = useAccountRequest(open, `edit:${person.id}`);
+  function completed(result: AccountActionResult) {
+    if (result.error) toast.error(result.error);
+    else if (result.operation?.status === "completed") {
+      toast.success("Account updated");
+      setOpen(false);
+      router.refresh();
+    }
+  }
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -165,56 +492,63 @@ export function EditPerson({
           className="space-y-4"
           action={(form) =>
             start(async () => {
-              const result = await (bidder
-                ? updateBidder(form)
-                : updateClient(form));
-              if (result.error) toast.error(result.error);
-              else {
-                toast.success("Account updated");
-                setOpen(false);
-                router.refresh();
-              }
+              completed(
+                await request.submit(
+                  bidder ? "update_bidder" : "update_client",
+                  form,
+                ),
+              );
             })
           }
         >
-          <input type="hidden" name="user_id" value={person.id} />
-          <Field
-            label="Full name"
-            name="display_name"
-            defaultValue={person.display_name}
-            required
-          />
-          <Field
-            label="Email address"
-            name="email"
-            type="email"
-            required
-            defaultValue={person.email}
-          />
-          {bidder && (
-            <Field
-              label="Default rate per bid (USD)"
-              name="rate"
-              type="number"
-              min="0"
-              step="0.01"
-              defaultValue={
-                bidder.default_rate_cents == null
-                  ? ""
-                  : bidder.default_rate_cents / 100
-              }
-            />
-          )}
-          <SelectField
-            label="Account status"
-            name="archived"
-            defaultValue={String(person.archived)}
+          <fieldset
+            disabled={pending || !!request.saved || !request.ready}
+            className="space-y-4"
           >
-            <option value="false">Active</option>
-            <option value="true">Archived — remove access</option>
-          </SelectField>
-          <SaveButton pending={pending} />
+            <input type="hidden" name="user_id" value={person.id} />
+            <Field
+              label="Full name"
+              name="display_name"
+              defaultValue={person.display_name}
+              required
+            />
+            <Field
+              label="Email address"
+              name="email"
+              type="email"
+              required
+              defaultValue={person.email}
+            />
+            {bidder && (
+              <Field
+                label="Default rate per bid (USD)"
+                name="rate"
+                type="number"
+                min="0"
+                step="0.01"
+                defaultValue={
+                  bidder.default_rate_cents == null
+                    ? ""
+                    : bidder.default_rate_cents / 100
+                }
+              />
+            )}
+            <SelectField
+              label="Account status"
+              name="archived"
+              defaultValue={String(person.archived)}
+            >
+              <option value="false">Active</option>
+              <option value="true">Archived — remove access</option>
+            </SelectField>
+            <SaveButton pending={pending} />
+          </fieldset>
         </form>
+        <AccountRequestNotice
+          request={request}
+          pending={pending}
+          retry={() => start(async () => completed(await request.retry()))}
+        />
         <PasswordReset person={person} />
       </DialogContent>
     </Dialog>
@@ -223,6 +557,14 @@ export function EditPerson({
 function PasswordReset({ person }: { person: Row<"profiles"> }) {
   const [confirmed, setConfirmed] = useState(false);
   const [pending, start] = useTransition();
+  const request = useAccountRequest(true, `reset:${person.id}`);
+  function completed(result: AccountActionResult) {
+    if (result.error) toast.error(result.error);
+    else if (result.operation?.status === "completed") {
+      toast.success("Password reset to 123456");
+      setConfirmed(false);
+    }
+  }
   return (
     <div className="space-y-3 border-t pt-4">
       <label className="flex items-start gap-2 text-sm">
@@ -236,20 +578,22 @@ function PasswordReset({ person }: { person: Row<"profiles"> }) {
       </label>
       <Button
         variant="outline"
-        disabled={!confirmed || pending}
+        disabled={!confirmed || pending || !!request.saved || !request.ready}
         onClick={() =>
           start(async () => {
-            const result = await resetManagedPassword(person.id, confirmed);
-            if (result.error) toast.error(result.error);
-            else {
-              toast.success("Password reset to 123456");
-              setConfirmed(false);
-            }
+            const form = new FormData();
+            form.set("user_id", person.id);
+            completed(await request.submit("reset_password", form));
           })
         }
       >
         Reset password
       </Button>
+      <AccountRequestNotice
+        request={request}
+        pending={pending}
+        retry={() => start(async () => completed(await request.retry()))}
+      />
     </div>
   );
 }
@@ -257,6 +601,15 @@ function CreateClientDialog() {
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
   const router = useRouter();
+  const request = useAccountRequest(open, "create-client");
+  function completed(result: AccountActionResult) {
+    if (result.error) toast.error(result.error);
+    else if (result.operation?.status === "completed") {
+      setOpen(false);
+      toast.success("Client created");
+      router.refresh();
+    }
+  }
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -275,25 +628,29 @@ function CreateClientDialog() {
           className="space-y-4"
           action={(form) =>
             start(async () => {
-              const result = await createClientAccount(form);
-              if (result.error) toast.error(result.error);
-              else {
-                setOpen(false);
-                toast.success("Client created");
-                router.refresh();
-              }
+              completed(await request.submit("create_client", form));
             })
           }
         >
-          <Field
-            label="Full name"
-            name="display_name"
-            required
-            maxLength={100}
-          />
-          <Field label="Email address" name="email" type="email" required />
-          <SaveButton pending={pending} label="Create client" />
+          <fieldset
+            disabled={pending || !!request.saved || !request.ready}
+            className="space-y-4"
+          >
+            <Field
+              label="Full name"
+              name="display_name"
+              required
+              maxLength={100}
+            />
+            <Field label="Email address" name="email" type="email" required />
+            <SaveButton pending={pending} label="Create client" />
+          </fieldset>
         </form>
+        <AccountRequestNotice
+          request={request}
+          pending={pending}
+          retry={() => start(async () => completed(await request.retry()))}
+        />
       </DialogContent>
     </Dialog>
   );
@@ -484,6 +841,7 @@ export function People({
         {admin && <CreateClientDialog />}
         <CreateBidderDialog data={data} />
       </PageHeading>
+      <AccountRecovery />
       <section className="panel overflow-hidden">
         <div className="flex flex-wrap justify-between gap-3 border-b p-4">
           <div className="flex flex-wrap gap-1">
