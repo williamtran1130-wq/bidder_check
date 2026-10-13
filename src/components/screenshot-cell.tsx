@@ -16,7 +16,6 @@ import { pastedImage } from "@/lib/clipboard-image";
 import { LoaderCircle } from "lucide-react";
 import { ScreenshotSizeBadge } from "./screenshot-size-badge";
 import { UploadDetails } from "./upload-details";
-import { ScreenshotUploadNotice } from "./screenshot-upload-notice";
 
 export function ScreenshotCell({
   bid,
@@ -119,7 +118,6 @@ export function ScreenshotCell({
       {pasteBusy && <span className="inline-flex items-center gap-1 text-[10px] text-primary" role="status"><LoaderCircle size={12} className="animate-spin" />{pasteProgress || "Uploading screenshot"}</span>}
       {pasteError && <p className="text-[10px] leading-4 text-destructive" role="alert">{pasteError}</p>}
       {!uploadOpen && !bid.deleted_at && bid.review_status === "approved" && <p className="text-[9px] leading-3 text-muted-foreground">Focus this cell and paste an image</p>}
-      {!uploadOpen && !bid.deleted_at && bid.review_status === "approved" && <ScreenshotUploadNotice />}
       <div className="flex items-center gap-1.5">
       {url && (
         <button

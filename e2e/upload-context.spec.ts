@@ -50,9 +50,14 @@ test("distinguishes historical not-recorded, new unavailable metadata, and retry
   await page.getByRole("button", { name: "Retry upload details" }).click();
   await expect(page.getByRole("region", { name: "Upload details", exact: true })).toContainText("Chicago, IL, US");
 });
-test("shows collection notice to bidders while keeping private data and requests out of their preview", async ({ page }, info) => {
+test("keeps screenshot fields free of the collection notice and private data out of bidder previews", async ({ page }, info) => {
   await open(page, "role=bidder");
-  await expect(page.getByText(/VPNs and proxies may affect/).first()).toBeVisible();
+  const notice = page.getByText("Screenshot uploads record your IP address and approximate IP location for client/admin review. VPNs and proxies may affect the location.", { exact: true });
+  await expect(notice).toHaveCount(0);
+  const screenshot = page.getByLabel(/^Screenshot paste target for Linear\./);
+  await screenshot.getByRole("button", { name: "Replace screenshot", exact: true }).click();
+  await expect(screenshot.getByLabel("Upload or paste an application screenshot", { exact: true })).toBeVisible();
+  await expect(notice).toHaveCount(0);
   await previewScreenshot(page, info.project.name === "mobile");
   await expect(page.getByRole("region", { name: "Upload details", exact: true })).toHaveCount(0);
   await expect(page.locator("html")).toHaveAttribute("data-upload-context-reads", "0");
