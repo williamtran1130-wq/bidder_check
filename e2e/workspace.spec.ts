@@ -115,7 +115,7 @@ test("daily table has ordered workflow columns, automatic timestamps and trash c
     "",
     "#",
     "Added date (CT)",
-    "Resume ID",
+    "Profile ID",
     "Company name",
     "Role",
     "Link",

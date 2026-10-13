@@ -104,9 +104,13 @@ export async function getBidRows(
   const { calendarToday, resolveCalendarPeriod } = await import("@/lib/calendar-period");
   try {
     const bounds = chicagoDateRange(mode, from, to);
-    const filtered = fixture.bids.filter((b) => {
+    const manager = (fixture.profile.role === "client" || fixture.profile.role === "admin") && fixture.profile.approval_status === "approved" && !fixture.profile.archived;
+    const repeated = manager && query.columnFilters.some((filter) => filter.id === "screenshot" && filter.value === "Repeated sizes only");
+    const matchesStatus = (b: import("@/lib/workspace-types").BidRow, status: string) => status === "all" || (status === "pending_review" ? b.review_status === "pending" : b.applied === (status === "applied"));
+    const base = fixture.bids.filter((b) => {
       const columns = Object.fromEntries(query.columnFilters.map((filter) => [filter.id, filter.value]));
       return Boolean(b.deleted_at) === trash &&
+        (fixture.profile.role !== "bidder" || b.bidder_id === fixture.profile.id) &&
         (!bidderId || b.bidder_id === bidderId) &&
         (!bounds.from || b.found_at >= bounds.from) && (!bounds.to || b.found_at < bounds.to) &&
         (query.bidder === "all" || b.bidder_id === query.bidder) &&
@@ -114,7 +118,6 @@ export async function getBidRows(
         (query.source === "all" || b.source === query.source) &&
         (query.arrangement === "all" || b.arrangement === query.arrangement) &&
         (query.job === "all" || b.job_status === query.job) &&
-        (query.status === "all" || (query.status === "pending_review" ? b.review_status === "pending" : b.applied === (query.status === "applied"))) &&
         `${b.company} ${b.role_name} ${b.url}`.toLowerCase().includes(query.search.toLowerCase()) &&
         Object.entries(columns).every(([field, value]) => {
           if (value && typeof value === "object") {
@@ -126,22 +129,36 @@ export async function getBidRows(
             return column.presence !== "empty" && (!range.from || day >= range.from) && (!range.to || day <= range.to);
           }
           if (!value) return true;
+          if (field === "screenshot" && value === "Repeated sizes only") return true;
+          if (field === "resume_id") {
+            const assignment = fixture.resumes.find((resume) => resume.id === b.resume_id);
+            const profile = fixture.candidateProfiles.find((profile) => profile.id === assignment?.profile_id);
+            return `${profile?.identifier ?? ""} ${profile?.candidate_name ?? ""} ${assignment?.email ?? ""}`.toLowerCase().includes(String(value).toLowerCase());
+          }
           const actual = field === "applied" ? (b.applied ? "Applied" : "Unapplied") : field === "screenshot" ? (b.evidence_file_id ? "Has screenshot" : "No screenshot") : String(b[field as keyof typeof b] ?? "");
           return actual.toLowerCase().includes(String(value).toLowerCase());
         });
     });
-    const manager = fixture.profile.role !== "bidder";
     const sizeScenario = new URLSearchParams(location.search).has("screenshot-sizes");
-    const sizes = new Map<number, number>();
-    if (manager && sizeScenario) for (const bid of filtered) {
-      if (bid.evidence_file_id && bid.screenshot_size_bytes != null)
-        sizes.set(bid.screenshot_size_bytes, (sizes.get(bid.screenshot_size_bytes) ?? 0) + 1);
+    const statusCounts: Record<string, number> = {};
+    let sizes = new Map<number, number>();
+    let filtered = base;
+    for (const status of ["all", "applied", "unapplied", "pending_review"]) {
+      let rows = base.filter((bid) => matchesStatus(bid, status));
+      const counts = new Map<number, number>();
+      if (manager && sizeScenario) for (const bid of rows) {
+        if (bid.evidence_file_id && bid.screenshot_size_bytes != null)
+          counts.set(bid.screenshot_size_bytes, (counts.get(bid.screenshot_size_bytes) ?? 0) + 1);
+      }
+      if (repeated) rows = rows.filter((bid) => bid.evidence_file_id && bid.screenshot_size_bytes != null && (counts.get(bid.screenshot_size_bytes) ?? 0) >= 2);
+      statusCounts[status] = rows.length;
+      if (status === query.status) { filtered = rows; sizes = counts; }
     }
     const snapshot = filtered.map((bid) => manager && sizeScenario ? {
       ...bid,
       screenshot_size_bytes: bid.evidence_file_id ? bid.screenshot_size_bytes ?? null : null,
       screenshot_size_match_count: bid.evidence_file_id && bid.screenshot_size_bytes != null ? sizes.get(bid.screenshot_size_bytes) ?? 0 : 0,
-    } : bid);
+    } : (() => { const safe = { ...bid }; delete safe.screenshot_size_bytes; delete safe.screenshot_size_match_count; return safe; })());
     const sorted = [...snapshot].sort((a, b) => {
       const sort = query.sorting[0];
       if (sort?.id === "screenshot_size_bytes" && manager) {
@@ -151,7 +168,7 @@ export async function getBidRows(
         const result = av != null && bv != null ? av - bv : 0;
         return (sort.desc ? -result : result) || b.found_at.localeCompare(a.found_at) || a.id.localeCompare(b.id);
       }
-      if (!sort) return b.found_at.localeCompare(a.found_at);
+      if (!sort || sort.id === "screenshot_size_bytes" && !manager) return b.found_at.localeCompare(a.found_at) || a.id.localeCompare(b.id);
       if (sort.id === "screenshot") {
         const result = Number(Boolean(a.evidence_file_id)) - Number(Boolean(b.evidence_file_id));
         return (sort.desc ? -result : result) || b.found_at.localeCompare(a.found_at) || a.id.localeCompare(b.id);
@@ -160,7 +177,7 @@ export async function getBidRows(
       return sort.desc ? -result : result;
     });
     return {
-      data: { rows: sorted.slice(query.pageIndex * query.pageSize, (query.pageIndex + 1) * query.pageSize), total: sorted.length, sources: [...new Set(fixture.bids.map((b) => b.source).filter(Boolean))], statusCounts: { all: filtered.length, applied: filtered.filter((row)=>row.applied).length, unapplied: filtered.filter((row)=>!row.applied).length, pending_review: filtered.filter((row)=>row.review_status==="pending").length } },
+      data: { rows: sorted.slice(query.pageIndex * query.pageSize, (query.pageIndex + 1) * query.pageSize), total: sorted.length, sources: [...new Set(fixture.bids.map((b) => b.source).filter(Boolean))], statusCounts },
     };
   } catch (e) {
     return { error: String(e) };

@@ -10,6 +10,7 @@ export default async function Layout({
   return (
     <Shell
       profile={profile}
+      notificationWorkspaces={workspaces}
       workspace={
         profile.role === "admin"
           ? "Platform overview"

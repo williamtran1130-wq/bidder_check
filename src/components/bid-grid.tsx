@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { flexRender, type Table } from "@tanstack/react-table";
 import { formatInTimeZone } from "date-fns-tz";
 import type { BidRow } from "@/lib/workspace-types";
@@ -8,6 +8,7 @@ import { BID_TIMEZONE } from "@/lib/domain";
 import { toTsv } from "@/lib/sheets";
 import { updateBidCell } from "@/app/(workspace)/actions";
 import { Button } from "./ui/button";
+import { buildResumeOptions } from "@/lib/resume-options";
 type Bid = BidRow;
 type Point = { r: number; c: number };
 type Edit = {
@@ -51,6 +52,7 @@ export function BidGrid({
   onOpen: (bid: Bid) => void;
   emptyMessage: string;
 }) {
+  const assignmentLabels = useMemo(() => buildResumeOptions(data), [data]);
   const [selection, setSelection] = useState<{
     anchor: Point;
     end: Point;
@@ -474,7 +476,7 @@ export function BidGrid({
                                   )
                                   .map((v) => (
                                     <option key={v.id} value={v.id}>
-                                      {data.candidateProfiles.find((p) => p.id === v.profile_id)?.identifier ?? "Profile"}
+                                      {assignmentLabels.get(v.id)?.label ?? "Profile"}
                                     </option>
                                   ))}
                           </select>

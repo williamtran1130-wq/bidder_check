@@ -12,6 +12,8 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: "@/lib/client", replacement: here("./client.ts") },
+      { find: "@/app/(workspace)/notification-actions", replacement: here("./notification-actions.ts") },
+      { find: "@/app/(workspace)/upload-context-actions", replacement: here("./upload-context-actions.ts") },
       { find: "@/app/(workspace)/actions", replacement: here("./actions.ts") },
       { find: "@/app/auth/actions", replacement: here("./actions.ts") },
       { find: "next/navigation", replacement: here("./navigation.ts") },

@@ -15,6 +15,8 @@ import { FileUpload, uploadVerifiedFile } from "./file-upload";
 import { pastedImage } from "@/lib/clipboard-image";
 import { LoaderCircle } from "lucide-react";
 import { ScreenshotSizeBadge } from "./screenshot-size-badge";
+import { UploadDetails } from "./upload-details";
+import { ScreenshotUploadNotice } from "./screenshot-upload-notice";
 
 export function ScreenshotCell({
   bid,
@@ -30,6 +32,7 @@ export function ScreenshotCell({
   onUploaded?: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const previewTrigger = useRef<HTMLButtonElement>(null);
   const [visible, setVisible] = useState(false);
   const [url, setUrl] = useState("");
   const [error, setError] = useState("");
@@ -116,9 +119,11 @@ export function ScreenshotCell({
       {pasteBusy && <span className="inline-flex items-center gap-1 text-[10px] text-primary" role="status"><LoaderCircle size={12} className="animate-spin" />{pasteProgress || "Uploading screenshot"}</span>}
       {pasteError && <p className="text-[10px] leading-4 text-destructive" role="alert">{pasteError}</p>}
       {!uploadOpen && !bid.deleted_at && bid.review_status === "approved" && <p className="text-[9px] leading-3 text-muted-foreground">Focus this cell and paste an image</p>}
+      {!uploadOpen && !bid.deleted_at && bid.review_status === "approved" && <ScreenshotUploadNotice />}
       <div className="flex items-center gap-1.5">
       {url && (
         <button
+          ref={previewTrigger}
           className="block min-w-0 flex-1 overflow-hidden rounded-md border focus-visible:outline-2 focus-visible:outline-primary"
           onClick={() => setOpen(true)}
           aria-label={`Preview screenshot for ${bid.company}`}
@@ -186,7 +191,7 @@ export function ScreenshotCell({
         />
       )}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-4xl">
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-4xl" onCloseAutoFocus={(event) => { event.preventDefault(); previewTrigger.current?.focus({ preventScroll: true }); }}>
           <DialogHeader>
             <DialogTitle>{bid.company} application proof</DialogTitle>
             <DialogDescription>
@@ -199,8 +204,9 @@ export function ScreenshotCell({
           <img
             src={url}
             alt={`Enlarged application proof for ${bid.company}`}
-            className="max-h-[75vh] w-full object-contain"
+            className="max-h-[50dvh] w-full object-contain"
           />
+          {open && (role === "client" || role === "admin") && bid.evidence_file_id && <UploadDetails key={bid.evidence_file_id} fileId={bid.evidence_file_id} role={role} />}
         </DialogContent>
       </Dialog>
     </div>

@@ -182,6 +182,14 @@ if (new URLSearchParams(window.location.search).has("screenshot-sizes")) {
 if (new URLSearchParams(window.location.search).get("role") === "admin") {
   fixture.profile = { ...fixture.profile, role: "admin" };
 }
+if (new URLSearchParams(window.location.search).has("split-sizes")) {
+  fixture.bids = fixture.bids.map((bid, index) => index === 11 ? { ...bid, applied: false, applied_at: null } : bid);
+}
+if (new URLSearchParams(window.location.search).has("shared-resumes")) {
+  fixture.resumes[1].profile_id = fixture.resumes[0].profile_id;
+  fixture.candidateProfiles[0].candidate_name = "Jordan Lee";
+  fixture.resumes.push(...Array.from({ length: 1100 }, (_, index) => ({ ...fixture.resumes[0], id: `additional-${index}`, email: `assignment${index}@example.test`, archived: index === 1099 })));
+}
 
 // A real bidder-shaped transport fixture: no monetary keys or teammate rows.
 if (new URLSearchParams(window.location.search).get("role") === "bidder") {

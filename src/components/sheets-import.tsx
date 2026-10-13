@@ -26,6 +26,7 @@ import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import { Field, SelectField } from "./common";
 import { toast } from "sonner";
+import { buildResumeOptions } from "@/lib/resume-options";
 export type ImportResult = {
   date: string;
   bidder: string;
@@ -45,6 +46,7 @@ export function SheetsImport({
   onClose: () => void;
   onSuccess: (result: ImportResult) => void;
 }) {
+  const assignmentLabels = useMemo(() => buildResumeOptions(data), [data]);
   const [text, setText] = useState(initialText);
   const [workspace, setWorkspace] = useState(
     data.bidders.find((b) => b.user_id === bidderId)?.workspace_id ??
@@ -353,7 +355,7 @@ export function SheetsImport({
                 <option value="">Choose resume</option>
                 {resumes.map((r) => (
                   <option key={r.id} value={r.id}>
-                    {r.identifier}
+                    {assignmentLabels.get(r.id)?.label}
                   </option>
                 ))}
               </SelectField>
@@ -444,7 +446,7 @@ export function SheetsImport({
           <>
             <p className="text-sm">
               {rows.length} bids · {date} CT ·{" "}
-              {resumes.find((r) => r.id === resume)?.identifier}
+              {assignmentLabels.get(resume)?.label}
             </p>
             <div className="max-h-[45vh] overflow-auto rounded border">
               <table className="w-full text-xs">

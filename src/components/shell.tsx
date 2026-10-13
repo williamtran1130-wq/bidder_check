@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useTheme } from "next-themes";
 import {
   LayoutDashboard,
@@ -29,7 +29,15 @@ import { Button } from "./ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "./ui/sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { signOut } from "@/app/auth/actions";
-import { getUnreadNotificationCount } from "@/app/(workspace)/actions";
+import { getNotificationUnreadCount } from "@/app/(workspace)/notification-actions";
+import {
+  useNotificationResource,
+  useNotificationScope,
+} from "@/lib/use-notifications";
+import {
+  notificationScope,
+  type NotificationMembership,
+} from "@/lib/notification-scope";
 import { initials } from "@/lib/domain";
 import { cn } from "@/lib/utils";
 import type { Row } from "@/lib/database.types";
@@ -52,11 +60,13 @@ export function Shell({
   profile,
   workspace,
   unreadCount = 0,
+  notificationWorkspaces = [],
 }: {
   children: React.ReactNode;
   profile: Row<"profiles">;
   workspace: string;
   unreadCount?: number;
+  notificationWorkspaces?: NotificationMembership[];
 }) {
   const pathname = usePathname();
   const workspaceName = workspace.trim() || "Workspace";
@@ -65,22 +75,15 @@ export function Shell({
     : workspaceName;
   const [collapsed, setCollapsed] = useState(false);
   const [mobile, setMobile] = useState(false);
-  const [unread, setUnread] = useState(unreadCount);
+  const notificationKey = notificationScope(profile, notificationWorkspaces);
+  const allowInitial = useNotificationScope(notificationKey);
+  const unreadResult = useNotificationResource(
+    `${notificationKey}unread`,
+    getNotificationUnreadCount,
+    allowInitial ? { data: unreadCount } : {},
+  );
+  const unread = unreadResult.data ?? (allowInitial ? unreadCount : 0);
   const { resolvedTheme, setTheme } = useTheme();
-  useEffect(() => {
-    if (profile.role === "client") return;
-    const update = async () => {
-      const result = await getUnreadNotificationCount();
-      if (!result.error) setUnread(result.data ?? 0);
-    };
-    void update();
-    const timer = window.setInterval(() => void update(), 30000);
-    window.addEventListener("focus", update);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("focus", update);
-    };
-  }, [profile.role]);
   const nav = (small = false) => (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
       <Link href="/dashboard" className="px-5 py-7">
@@ -114,7 +117,9 @@ export function Shell({
         )}
         {!small && (
           <div className="min-w-0">
-            <p className="break-words text-xs font-semibold leading-5">{workspaceName}</p>
+            <p className="break-words text-xs font-semibold leading-5">
+              {workspaceName}
+            </p>
             <p className="mt-1 text-[10px] capitalize text-muted-foreground">
               {profile.role} workspace
             </p>
@@ -252,7 +257,11 @@ export function Shell({
             {profile.role !== "client" && (
               <Link
                 href="/notifications"
-                aria-label={`${unread} unread notifications`}
+                aria-label={
+                  unreadResult.error
+                    ? "Unread notifications unavailable"
+                    : `${unread} unread notifications`
+                }
                 className="relative rounded-md p-2 text-muted-foreground hover:bg-secondary"
               >
                 <Bell size={17} />

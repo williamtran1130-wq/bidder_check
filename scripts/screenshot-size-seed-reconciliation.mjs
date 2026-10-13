@@ -13,6 +13,7 @@ const TIMESTAMPS = new Set([
 ]);
 
 const FINALIZATION_FIELDS = new Set([
+  "review_status",
   "evidence_file_id",
   "applied",
   "application_method",

@@ -1,0 +1,21 @@
+export type UploadContextCursor = { uploadedAt: string; id: string };
+export type UploadContext = {
+  id: string;
+  bidId: string;
+  originalFileId: string;
+  bidderId: string;
+  uploaderId: string;
+  uploaderRole: "admin" | "client" | "bidder";
+  uploaderName: string | null;
+  uploadedAt: string;
+  ip: string | null;
+  city: string | null;
+  region: string | null;
+  country: string | null;
+  source: "vercel" | "unavailable";
+  status: "available" | "unavailable";
+  fileAvailable: boolean;
+  filename: string | null;
+};
+export type UploadHistoryPage = { items: UploadContext[]; nextCursor: UploadContextCursor | null };
+export type CapturedUploadContext = Pick<UploadContext, "ip" | "city" | "region" | "country" | "source" | "status">;

@@ -13,6 +13,8 @@ import { createHash } from "node:crypto";
 import { fromZonedTime } from "date-fns-tz";
 import { z } from "zod";
 import { validateScreenshotBytes } from "@/lib/image-validation";
+import { headers } from "next/headers";
+import { captureUploadContext } from "@/lib/upload-context";
 import { runStorageCleanup } from "@/lib/storage-cleanup";
 import type {
   BidTarget,
@@ -619,12 +621,16 @@ export async function finalizeUpload(fileId: string) {
     if (file.kind === "screenshot")
       await validateScreenshotBytes(bytes, file.mime);
     const sha = createHash("sha256").update(bytes).digest("hex");
+    const uploadContext = file.kind === "screenshot"
+      ? captureUploadContext(await headers(), process.env.VERCEL === "1")
+      : captureUploadContext(new Headers(), false);
     const { error: finalError } = await adminClient().rpc(
-      "finalize_verified_file",
+      "finalize_verified_file_v2",
       {
         p_actor: profile.id,
         p_id: file.id,
         p_sha: sha,
+        p_context: uploadContext,
       },
     );
     if (finalError) throw new Error(finalError.message);

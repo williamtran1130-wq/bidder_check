@@ -3,6 +3,13 @@ import { expect, it, vi } from "vitest";
 import { seedChunk } from "../scripts/screenshot-size-seed-reconciliation.mjs";
 
 const staging = "https://kdmvludtvhuuewmhurpw.supabase.co";
+it("reconciles a late pending-review finalization without replaying its uncertain write", async () => {
+  const rows = bidRows(1).map((row) => ({ ...row, review_status: "pending" }));
+  const probe = harness({ rows, operation: "upsert", adjust: (actual, read) => read === 1 ? actual.map((row) => ({ ...row, review_status: "approved" })) : actual });
+  await probe.run();
+  expect(probe.requests.filter((request) => request.method === "POST")).toHaveLength(1);
+  expect(probe.requests.filter((request) => request.method === "GET")).toHaveLength(2);
+});
 const id = (n: number) =>
   `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
 const workspace = id(9001);

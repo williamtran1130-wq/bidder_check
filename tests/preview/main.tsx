@@ -22,6 +22,7 @@ if (new URLSearchParams(window.location.search).has("screenshot-sizes")) {
 const pages: Record<string, React.ReactNode> = {
   "/dashboard": <Dashboard data={fixture} />,
   "/bids": <BidWorkspace data={fixture} />,
+  "/switch-account": <ChangingAccountBids />,
   "/scoped-admin": (
     <BidWorkspace
       data={{ ...fixture, profile: { ...fixture.profile, role: "admin" } }}
@@ -85,9 +86,21 @@ const pages: Record<string, React.ReactNode> = {
   "/notifications": <Notifications data={fixture} initialInbox={[]} initialMessages={[]} />,
   "/interviews": <InterviewReport />,
 };
+function ChangingAccountBids() {
+  const [data, setData] = React.useState(fixture);
+  React.useEffect(() => {
+    const change = () => {
+      fixture.profile = { ...fixture.profiles.find((profile) => profile.id === "bidder-0")!, role: "bidder" };
+      setData({ ...fixture });
+    };
+    window.addEventListener("fixture-change-account", change);
+    return () => window.removeEventListener("fixture-change-account", change);
+  }, []);
+  return <BidWorkspace data={data} />;
+}
 createRoot(document.getElementById("root")!).render(
   <Providers>
-    <Shell profile={fixture.profile} workspace={new URLSearchParams(window.location.search).has("long-workspace") ? longWorkspaceName : new URLSearchParams(window.location.search).has("no-workspace") ? "" : "Northstar Studio"}>
+    <Shell profile={fixture.profile} notificationWorkspaces={fixture.workspaces} workspace={new URLSearchParams(window.location.search).has("long-workspace") ? longWorkspaceName : new URLSearchParams(window.location.search).has("no-workspace") ? "" : "Northstar Studio"}>
       {pages[window.location.pathname] ?? pages["/dashboard"]}
     </Shell>
   </Providers>,

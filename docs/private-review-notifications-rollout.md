@@ -1,0 +1,36 @@
+# Notifications and private screenshot review rollout
+
+This release adds Central Time message scheduling, paged notification reads, bounded push delivery, manager-only repeated screenshot sizes and upload context, and searchable resume assignments. Existing period defaults and review-queue behavior stay intact.
+
+## Release order
+
+1. Verify the current deployed schema through `202610120012`, scheduler health, and production bid volume using read-only queries. Never print Vault values, raw customer locations, push endpoints, or credentials.
+2. Run the ordinary-query staging baseline before applying migrations. Use the guarded benchmark with `--ordinary-only --representative-bids <verified count>`. Its 25,000 synthetic bids must be at least twice that count. Require cleanup to finish before the next hosted step.
+3. Apply the reviewed forward migrations `202610120013_notification_reliability.sql`, `202610120014_repeated_screenshot_sizes.sql`, and `202610120015_screenshot_upload_context.sql` to staging. Keep historical migrations untouched. These additions preserve legacy application entry points during rollout.
+4. Run the full staging benchmark: 57 cases, five concurrent authenticated readers, 25 samples per case. Require every unrounded p95 to remain below 10,000 milliseconds, exact result/count reconciliation, and no statement timeouts. Compare its ordinary cases with the baseline. Retain the marked fixture only for acceptance using `--keep-fixture`.
+5. Deploy the exact reviewed Git SHA to the staging alias. Verify its project, branch, SHA, environment, and READY state before assigning the alias.
+6. Confirm scheduled in-app publication through the real cron, within two minute cycles, without an open browser or direct worker trigger. Observe another cycle to rule out duplicate inbox entries. Test browser push separately; a provider's acceptance does not prove device receipt.
+7. Verify finalization atomicity and immutable upload context using isolated fixture actors, including overlapping transports, retries, replacement/file cleanup, bid deletion, and manager/bidder permissions. Verify trusted platform-header capture through the deployed application. Do not print actual network addresses into release artifacts.
+8. Clean up every fixture and temporary auth session using its original durable receipt. Require zero residual fixture rows and accounts.
+9. Apply the same three migrations to production before releasing the same tested application SHA. Verify the production alias, permissions, repeated filtering, notification cron outcomes, and read-only reporting. Do not create customer messages or modify customer applications for a smoke check.
+
+## Operator behavior
+
+- In Notifications, choose recipients, write the message, then select Now, Once later, Daily, or Selected weekdays. New recurring messages start at 09:00 America/Chicago. Schedules repeat the authored message. A resumed schedule waits for its next future slot.
+- Drafts are not delivered. Publishing a Now draft uses publication time. Expired one-time schedules need a new future time or explicit Send now. Paused schedules remain paused while edited.
+- Inbox and message lists use 50-row cursors and one foreground refresh cycle. Network failures retain only matching-scope successful results and show retry guidance. An uncertain save preserves input and must be checked in the schedule list before retrying.
+- Clients/admins can choose Screenshot → Repeated sizes only. Exact file bytes are compared across the full current filtered result before pagination. Each status count computes its own matching groups, so status counts need not add up. Equal size does not establish equal image content.
+- Bidders receive no size metadata, repeated-size controls, or upload IP/location details. Unsupported requests are normalized on the server. Normal screenshot upload/view and presence filtering remain available.
+- Upload details reflect the finalization request's approximate network location, which may represent a VPN or proxy. Old uploads remain Not recorded. Context survives replacement and file cleanup but follows permanent bid deletion; it is excluded from retained aggregates.
+
+## Rollback and recovery
+
+Keep the additive migrations if the application must roll back to the previous financial-safe release. Older application finalization remains compatible but does not capture new context. New private tables remain access restricted. Restore the tested application after correcting the issue; do not backfill historical network locations.
+
+Benchmark and smoke receipts live beneath the ignored `.superpowers` directory. Preserve failures and native exit codes alongside successful runs. Cleanup must validate the exact staging project and planned synthetic identities; never delete by email wildcard, reset a workspace, or use customer-scoped purge operations. A failed response is not proof that a mutation did not commit.
+
+## Verification record
+
+Release evidence is recorded in `.superpowers/sdd/2026-10-12-reliable-notifications-private-review/`. Independent reviews cover notifications, repeated-size SQL, upload-context lifetime/access, resume UX, and shared integration. Hosted measurements, actual cron delivery, cleanup, and deployment identifiers are recorded after execution.
+
+Before staging application rollout, the frozen implementation passed 467 unit/database tests in 46 files, 186 desktop/mobile browser cases, ESLint, TypeScript, and a production build on Node 22. The ordinary staging baseline passed 21 cases / 525 authenticated reads with five concurrent readers; its worst raw p95 was 1,945.735 milliseconds. All baseline fixture and Auth counts were zero after cleanup. Staging successfully applied migrations 013–015. The expanded benchmark and deployed acceptance remain separate release gates.

@@ -7,6 +7,7 @@ import { prepareUpload, finalizeUpload } from "@/app/(workspace)/actions";
 import { validateUpload, uploadTypes } from "@/lib/domain";
 import { pastedImage } from "@/lib/clipboard-image";
 import { Button } from "./ui/button";
+import { ScreenshotUploadNotice } from "./screenshot-upload-notice";
 export async function uploadVerifiedFile(
   kind: "resume" | "screenshot",
   target: string,
@@ -161,6 +162,7 @@ export function FileUpload({
           : "PDF document only"}{" "}
         · Up to 10 MB
       </p>
+      {kind === "screenshot" && <div className="mb-3"><ScreenshotUploadNotice /></div>}
       {error && (
         <div role="alert" className="mb-2 text-xs text-destructive">
           {error}

@@ -59,6 +59,15 @@ async function list(query: Record<string, unknown> = {}) {
     )
   ).rows[0].value;
 }
+async function repeatedList(query: Record<string, unknown> = {}) {
+  return list({
+    ...query,
+    columnFilters: {
+      ...(query.columnFilters as Record<string, unknown> | undefined),
+      screenshot: "Repeated sizes only",
+    },
+  });
+}
 // Explain the deployed function's complete SELECT, with the PL/pgSQL locals
 // supplied explicitly. This preserves the actual CTEs, joins and role/RLS.
 async function explainListing(canViewSizes: boolean, sort: string) {
@@ -344,6 +353,93 @@ it("counts exact bytes across ordinary-sort pages without merging rounded-equal 
   });
 });
 
+it("filters repeated exact sizes before sorting and pagination across the full snapshot", async () => {
+  const rows: Row[] = [];
+  for (const pageIndex of [0, 1]) {
+    const value = await repeatedList({
+      sorting: [{ id: "company", desc: false }],
+      pageSize: 1,
+      pageIndex,
+    });
+    expect(value.total).toBe(2);
+    expect(value.statusCounts).toEqual({
+      all: 2,
+      applied: 0,
+      unapplied: 2,
+      pending_review: 0,
+    });
+    rows.push(...value.rows);
+  }
+  expect(rows.map((row) => row.company)).toEqual(["Exact A", "Exact B"]);
+  expect(rows.map((row) => row.screenshot_size_bytes)).toEqual([10240, 10240]);
+  expect(rows.map((row) => row.screenshot_size_match_count)).toEqual([2, 2]);
+  expect((await repeatedList({ pageIndex: 2, pageSize: 1 })).rows).toEqual([]);
+  const sorted = await repeatedList({
+    sorting: [{ id: "screenshot_size_bytes", desc: true }],
+  });
+  expect(sorted.rows.map((row) => row.company)).toEqual(["Exact A", "Exact B"]);
+});
+
+it("uses independent repeated eligibility for each status instead of adding disjoint counts", async () => {
+  await changeCounterpart(
+    "applied=true,rate_cents=125,application_method='manual',applied_at='2026-10-06 12:00Z'",
+  );
+  const counts = { all: 2, applied: 0, unapplied: 0, pending_review: 0 };
+  const all = await repeatedList();
+  expect(all.total).toBe(2);
+  expect(all.statusCounts).toEqual(counts);
+  expect(all.rows.map((row) => row.screenshot_size_match_count)).toEqual([
+    2, 2,
+  ]);
+  for (const status of ["applied", "unapplied", "pending_review"]) {
+    const value = await repeatedList({ status });
+    expect(value.total).toBe(0);
+    expect(value.rows).toEqual([]);
+    expect(value.statusCounts).toEqual(counts);
+  }
+});
+
+it("counts and displays repeats within the selected status while preserving other status snapshots", async () => {
+  await db.exec("reset role");
+  await attach(ids.Small, 10240);
+  await db.query(
+    "update public.bids set applied=true,rate_cents=125,application_method='manual',applied_at='2026-10-06 12:00Z' where id=any($1::uuid[])",
+    [[ids["Exact A"], ids["Exact B"]]],
+  );
+  await db.query("update public.bids set review_status='pending' where id=$1", [
+    ids.Small,
+  ]);
+  await asUser(owner);
+  const applied = await repeatedList({ status: "applied" });
+  expect(applied.total).toBe(2);
+  expect(applied.statusCounts).toEqual({
+    all: 3,
+    applied: 2,
+    unapplied: 0,
+    pending_review: 0,
+  });
+  expect(applied.rows.map((row) => row.company)).toEqual([
+    "Exact A",
+    "Exact B",
+  ]);
+  expect(applied.rows.map((row) => row.screenshot_size_match_count)).toEqual([
+    2, 2,
+  ]);
+  await changeCounterpart("review_status='pending'");
+  const pending = await repeatedList({ status: "pending_review" });
+  expect(pending.total).toBe(2);
+  expect(pending.statusCounts).toEqual({
+    all: 3,
+    applied: 2,
+    unapplied: 0,
+    pending_review: 2,
+  });
+  expect(pending.rows.map((row) => row.company)).toEqual(["Small", "Exact B"]);
+  expect(pending.rows.map((row) => row.screenshot_size_match_count)).toEqual([
+    2, 2,
+  ]);
+});
+
 it("uses found_at descending before id ascending for same-size ties", async () => {
   await changeCounterpart("found_at='2026-10-06 12:00Z'");
   const value = await list({
@@ -399,6 +495,46 @@ it.each([
   ["arrangement", "arrangement='onsite'", { arrangement: "remote" }],
   ["job", "job_status='closed'", { job: "open" }],
   [
+    "role column",
+    "role_name='Architect'",
+    { columnFilters: { role_name: "Engineer" } },
+  ],
+  [
+    "URL column",
+    "url='https://hidden.test/job',normalized_url='https://hidden.test/job'",
+    { columnFilters: { url: "size.test" } },
+  ],
+  [
+    "arrangement column",
+    "arrangement='onsite'",
+    { columnFilters: { arrangement: "remote" } },
+  ],
+  [
+    "job column",
+    "job_status='closed'",
+    { columnFilters: { job_status: "open" } },
+  ],
+  [
+    "review column",
+    "review_status='pending'",
+    { columnFilters: { review_status: "approved" } },
+  ],
+  [
+    "applied column",
+    "applied=true,rate_cents=125,application_method='manual',applied_at='2026-10-06 12:00Z'",
+    { columnFilters: { applied: "Unapplied" } },
+  ],
+  [
+    "interview column",
+    "applied=true,rate_cents=125,application_method='manual',applied_at='2026-10-06 12:00Z',interview_scheduled=true",
+    { columnFilters: { interview_scheduled: "Not scheduled" } },
+  ],
+  [
+    "applied date presence",
+    "applied=true,rate_cents=125,application_method='manual',applied_at='2026-10-06 12:00Z'",
+    { columnFilters: { applied_at: { presence: "empty" } } },
+  ],
+  [
     "date column",
     "found_at='2026-10-01 12:00Z'",
     { columnFilters: { found_at: { from: "2026-10-03", to: "2026-10-07" } } },
@@ -416,6 +552,18 @@ it.each([
       screenshot_size_match_count: 1,
     });
     expect(value.rows.map((row) => row.id)).not.toContain(ids["Exact B"]);
+    const repeated = await repeatedList({
+      ...query,
+      ...("resume" in query ? { resume } : {}),
+    });
+    expect(repeated.total).toBe(0);
+    expect(repeated.rows).toEqual([]);
+    expect(repeated.statusCounts).toEqual({
+      all: _name === "status" ? 2 : 0,
+      applied: 0,
+      unapplied: 0,
+      pending_review: 0,
+    });
   },
 );
 
@@ -447,10 +595,32 @@ it("counts only the selected trash result", async () => {
   expect(value.rows.map((row) => row.screenshot_size_match_count)).toEqual([
     2, 2,
   ]);
+  expect((await repeatedList({ trash: true })).total).toBe(2);
+  expect((await repeatedList()).total).toBe(0);
+});
+
+it("recalculates the entire repeated snapshot after period changes", async () => {
+  await changeCounterpart("found_at='2026-10-01 12:00Z'");
+  const all = await repeatedList({ pageSize: 1 });
+  expect(all.total).toBe(2);
+  expect(all.rows[0].screenshot_size_match_count).toBe(2);
+  const narrowed = await repeatedList({
+    rangeFrom: "2026-10-03T00:00:00Z",
+    rangeTo: "2026-10-08T00:00:00Z",
+    pageSize: 1,
+  });
+  expect(narrowed).toMatchObject({
+    rows: [],
+    total: 0,
+    statusCounts: { all: 0, applied: 0, unapplied: 0, pending_review: 0 },
+  });
+  const restored = await repeatedList({ pageSize: 1 });
+  expect(restored).toEqual(all);
 });
 
 it("gives admins cross-workspace counts while isolating client tenants", async () => {
   expect(exactA(await list())?.screenshot_size_match_count).toBe(2);
+  expect((await repeatedList()).total).toBe(2);
   await asUser(other);
   const foreign = await list();
   expect(foreign.rows).toHaveLength(1);
@@ -458,10 +628,12 @@ it("gives admins cross-workspace counts while isolating client tenants", async (
     company: "Foreign",
     screenshot_size_match_count: 1,
   });
+  expect((await repeatedList()).total).toBe(0);
   await asUser(admin);
   const all = await list();
   expect(all.total).toBe(7);
   expect(exactA(all)?.screenshot_size_match_count).toBe(3);
+  expect((await repeatedList()).total).toBe(3);
   expect(
     all.rows.find((row) => row.company === "Foreign")
       ?.screenshot_size_match_count,
@@ -469,6 +641,7 @@ it("gives admins cross-workspace counts while isolating client tenants", async (
   expect(
     exactA(await list({ scopeBidderId: bidder }))?.screenshot_size_match_count,
   ).toBe(1);
+  expect((await repeatedList({ scopeBidderId: bidder })).total).toBe(0);
 });
 
 it.each([
@@ -499,6 +672,12 @@ it.each([
       value.rows.find((row) => row.id === ids["Exact B"])
         ?.screenshot_size_match_count,
     ).toBe(2);
+    const repeated = await repeatedList();
+    expect(repeated.total).toBe(2);
+    expect(repeated.rows.map((row) => row.company)).toEqual([
+      "Foreign",
+      "Exact B",
+    ]);
   },
 );
 
@@ -516,6 +695,10 @@ it("replaces the current evidence snapshot without counting historical files", a
     replaced.rows.find((row) => row.id === ids["Exact B"])
       ?.screenshot_size_match_count,
   ).toBe(1);
+  expect((await repeatedList()).rows.map((row) => row.company)).toEqual([
+    "Exact A",
+    "Rounded",
+  ]);
   await db.exec("reset role");
   await db.query("update public.bids set evidence_file_id=null where id=$1", [
     ids["Exact A"],
@@ -525,6 +708,7 @@ it("replaces the current evidence snapshot without counting historical files", a
     screenshot_size_bytes: null,
     screenshot_size_match_count: 0,
   });
+  expect((await repeatedList()).total).toBe(0);
 });
 
 it("omits bidder metadata and handles unauthorized size sorting as an unsupported sort", async () => {
@@ -537,6 +721,9 @@ it("omits bidder metadata and handles unauthorized size sorting as an unsupporte
       sorting: [{ id: "screenshot_size_bytes", desc }],
     });
     expect(size).toEqual(unsupported);
+    expect(
+      await repeatedList({ sorting: [{ id: "screenshot_size_bytes", desc }] }),
+    ).toEqual(unsupported);
     expect(size.total).toBe(5);
     for (const row of size.rows) {
       expect(row).not.toHaveProperty("screenshot_size_bytes");
@@ -557,6 +744,7 @@ it.each(["archived", "pending", "rejected"])(
     await asUser(admin);
     const value = await list();
     expect(value.total).toBe(state === "archived" ? 0 : 7);
+    expect(await repeatedList()).toEqual(value);
     for (const row of value.rows) {
       expect(row).not.toHaveProperty("screenshot_size_bytes");
       expect(row).not.toHaveProperty("screenshot_size_match_count");

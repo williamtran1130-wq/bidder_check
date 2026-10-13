@@ -110,7 +110,15 @@ async function chunks(rows, action, size = 500) {
     await action(rows.slice(start, start + size));
 }
 function seed(table, operation, rows) {
-  return seedChunk({ service, receipt, table, operation, rows, check: ok, save });
+  return seedChunk({
+    service,
+    receipt,
+    table,
+    operation,
+    rows,
+    check: ok,
+    save,
+  });
 }
 async function account(planned, role, sponsor) {
   // Managed provisioning suppresses public signup alerts/pushes to real admins.
@@ -238,7 +246,7 @@ function fixture(actors, marker, today, count = 25000) {
     if (kind >= 4 && kind <= 11) {
       size = [
         333333,
-        100000 + index,
+        index === 21 ? 100005 : 100000 + index,
         102399,
         102400,
         1048576,
@@ -271,22 +279,27 @@ function fixture(actors, marker, today, count = 25000) {
     }
     bytes.set(bid.id, size);
   }
-  const finalBids = bids.map((bid, index) => ({
-    ...bid,
-    ...(bytes.get(bid.id) !== null
-      ? {
-          applied: true,
-          application_method: "screenshot",
-          rate_cents: 100,
-          applied_at: bid.found_at,
-          first_applied_at: bid.found_at,
-        }
-      : {}),
-    deleted_at: index % 37 === 0 ? `${today}T18:00:00Z` : null,
-  }));
+  const finalBids = bids.map((bid, index) => {
+    const statusGroup = Math.floor(index / 16) % 4;
+    const applied = statusGroup < 2 && index !== 21;
+    return {
+      ...bid,
+      ...(bytes.get(bid.id) !== null
+        ? {
+            applied,
+            application_method: applied ? "screenshot" : null,
+            rate_cents: applied ? 100 : null,
+            applied_at: applied ? bid.found_at : null,
+            first_applied_at: applied ? bid.found_at : null,
+            review_status: statusGroup === 3 ? "pending" : "approved",
+          }
+        : {}),
+      deleted_at: index % 37 === 0 ? `${today}T18:00:00Z` : null,
+    };
+  });
   return { assignments, bids, finalBids, files, bytes };
 }
-function selected(fixture, actor, range, scope, search) {
+function selected(fixture, actor, range, scope, search, mode = {}) {
   return fixture.finalBids.filter(
     (bid) =>
       !bid.deleted_at &&
@@ -296,17 +309,41 @@ function selected(fixture, actor, range, scope, search) {
         (actor.role === "bidder" && bid.bidder_id === actor.id)) &&
       (actor.role !== "bidder" || bid.bidder_id === actor.id) &&
       (!scope || bid.bidder_id === scope) &&
+      (!mode.arrangement || bid.arrangement === mode.arrangement) &&
       (!range.from || Date.parse(bid.found_at) >= Date.parse(range.from)) &&
       (!range.to || Date.parse(bid.found_at) < Date.parse(range.to)),
   );
 }
-function expected(fixture, actor, range, sort, scope, search) {
-  const rows = selected(fixture, actor, range, scope, search);
-  const counts = new Map();
-  for (const row of rows) {
-    const size = fixture.bytes.get(row.id);
-    if (size !== null) counts.set(size, (counts.get(size) ?? 0) + 1);
+function expected(fixture, actor, range, sort, scope, search, mode = {}) {
+  const base = selected(fixture, actor, range, scope, search, mode);
+  const status = mode.status ?? "all";
+  const repeated = !!mode.repeated && actor.role !== "bidder";
+  const predicates = {
+    all: () => true,
+    applied: (row) => row.applied,
+    unapplied: (row) => !row.applied,
+    pending_review: (row) => row.review_status === "pending",
+  };
+  const groupedCounts = {},
+    statusCounts = {};
+  for (const [name, matches] of Object.entries(predicates)) {
+    const candidates = base.filter(matches),
+      counts = new Map();
+    for (const row of candidates) {
+      const size = fixture.bytes.get(row.id);
+      if (size !== null) counts.set(size, (counts.get(size) ?? 0) + 1);
+    }
+    groupedCounts[name] = counts;
+    statusCounts[name] = candidates.filter(
+      (row) => !repeated || (counts.get(fixture.bytes.get(row.id)) ?? 0) >= 2,
+    ).length;
   }
+  const counts = groupedCounts[status];
+  const rows = base.filter(
+    (row) =>
+      predicates[status](row) &&
+      (!repeated || (counts.get(fixture.bytes.get(row.id)) ?? 0) >= 2),
+  );
   const compare = (a, b) => {
     let primary = 0;
     if (sort.id === "screenshot_size_bytes" && actor.role !== "bidder") {
@@ -330,10 +367,11 @@ function expected(fixture, actor, range, sort, scope, search) {
     );
   };
   rows.sort(compare);
-  return { rows, counts };
+  return { rows, counts, statusCounts };
 }
 function validate(data, e, actor, pageIndex, pageSize, checkFeature) {
   assert.equal(data.total, e.rows.length);
+  assert.deepEqual(data.statusCounts, e.statusCounts);
   assert.deepEqual(
     data.rows.map((row) => row.id),
     e.rows
@@ -366,8 +404,9 @@ async function benchmark(
   search,
   checkFeature,
   label = "main",
+  mode = {},
 ) {
-  const e = expected(fixtureData, actor, range, sort, scope, search);
+  const e = expected(fixtureData, actor, range, sort, scope, search, mode);
   const samples = [];
   const pageSize = 100;
   const last = Math.max(0, Math.ceil(e.rows.length / pageSize) - 1);
@@ -392,6 +431,11 @@ async function benchmark(
               pageIndex,
               pageSize,
               sorting: [sort],
+              status: mode.status ?? "all",
+              arrangement: mode.arrangement,
+              columnFilters: {
+                screenshot: mode.repeated ? "Repeated sizes only" : "",
+              },
             },
           }),
         );
@@ -407,11 +451,15 @@ async function benchmark(
   samples.sort((a, b) => a - b);
   const p95 = samples[Math.ceil(samples.length * 0.95) - 1];
   const measurement = {
+    matrixKind: receipt.matrixKind,
     role: actor.role,
     range: range.name,
     scope: label,
     sort: sort.id,
     descending: sort.desc,
+    screenshotFilter: mode.repeated ? "Repeated sizes only" : "",
+    status: mode.status ?? "all",
+    arrangement: mode.arrangement ?? null,
     samples: samples.length,
     concurrency: 5,
     p95LimitMs: P95_LIMIT_MS,
@@ -669,6 +717,7 @@ async function cleanup() {
 }
 async function main() {
   const planOnly = args.includes("--plan-only");
+  const ordinaryOnly = args.includes("--ordinary-only");
   const usePlan = option("--use-plan");
   assert.equal(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -682,6 +731,10 @@ async function main() {
   assert.ok(
     !(before && recovery),
     "--before and --cleanup-only are mutually exclusive",
+  );
+  assert.ok(
+    !(ordinaryOnly && before),
+    "--ordinary-only and --before are mutually exclusive",
   );
   assert.ok(
     !(keep && (before || recovery)),
@@ -711,10 +764,31 @@ async function main() {
         "--keep-fixture",
         "--plan-only",
         "--use-plan",
+        "--representative-bids",
+        "--ordinary-only",
       ].includes(args[index]),
       "Unsupported flag",
     );
-    if (["--receipt", "--use-plan"].includes(args[index])) index++;
+    if (
+      ["--receipt", "--use-plan", "--representative-bids"].includes(args[index])
+    )
+      index++;
+  }
+  const representative =
+    !planOnly && !recovery ? option("--representative-bids") : null;
+  if (!planOnly && !recovery) {
+    assert.ok(
+      typeof representative === "string" && /^[1-9]\d*$/.test(representative),
+      "Execution requires a positive integer --representative-bids",
+    );
+    assert.ok(
+      Number.isSafeInteger(Number(representative)),
+      "Representative count must be a safe integer",
+    );
+    assert.ok(
+      Number(representative) <= Math.floor(25000 / 2),
+      "25,000 fixture bids must be at least twice representative volume",
+    );
   }
   if (!planOnly)
     service = createClient(STAGING, process.env.SUPABASE_SECRET_KEY, options);
@@ -726,7 +800,9 @@ async function main() {
     await cleanup();
     return;
   }
-  const planBytes = usePlan ? await readFile(guardedPath(usePlan), "utf8") : null;
+  const planBytes = usePlan
+    ? await readFile(guardedPath(usePlan), "utf8")
+    : null;
   const planned = planBytes ? JSON.parse(planBytes) : null;
   if (planned) assertFreshPlan(planned, validateReceipt);
   const marker = planned?.marker ?? `${PREFIX}${randomUUID()}`;
@@ -770,6 +846,10 @@ async function main() {
     await claimPlan(receiptPath, planBytes);
   }
   receipt.p95LimitMs = P95_LIMIT_MS;
+  receipt.matrixKind = ordinaryOnly ? "ordinary-baseline" : "full";
+  receipt.representativeBids = Number(representative);
+  receipt.fixtureVolumeMultiple =
+    receipt.fixtureBids / receipt.representativeBids;
   receipt.started = true;
   await save();
   const sponsor = ok(
@@ -842,14 +922,14 @@ async function main() {
   );
   ok(await service.from("resumes").insert(fixtureData.assignments));
   await chunks(fixtureData.bids, (rows) =>
-    seed("bids", "insert", rows.map((row) => ({ ...row, evidence_file_id: null }))),
+    seed(
+      "bids",
+      "insert",
+      rows.map((row) => ({ ...row, evidence_file_id: null })),
+    ),
   );
-  await chunks(fixtureData.files, (rows) =>
-    seed("files", "insert", rows),
-  );
-  await chunks(fixtureData.finalBids, (rows) =>
-    seed("bids", "upsert", rows),
-  );
+  await chunks(fixtureData.files, (rows) => seed("files", "insert", rows));
+  await chunks(fixtureData.finalBids, (rows) => seed("bids", "upsert", rows));
   const seeded = await service
     .from("bids")
     .select("id", { count: "exact", head: true })
@@ -884,8 +964,20 @@ async function main() {
   ];
   for (const actor of [actors.owner, actors.admin, actors.bidder1])
     for (const range of ranges)
-      for (const sort of sorts)
+      for (const sort of sorts) {
         await benchmark(actor, range, sort, null, `${marker}-main-`, !before);
+        if (!before && !ordinaryOnly)
+          await benchmark(
+            actor,
+            range,
+            sort,
+            null,
+            `${marker}-main-`,
+            true,
+            "main",
+            { repeated: true },
+          );
+      }
   if (!before) {
     await benchmark(
       actors.admin,
@@ -914,6 +1006,53 @@ async function main() {
       true,
       "presence-sort",
     );
+    if (!ordinaryOnly) {
+      for (const actor of [actors.owner, actors.admin])
+        for (const status of ["applied", "unapplied", "pending_review"])
+          for (const sort of sorts.slice(1))
+            await benchmark(
+              actor,
+              ranges[0],
+              sort,
+              null,
+              `${marker}-main-`,
+              true,
+              "main",
+              { repeated: true, status },
+            );
+      for (const sort of sorts.slice(1)) {
+        await benchmark(
+          actors.admin,
+          ranges[0],
+          sort,
+          null,
+          marker,
+          true,
+          "authorized-cross-workspace",
+          { repeated: true },
+        );
+        await benchmark(
+          actors.owner,
+          ranges[0],
+          sort,
+          actors.bidder2.id,
+          marker,
+          true,
+          "filtered-bidder",
+          { repeated: true },
+        );
+        await benchmark(
+          actors.owner,
+          ranges[1],
+          sort,
+          null,
+          `${marker}-main-`,
+          true,
+          "filtered-arrangement",
+          { repeated: true, arrangement: "remote" },
+        );
+      }
+    }
   }
   // Real RLS sessions: forced scope to another workspace/bidder stays empty.
   for (const [actor, foreign] of [

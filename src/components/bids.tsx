@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Popover as PopoverPrimitive } from "radix-ui";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
@@ -72,19 +72,25 @@ import { SheetsImport, type ImportResult } from "./sheets-import";
 import type { BidRow } from "@/lib/workspace-types";
 import { calendarToday, shiftCalendarDate, type CalendarPeriod } from "@/lib/calendar-period";
 import { PeriodSelector } from "./period-selector";
+import { buildResumeOptions, compatibleResume, filterResumeOptions } from "@/lib/resume-options";
+import { ResumeSelector } from "./resume-selector";
+import { UploadHistory } from "./upload-details";
 type Bid = BidRow;
-export function BidDialog({ data, bid }: { data: WorkspaceData; bid?: Bid }) {
+export function BidDialog({ data, bid, bidderId }: { data: WorkspaceData; bid?: Bid; bidderId?: string }) {
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
   const [saveError, setSaveError] = useState("");
   const [blocked, setBlocked] = useState(false);
   const router = useRouter();
+  const assignmentLabels = useMemo(() => buildResumeOptions(data), [data]);
   const active = data.resumes.filter(
     (r) =>
+      (!(bid?.bidder_id ?? bidderId) || r.bidder_id === (bid?.bidder_id ?? bidderId)) &&
+      (
       (!r.archived &&
         !!r.file_id &&
         !data.bidders.find((b) => b.user_id === r.bidder_id)?.archived) ||
-      r.id === bid?.resume_id,
+      r.id === bid?.resume_id),
   );
   return (
     <Dialog open={open} onOpenChange={(next) => { setOpen(next); setBlocked(false); setSaveError(""); }}>
@@ -143,7 +149,7 @@ export function BidDialog({ data, bid }: { data: WorkspaceData; bid?: Bid }) {
               <input type="hidden" name="resume_id" value={bid.resume_id} />
               <p className="rounded-lg bg-secondary p-3 text-xs">
                 Resume:{" "}
-                {data.candidateProfiles.find((p) => p.id === data.resumes.find((r) => r.id === bid.resume_id)?.profile_id)?.identifier} ·
+                {assignmentLabels.get(bid.resume_id)?.label} ·
                 Locked after first application
               </p>
             </>
@@ -156,7 +162,7 @@ export function BidDialog({ data, bid }: { data: WorkspaceData; bid?: Bid }) {
             >
               {active.map((r) => (
                 <option key={r.id} value={r.id}>
-                  {data.candidateProfiles.find((p) => p.id === r.profile_id)?.identifier} · {data.candidateProfiles.find((p) => p.id === r.profile_id)?.candidate_name}
+                  {assignmentLabels.get(r.id)?.label}
                 </option>
               ))}
             </SelectField>
@@ -240,6 +246,12 @@ export function BidDialog({ data, bid }: { data: WorkspaceData; bid?: Bid }) {
   );
 }
 export function BidWorkspace({
+  data, embedded = false, bidderId,
+}: { data: WorkspaceData; embedded?: boolean; bidderId?: string }) {
+  // A new auth scope must never inherit another user's review cache or controls.
+  return <BidWorkspaceContent key={`${data.profile.id}:${data.profile.role}:${data.profile.approval_status}:${data.profile.archived}:${bidderId ?? ""}`} data={data} embedded={embedded} bidderId={bidderId} />;
+}
+function BidWorkspaceContent({
   data,
   embedded = false,
   bidderId,
@@ -248,6 +260,11 @@ export function BidWorkspace({
   embedded?: boolean;
   bidderId?: string;
 }) {
+  const canReview = (data.profile.role === "client" || data.profile.role === "admin") && data.profile.approval_status === "approved" && !data.profile.archived;
+  const assignmentLabels = useMemo(() => buildResumeOptions(data), [data]);
+  const assignments = useMemo(() => [...assignmentLabels.values()], [assignmentLabels]);
+  const resumeById = useMemo(() => new Map(data.resumes.map((item) => [item.id, item])), [data.resumes]);
+  const profileById = useMemo(() => new Map(data.candidateProfiles.map((item) => [item.id, item])), [data.candidateProfiles]);
   const [checked, setChecked] = useState<Record<string, { version: number; applied: boolean }>>({});
   const [bulkBusy, setBulkBusy] = useState(false);
   const [uploadBusy, setUploadBusy] = useState(false);
@@ -296,6 +313,11 @@ export function BidWorkspace({
   const [arrangement, setArrangement] = useState("all");
   const [resume, setResume] = useState("all");
   const [bidder, setBidder] = useState(bidderId ?? "all");
+  const resumeChoices = useMemo(() => filterResumeOptions(assignments, "", bidderId ?? bidder), [assignments, bidderId, bidder]);
+  function changeBidder(next: string) {
+    setResume((current) => compatibleResume(assignments, current, next));
+    setBidder(next);
+  }
   const [source, setSource] = useState("all");
   const [job, setJob] = useState("all");
   const [from, setFrom] = useState("");
@@ -333,7 +355,7 @@ export function BidWorkspace({
   const [revision, setRevision] = useState(0);
   const [debouncedSearch, setDebouncedSearch] = useState(search);
   const queryKey = JSON.stringify([
-    data.profile.id, dateMode, from, to, trash, bidderId,
+    data.profile.id, data.profile.role, dateMode, from, to, trash, bidderId,
     dateMode !== "custom" && dateMode !== "all" || columnFilters.some((filter) => filter.value && typeof filter.value === "object" && "preset" in filter.value && filter.value.preset !== "custom" && filter.value.preset !== "all") ? today : "",
     debouncedSearch, status, arrangement, resume, bidder, source, job,
     columnFilters, sorting, pagination.pageIndex, pageSize,
@@ -492,7 +514,7 @@ export function BidWorkspace({
           <PopoverPrimitive.Root open={openFilter===id} onOpenChange={(open)=>setOpenFilter(open?id:null)}>
             <PopoverPrimitive.Trigger asChild><button type="button" aria-label={`Filter ${label}`} title={`Filter ${label}`} aria-expanded={openFilter===id} disabled={isEditing} className="rounded p-1 text-muted-foreground hover:bg-secondary"><SlidersHorizontal size={12}/></button></PopoverPrimitive.Trigger>
             <PopoverPrimitive.Portal><PopoverPrimitive.Content sideOffset={4} align="start" collisionPadding={8} className="z-50 max-h-[min(24rem,calc(100dvh-1rem))] w-56 overflow-y-auto rounded-md border bg-card p-3 text-foreground shadow-lg">
-            {id === "screenshot" && data.profile.role !== "bidder" && <div className="mb-3 space-y-1 border-b pb-3">
+            {id === "screenshot" && canReview && <div className="mb-3 space-y-1 border-b pb-3">
               {[{ label: "Size: smallest first", desc: false }, { label: "Size: largest first", desc: true }].map((order) => <button
                 key={order.label}
                 type="button"
@@ -531,15 +553,14 @@ export function BidWorkspace({
     {
       accessorKey: "resume_id",
       filterFn: (row, _id, value) => {
-        const resume = data.resumes.find((item) => item.id === row.original.resume_id);
-        const profile = data.candidateProfiles.find((item) => item.id === resume?.profile_id);
+        const resume = resumeById.get(row.original.resume_id);
+        const profile = profileById.get(resume?.profile_id ?? "");
         return `${profile?.identifier ?? ""} ${profile?.candidate_name ?? ""} ${resume?.email ?? ""}`.toLowerCase().includes(String(value).toLowerCase());
       },
-      header: headerControl("resume_id", "Resume ID"),
+      header: headerControl("resume_id", "Profile ID"),
       cell: ({ row }) => (
         <Badge variant="outline">
-          {data.resumes.find((r) => r.id === row.original.resume_id)
-            ?.profile_id ? data.candidateProfiles.find((p) => p.id === data.resumes.find((r) => r.id === row.original.resume_id)?.profile_id)?.identifier ?? "-" : "-"}
+          {profileById.get(resumeById.get(row.original.resume_id)?.profile_id ?? "")?.identifier ?? "-"}
         </Badge>
       ),
     },
@@ -651,7 +672,7 @@ export function BidWorkspace({
       accessorFn: (row) => Boolean(row.evidence_file_id),
       filterFn: (row, _id, value) => value === (row.original.evidence_file_id ? "Has screenshot" : "No screenshot"),
       sortingFn: (a, b) => Number(Boolean(a.original.evidence_file_id)) - Number(Boolean(b.original.evidence_file_id)),
-      header: headerControl("screenshot", "Screenshot", ["Has screenshot", "No screenshot"]),
+      header: headerControl("screenshot", "Screenshot", ["Has screenshot", "No screenshot", ...(canReview ? ["Repeated sizes only"] : [])]),
       cell: ({ row }) => (
         <ScreenshotCell
           bid={row.original}
@@ -758,13 +779,13 @@ export function BidWorkspace({
           <Button variant="outline" onClick={() => setPaste("")}>
             Paste from Sheets
           </Button>
-          <BidDialog data={data} />
+          <BidDialog data={data} bidderId={bidderId ?? (bidder === "all" ? undefined : bidder)} />
         </PageHeading>
       )}
       <section className="panel overflow-hidden">
         <fieldset disabled={isEditing} className="min-w-0">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
-            <div className="flex gap-1">
+            <div className="flex flex-wrap gap-1">
               {["all", "unapplied", "applied", ...(data.profile.role === "bidder" ? [] : ["pending_review"])].map((s) => (
                 <Button
                   key={s}
@@ -786,7 +807,7 @@ export function BidWorkspace({
                 <Button variant="outline" onClick={() => setPaste("")}>
                   Paste from Sheets
                 </Button>
-                <BidDialog data={data} />
+                <BidDialog data={data} bidderId={bidderId ?? (bidder === "all" ? undefined : bidder)} />
               </div>
             )}
           </div>
@@ -839,23 +860,12 @@ export function BidWorkspace({
           </div>
           {filters && (
             <div className="grid gap-3 border-b px-5 pb-5 sm:grid-cols-3 xl:grid-cols-4">
-              <SelectField
-                label="Resume"
-                value={resume}
-                onChange={(e) => setResume(e.target.value)}
-              >
-                <option value="all">All resumes</option>
-                {data.resumes.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {data.candidateProfiles.find((p) => p.id === r.profile_id)?.identifier}
-                  </option>
-                ))}
-              </SelectField>
+              <ResumeSelector options={resumeChoices} value={resume} onChange={setResume} disabled={isEditing} />
               {data.profile.role !== "bidder" && !bidderId && (
                 <SelectField
                   label="Bidder"
                   value={bidder}
-                  onChange={(e) => setBidder(e.target.value)}
+                  onChange={(e) => changeBidder(e.target.value)}
                 >
                   <option value="all">All bidders</option>
                   {data.bidders.map((b) => (
@@ -999,6 +1009,8 @@ export function BidWorkspace({
                 ? "Loading bid applications…"
                 : loadError
                   ? "Bid results could not be loaded. Use Retry above to try again."
+                  : canReview && columnFilters.some((filter) => filter.id === "screenshot" && filter.value === "Repeated sizes only")
+                    ? "No applications with matching screenshot sizes"
                   : totalCount > 0
                 ? "No matching opportunities. Clear filters or change your search to see bids."
                 : "Your next opportunity starts here. Add a job URL and choose a resume to start tracking."}
@@ -1191,6 +1203,7 @@ export function BidWorkspace({
                       </Button>
                     </div>
                   )}
+                {canReview && <UploadHistory key={`${data.profile.id}:${active.id}`} bidId={active.id} role={data.profile.role} />}
                 <div className="border-t pt-5">
                   <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold">
                     <Clock size={15} /> Activity history
