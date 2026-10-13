@@ -67,6 +67,7 @@ import {
   AppliedBadge,
 } from "./common";
 import { ScreenshotCell } from "./screenshot-cell";
+import { AppliedIpLocationCell } from "./applied-ip-location-cell";
 import { FileUpload } from "./file-upload";
 import { BulkBidToolbar } from "./bulk-bid-toolbar";
 import { BidGrid } from "./bid-grid";
@@ -1250,6 +1251,23 @@ function BidWorkspaceContent({
         />
       ),
     },
+    ...(canReview
+      ? ([
+          {
+            id: "applied_ip_location",
+            header: "Applied IP / location",
+            enableSorting: false,
+            cell: ({ row }) => (
+              <AppliedIpLocationCell
+                key={row.original.evidence_file_id ?? "no-screenshot"}
+                fileId={row.original.evidence_file_id}
+                role={data.profile.role}
+                disabled={isEditing || pending}
+              />
+            ),
+          },
+        ] satisfies ColumnDef<Bid>[])
+      : []),
     {
       id: "actions",
       header: "Actions",

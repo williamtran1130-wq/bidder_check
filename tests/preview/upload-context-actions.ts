@@ -12,10 +12,13 @@ function record(fileId: string, bidId = "bid-0"): UploadContext {
 }
 export async function getScreenshotUploadContext(fileId: string): Promise<{ data?: UploadContext | null; error?: string }> {
   const n = increment("data-upload-context-reads"), params = new URLSearchParams(location.search);
+  if (params.has("upload-context-delay") && n === 1)
+    await new Promise<void>((resolve) => window.addEventListener("fixture-release-upload-context", () => resolve(), { once: true }));
   if (params.get("role") === "bidder") return { error: "Access denied" };
   if (params.has("upload-context-error") || (params.has("upload-context-recover") && n === 1)) return { error: "Upload details could not be loaded. Please retry." };
   if (params.has("upload-context-old")) return { data: null };
   const data = record(fileId);
+  if (params.has("upload-context-ipv6")) return { data: { ...data, ip: "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff", city: "São Paulo", region: "SP", country: "BR" } };
   return { data: params.has("upload-context-unavailable") ? { ...data, ip: null, city: null, region: null, country: null, source: "unavailable", status: "unavailable" } : data };
 }
 export async function getScreenshotUploadHistory(bidId: string, cursor?: UploadContextCursor | null): Promise<{ data?: UploadHistoryPage; error?: string }> {

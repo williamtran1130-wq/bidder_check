@@ -183,8 +183,20 @@ function ChangingAccountBids() {
       };
       setData({ ...fixture });
     };
+    const changeManager = () => {
+      fixture.profile = {
+        ...fixture.profile,
+        id: "replacement-client",
+        role: "client",
+      };
+      setData({ ...fixture });
+    };
     window.addEventListener("fixture-change-account", change);
-    return () => window.removeEventListener("fixture-change-account", change);
+    window.addEventListener("fixture-change-manager", changeManager);
+    return () => {
+      window.removeEventListener("fixture-change-account", change);
+      window.removeEventListener("fixture-change-manager", changeManager);
+    };
   }, []);
   return <BidWorkspace data={data} />;
 }

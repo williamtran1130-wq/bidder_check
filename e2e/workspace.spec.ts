@@ -128,6 +128,7 @@ test("daily table has ordered workflow columns, automatic timestamps and trash c
     "Review status",
     "Interview status",
     "Screenshot",
+    "Applied IP / location",
     "Actions",
   ]);
   await expect(page.getByText("1\u20131 of 1 bids")).toBeVisible();

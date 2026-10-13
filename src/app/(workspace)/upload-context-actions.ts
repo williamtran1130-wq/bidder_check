@@ -13,7 +13,7 @@ async function manager() {
 }
 const cursorSchema = z.object({ uploadedAt: z.iso.datetime({ offset: true }), id: z.uuid() });
 
-/** Called only when a manager opens the current screenshot preview. */
+/** Called when a manager opens the screenshot preview or reveals its inline IP/location. */
 export async function getScreenshotUploadContext(fileId: string): Promise<ReviewResult<UploadContext | null>> {
   try {
     const supabase = await manager();
