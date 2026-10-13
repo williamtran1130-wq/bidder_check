@@ -159,9 +159,19 @@ async function listingPlan(
       "select prosrc body from pg_proc where oid='public.list_bids_v2(jsonb)'::regprocedure",
     )
   ).rows[0].body;
+  // Every query in this helper has a literal text search, so the final RPC
+  // selects its retained grouped branch even when private size modes are
+  // downgraded for a bidder. Explain that branch, not the ordinary-page SELECT.
+  // The dedicated list-performance test explains a pending-review query that
+  // actually selects the ordinary branch and compares both complete outputs.
+  const statementStart = [
+    ...body.matchAll(/with filtered as (?:not )?materialized/g),
+  ].slice(-1)[0]?.index;
+  if (statementStart === undefined)
+    throw new Error("Retained list SELECT missing");
   let statement = body.slice(
-    body.search(/with filtered as (?:not )?materialized/),
-    body.indexOf(" into result;"),
+    statementStart,
+    body.indexOf(" into result;", statementStart),
   );
   const locals = {
     p_query: "($1::jsonb)",
