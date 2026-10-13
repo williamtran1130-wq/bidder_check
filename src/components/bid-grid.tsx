@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { flexRender, type Table } from "@tanstack/react-table";
 import { formatInTimeZone } from "date-fns-tz";
 import type { BidRow } from "@/lib/workspace-types";
@@ -50,7 +50,7 @@ export function BidGrid({
   onBusy: (busy: boolean) => void;
   onPaste: (text: string) => void;
   onOpen: (bid: Bid) => void;
-  emptyMessage: string;
+  emptyMessage: ReactNode;
 }) {
   const assignmentLabels = useMemo(() => buildResumeOptions(data), [data]);
   const [storedSelection, setSelection] = useState<{
@@ -378,16 +378,6 @@ export function BidGrid({
           ))}
         </thead>
         <tbody>
-          {rows.length === 0 && (
-            <tr>
-              <td
-                colSpan={columns.length + 2}
-                className="h-48 border px-6 text-center text-sm text-muted-foreground"
-              >
-                {emptyMessage}
-              </td>
-            </tr>
-          )}
           {rows.map((row, r) => (
             <tr key={row.id} className="hover:bg-muted/30">
               <td className="border px-2 py-2">
@@ -640,6 +630,11 @@ export function BidGrid({
           ))}
         </tbody>
       </table>
+      {rows.length === 0 && (
+        <div className="sticky left-0 flex min-h-48 w-full items-center justify-center border px-6 text-center text-sm text-muted-foreground">
+          {emptyMessage}
+        </div>
+      )}
     </div>
   );
 }

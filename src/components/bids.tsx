@@ -1,4 +1,5 @@
 "use client";
+import { PageLoading } from "./page-loading";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Popover as PopoverPrimitive } from "radix-ui";
@@ -1627,7 +1628,7 @@ function BidWorkspaceContent({
           onOpen={openBid}
           emptyMessage={
             loading
-              ? "Loading bid applications…"
+              ? <PageLoading label="Loading bid applications…" size="section" />
               : loadError
                 ? "Bid results could not be loaded. Use Retry above to try again."
                 : canReview &&

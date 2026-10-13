@@ -1,4 +1,5 @@
 ﻿import { Suspense } from "react";
+import { PageLoading } from "@/components/page-loading";
 import { getWorkspaceData } from "@/lib/data";
 import { BidWorkspace } from "@/components/bids";
 import { getBidRows } from "@/lib/read-services";
@@ -31,7 +32,7 @@ export default function Page(props: {
   searchParams: Promise<{ review?: string }>;
 }) {
   return (
-    <Suspense fallback={<p role="status">Loading bids…</p>}>
+    <Suspense fallback={<PageLoading label="Loading bids…" />}>
       <Content {...props} />
     </Suspense>
   );

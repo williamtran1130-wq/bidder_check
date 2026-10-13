@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { PageLoading } from "@/components/page-loading";
 import { getDashboardData } from "@/lib/data";
 import { Dashboard } from "@/components/dashboard";
 import { readReport } from "@/lib/reporting-server";
@@ -25,7 +26,7 @@ async function Content() {
 }
 export default function Page() {
   return (
-    <Suspense fallback={<p role="status">Loading dashboard…</p>}>
+    <Suspense fallback={<PageLoading label="Loading dashboard…" />}>
       <Content />
     </Suspense>
   );

@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { PageLoading } from "@/components/page-loading";
 import { getWorkspaceData } from "@/lib/data";
 import { getNotificationPage } from "@/lib/notification-reads";
 import { Notifications } from "@/components/notifications";
@@ -26,7 +27,7 @@ async function Content() {
 
 export default function Page() {
   return (
-    <Suspense fallback={<p role="status">Loading notifications?</p>}>
+    <Suspense fallback={<PageLoading label="Loading notifications…" />}>
       <Content />
     </Suspense>
   );

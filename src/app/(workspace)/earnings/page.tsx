@@ -1,4 +1,5 @@
 ﻿import { Suspense } from "react";
+import { PageLoading } from "@/components/page-loading";
 import { Earnings } from "@/components/earnings";
 import { getContext } from "@/lib/auth";
 import { redirect } from "next/navigation";
@@ -30,7 +31,7 @@ async function Content() {
 }
 export default function Page() {
   return (
-    <Suspense fallback={<p role="status">Loading earnings…</p>}>
+    <Suspense fallback={<PageLoading label="Loading earnings…" />}>
       <Content />
     </Suspense>
   );

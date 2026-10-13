@@ -1,4 +1,5 @@
 "use client";
+import { PageLoading } from "./page-loading";
 import { useCallback, useState } from "react";
 import { Wallet, CheckCheck, FileText } from "lucide-react";
 import { usd } from "@/lib/domain";
@@ -79,7 +80,7 @@ export function Earnings({
       </div>
       <section className="panel p-5">
         {error && <p role="alert" className="mb-4 text-sm text-destructive">{error}{report ? " Showing the last successful results for these filters." : ""} <Button size="sm" variant="outline" disabled={loading} onClick={refresh}>Retry</Button></p>}
-        {loading && <p className="py-8 text-center text-sm text-muted-foreground" role="status">Loading earnings…</p>}
+        {loading && <PageLoading label="Loading earnings…" size="section" />}
         {!loading && report && !groups.length ? (
           <EmptyState
             title="Progress you can put a number on"

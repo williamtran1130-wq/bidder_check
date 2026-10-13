@@ -13,6 +13,7 @@ import { Notifications } from "@/components/notifications";
 import { InterviewReport } from "@/components/interviews";
 import { AuthForm } from "@/components/auth-form";
 import { BackgroundBeams } from "@/components/ui/background-beams";
+import WorkspaceLoading from "@/app/(workspace)/loading";
 import { fixture, longWorkspaceName } from "./sample-data";
 import { getBidRows } from "./actions";
 import { getNotificationPage } from "./notification-actions";
@@ -86,6 +87,7 @@ if (new URLSearchParams(window.location.search).has("screenshot-sizes")) {
   });
 }
 const pages: Record<string, React.ReactNode> = {
+  "/loading-workspace": <WorkspaceLoading />,
   "/auth/login": (
     <div className="mx-auto max-w-sm">
       <div className="pointer-events-none relative h-12">

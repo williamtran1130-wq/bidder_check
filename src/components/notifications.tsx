@@ -1,4 +1,5 @@
 "use client";
+import { PageLoading } from "./page-loading";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { formatInTimeZone } from "date-fns-tz";
 import Link from "next/link";
@@ -639,7 +640,7 @@ function List({
         <ErrorState error={deep.error} retry={() => void deep.retry()} />
       )}
       {!resource.data && !resource.error && (
-        <p role="status">Loading notifications…</p>
+        <PageLoading label="Loading notifications…" size="section" />
       )}
       <div className="space-y-3">
         {resource.data &&

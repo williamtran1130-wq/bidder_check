@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { PageLoading } from "@/components/page-loading";
 import { getNotificationUnreadCount } from "@/lib/notification-reads";
 import { getContext } from "@/lib/auth";
 import { Shell } from "@/components/shell";
@@ -27,7 +28,7 @@ async function Content({ children }: { children: React.ReactNode }) {
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   return (
-    <Suspense fallback={<p role="status">Loading workspace?</p>}>
+    <Suspense fallback={<PageLoading label="Loading workspace…" size="screen" />}>
       <Content>{children}</Content>
     </Suspense>
   );

@@ -1,4 +1,5 @@
 ﻿import { Suspense } from "react";
+import { PageLoading } from "@/components/page-loading";
 import { InterviewReport } from "@/components/interviews";
 import { getContext } from "@/lib/auth";
 import { readReport } from "@/lib/reporting-server";
@@ -22,7 +23,7 @@ async function Content() {
 }
 export default function Page() {
   return (
-    <Suspense fallback={<p role="status">Loading interviews…</p>}>
+    <Suspense fallback={<PageLoading label="Loading interviews…" />}>
       <Content />
     </Suspense>
   );

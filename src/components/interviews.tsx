@@ -1,4 +1,5 @@
 "use client";
+import { PageLoading } from "./page-loading";
 import { useCallback, useState } from "react";
 import { PageHeading, SelectField } from "./common";
 import { getInterviewPerformance } from "@/lib/read-client";
@@ -34,10 +35,12 @@ export function InterviewReport({ initial }: { initial?: ReadSeed<SeedReport> } 
     ].map(([label, value]) => <div className="panel p-5" key={label}><p className="text-xs text-muted-foreground">{label}</p><strong className="mt-2 block text-2xl">{value}</strong></div>)}</div>
     {!!totals?.excludedApplications && <p className="mb-4 rounded-lg bg-muted p-3 text-xs text-muted-foreground">{totals.excludedApplications.toLocaleString()} historical applications have no recoverable interview status and are excluded from this ratio.</p>}
     {error && <p role="alert" className="mb-4 text-sm text-destructive">{error}{report ? " Showing the last successful results for these filters." : ""} <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>Retry</Button></p>}
-    <div className="panel overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead className="border-b bg-muted/40 text-xs text-muted-foreground"><tr><th className="p-4">{group === "profile" ? "Candidate profile" : group === "bidder" ? "Bidder" : "Profile · bidder"}</th><th className="p-4">Applied applications</th><th className="p-4">Interview invitations</th><th className="p-4">Conversion</th></tr></thead><tbody>
-      {loading && !report ? <tr><td colSpan={4} className="p-10 text-center text-muted-foreground">Loading interview report…</td></tr> : rows.map((row) => <tr key={row.id} className="border-b last:border-0"><td className="p-4 font-medium">{row.label}</td><td className="p-4">{row.applied}</td><td className="p-4">{row.interviews}</td><td className="p-4">{row.conversion === null ? "—" : `${row.conversion.toFixed(1)}%`}</td></tr>)}
+    <div className="panel"><div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead className="border-b bg-muted/40 text-xs text-muted-foreground"><tr><th className="p-4">{group === "profile" ? "Candidate profile" : group === "bidder" ? "Bidder" : "Profile · bidder"}</th><th className="p-4">Applied applications</th><th className="p-4">Interview invitations</th><th className="p-4">Conversion</th></tr></thead><tbody>
+      {loading && !report ? null : rows.map((row) => <tr key={row.id} className="border-b last:border-0"><td className="p-4 font-medium">{row.label}</td><td className="p-4">{row.applied}</td><td className="p-4">{row.interviews}</td><td className="p-4">{row.conversion === null ? "—" : `${row.conversion.toFixed(1)}%`}</td></tr>)}
       {!loading && report && !rows.length && <tr><td colSpan={4} className="p-10 text-center text-muted-foreground">No applied applications in this period.</td></tr>}
       {!loading && !report && <tr><td colSpan={4} className="p-10 text-center text-muted-foreground">Interview report unavailable.</td></tr>}
     </tbody></table></div>
+      {loading && !report && <PageLoading label="Loading interview report…" size="section" />}
+    </div>
   </>;
 }

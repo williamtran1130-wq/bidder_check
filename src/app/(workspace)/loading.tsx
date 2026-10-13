@@ -1,7 +1,5 @@
-﻿export default function Loading() {
-  return (
-    <p role="status" className="p-6 text-sm text-muted-foreground">
-      Loading workspace view…
-    </p>
-  );
+﻿import { PageLoading } from "@/components/page-loading";
+
+export default function Loading() {
+  return <PageLoading label="Loading workspace…" />;
 }

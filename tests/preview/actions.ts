@@ -45,10 +45,23 @@ export async function manualApplyBidsAction(input: {
   );
   return { data: { applied: input.targets.length, unchanged: 0 } };
 }
+async function pageLoadingFixture() {
+  if (!new URLSearchParams(location.search).has("page-loading")) return false;
+  const state = document.documentElement.dataset;
+  state.pageLoadingReads = String(Number(state.pageLoadingReads ?? 0) + 1);
+  if (state.pageLoadingReleased !== "true") {
+    await new Promise<void>((resolve) =>
+      window.addEventListener("fixture-release-page", () => resolve(), { once: true }),
+    );
+  }
+  return state.pageLoadingError === "true";
+}
+
 export async function getEarningsPerformance(
   input: import("@/lib/report-types").GroupedReportQuery,
 ) {
   document.documentElement.dataset.earningsQuery = JSON.stringify(input);
+  if (await pageLoadingFixture()) return { error: "Fixture report unavailable. Please retry." };
   return {
     data: {
       totals: {
@@ -78,6 +91,7 @@ export async function getInterviewPerformance(
   input: import("@/lib/report-types").GroupedReportQuery,
 ) {
   document.documentElement.dataset.interviewQuery = JSON.stringify(input);
+  if (await pageLoadingFixture()) return { error: "Fixture report unavailable. Please retry." };
   return {
     data: {
       totals: { applied: 1, interviews: 0, excludedApplications: 0 },
@@ -216,6 +230,7 @@ export async function getBidRows(
   document.documentElement.dataset.bidListReads = String(
     Number(document.documentElement.dataset.bidListReads ?? 0) + 1,
   );
+  if (await pageLoadingFixture()) return { error: "Fixture report unavailable. Please retry." };
   const { chicagoDateRange } = await import("@/lib/domain");
   const { calendarToday, resolveCalendarPeriod } =
     await import("@/lib/calendar-period");
