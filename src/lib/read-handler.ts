@@ -5,11 +5,6 @@ import { getActor } from "./auth";
 import { createReadServices } from "./read-services";
 import { createNotificationReads } from "./notification-reads";
 import { createReportReader } from "./reporting-server";
-// These hold functions only, never an actor/client. Services still check live
-// authorization; typed denials reach this HTTP boundary without Next redirects.
-const reads = createReadServices(getActor);
-const notifications = createNotificationReads(getActor);
-const readReport = createReportReader(getActor);
 const bidInput = z.tuple([
   z.string(),
   z.string(),
@@ -69,9 +64,14 @@ export async function handleRead(
   request: Request,
   operation: string,
 ): Promise<Response> {
-  try {
-    // Must run before every query, including read-only POST. No service-role client.
-    await getActor();
+  // The first service boundary checks live authorization after input parsing.
+  // Share that one actor/client (including a rejection) only within this request.
+  let context: ReturnType<typeof getActor> | undefined;
+  const requestContext = () => (context ??= getActor());
+  const reads = createReadServices(requestContext);
+  const notifications = createNotificationReads(requestContext);
+  const readReport = createReportReader(requestContext);
+  async function dispatch(): Promise<Response> {
     if (!operations.has(operation))
       return json({ error: "Unknown read operation." }, 404);
     let input: unknown;
@@ -166,8 +166,21 @@ export async function handleRead(
         break;
     }
     return json(result);
+  }
+  try {
+    const response = await dispatch();
+    // Validation and unknown operations can return without reaching a service.
+    // They still require authorization before any response leaves this handler.
+    await requestContext();
+    return response;
   } catch (error) {
     unstable_rethrow(error);
+    try {
+      await requestContext();
+    } catch (authorizationError) {
+      unstable_rethrow(authorizationError);
+      error = authorizationError;
+    }
     const destination =
       error && typeof error === "object" && "destination" in error
         ? error.destination

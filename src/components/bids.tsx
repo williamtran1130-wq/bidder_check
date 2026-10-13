@@ -1623,7 +1623,7 @@ function BidWorkspaceContent({
                     : "Your next opportunity starts here. Add a job URL and choose a resume to start tracking."
           }
         />
-        <div className="flex items-center justify-between border-t px-5 py-4 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-4 text-xs text-muted-foreground">
           <span>
             {hasResults ? (
               <>
@@ -1643,13 +1643,13 @@ function BidWorkspaceContent({
               "Results unavailable"
             )}
           </span>
-          <div className="flex items-center gap-2">
-            <label className="flex items-center gap-2">
+          <div className="flex max-w-full flex-wrap items-center gap-3">
+            <label className="flex max-w-full flex-wrap items-center gap-2">
               Rows per page{" "}
               <select
                 aria-label="Rows per page"
                 disabled={isEditing}
-                className="native-select w-20"
+                className="native-select min-w-24 max-w-24 shrink-0"
                 value={customPageSize ? "custom" : pageSize}
                 onChange={(event) => {
                   if (event.target.value === "custom") {
@@ -1682,7 +1682,7 @@ function BidWorkspaceContent({
                   min={1}
                   max={100}
                   value={pageSize}
-                  className="h-9 w-16 rounded-md border bg-background px-2"
+                  className="h-9 w-16 shrink-0 rounded-md border bg-background px-2"
                   onChange={(event) => {
                     const value = Number(event.target.value);
                     if (Number.isInteger(value) && value >= 1 && value <= 100) {
@@ -1698,27 +1698,31 @@ function BidWorkspaceContent({
                 />
               )}
             </label>
-            <Button
-              aria-label="Previous page"
-              size="icon-sm"
-              variant="outline"
-              disabled={isEditing || !hasResults || !table.getCanPreviousPage()}
-              onClick={() => table.previousPage()}
-            >
-              <ChevronLeft size={14} />
-            </Button>
-            <span className="px-2">
-              {table.getState().pagination.pageIndex + 1}
-            </span>
-            <Button
-              aria-label="Next page"
-              size="icon-sm"
-              variant="outline"
-              disabled={isEditing || !hasResults || !table.getCanNextPage()}
-              onClick={() => table.nextPage()}
-            >
-              <ChevronRight size={14} />
-            </Button>
+            <div className="flex shrink-0 items-center gap-2">
+              <Button
+                aria-label="Previous page"
+                size="icon-sm"
+                variant="outline"
+                disabled={
+                  isEditing || !hasResults || !table.getCanPreviousPage()
+                }
+                onClick={() => table.previousPage()}
+              >
+                <ChevronLeft size={14} />
+              </Button>
+              <span className="px-2">
+                {table.getState().pagination.pageIndex + 1}
+              </span>
+              <Button
+                aria-label="Next page"
+                size="icon-sm"
+                variant="outline"
+                disabled={isEditing || !hasResults || !table.getCanNextPage()}
+                onClick={() => table.nextPage()}
+              >
+                <ChevronRight size={14} />
+              </Button>
+            </div>
           </div>
         </div>
       </section>
