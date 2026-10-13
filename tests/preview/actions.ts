@@ -756,12 +756,18 @@ const purgeFixture = () => ({
   nextAttemptAt: verified ? null : new Date(loadedAt + 4000).toISOString(),
   serverTime: new Date().toISOString(),
 });
-export const recentBidPurges = async () => ({
-  data:
-    !verified && new URLSearchParams(window.location.search).has("purge-notice")
-      ? [purgeFixture()]
-      : [],
-});
+export const recentBidPurges = async () => {
+  if (new URLSearchParams(location.search).has("purge-read-transport"))
+    document.documentElement.dataset.legacyPurgeReads = String(
+      Number(document.documentElement.dataset.legacyPurgeReads ?? 0) + 1,
+    );
+  return {
+    data:
+      !verified && new URLSearchParams(window.location.search).has("purge-notice")
+        ? [purgeFixture()]
+        : [],
+  };
+};
 export async function retryPurgeCleanup() {
   if (Date.now() < loadedAt + 4000)
     return { data: { status: purgeFixture(), outcome: "waiting" } };

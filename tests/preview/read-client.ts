@@ -3,7 +3,6 @@ export {
   getBidHistory,
   getFileUrl,
   getPurgeStatus,
-  recentBidPurges,
   getDashboardPerformance,
   getEarningsPerformance,
   getInterviewPerformance,
@@ -18,7 +17,13 @@ export {
   getNotificationDeviceEnabled,
 } from "./notification-actions";
 import { getFileUrl } from "./actions";
+import { recentBidPurges as fixtureRecentBidPurges } from "./actions";
+import { recentBidPurges as readRecentBidPurges } from "../../src/lib/read-client";
 import type { FileUrlOutcome } from "@/lib/read-types";
+export const recentBidPurges = () =>
+  new URLSearchParams(location.search).has("purge-read-transport")
+    ? readRecentBidPurges()
+    : fixtureRecentBidPurges();
 export async function getFileUrls(
   ids: string[],
 ): Promise<{ data?: FileUrlOutcome[]; error?: string }> {

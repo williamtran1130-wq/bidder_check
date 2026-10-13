@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PurgeStatus } from "@/lib/bulk-types";
-import { recentBidPurges } from "@/app/(workspace)/actions";
+import { recentBidPurges } from "@/lib/read-client";
 
 const ACTIVE_POLL_MS = 10_000;
 const IDLE_POLL_MS = 30_000;
