@@ -851,25 +851,28 @@ export function Notifications(props: NotificationsProps) {
   );
 }
 function CountedNotificationContent(props: NotificationsProps) {
-  const { data, initialInbox = [], initialInboxPage } = props;
+  const { data, initialInbox, initialInboxPage } = props;
   const unread = useNotificationResource(
     `${scope(data)}unread`,
     getNotificationUnreadCount,
     initialInboxPage?.error
       ? { error: initialInboxPage.error }
-      : {
-          data:
-            initialInboxPage?.data?.unread_count ??
-            initialInbox.filter((row) => !row.read_at && !row.resolved_at)
-              .length,
-        },
+      : initialInboxPage?.data
+        ? { data: initialInboxPage.data.unread_count }
+        : initialInbox !== undefined
+          ? {
+              data: initialInbox.filter(
+                (row) => !row.read_at && !row.resolved_at,
+              ).length,
+            }
+          : undefined,
   );
   return <NotificationContent {...props} unread={unread} />;
 }
 function NotificationContent({
   data,
-  initialInbox = [],
-  initialMessages = [],
+  initialInbox,
+  initialMessages,
   initialInboxPage,
   initialMessagesPage,
   unread = { data: 0 },
@@ -965,13 +968,16 @@ function NotificationContent({
             status={view}
             initial={
               view === "all" && workspace === data.workspaces[0]?.id
-                ? (initialMessagesPage ?? {
-                    data: {
-                      rows: initialMessages,
-                      next_cursor: null,
-                      unread_count: 0,
-                    },
-                  })
+                ? (initialMessagesPage ??
+                  (initialMessages !== undefined
+                    ? {
+                        data: {
+                          rows: initialMessages,
+                          next_cursor: null,
+                          unread_count: 0,
+                        },
+                      }
+                    : undefined))
                 : undefined
             }
             onEdit={(message) => {
@@ -987,13 +993,16 @@ function NotificationContent({
           workspace=""
           status="all"
           initial={
-            initialInboxPage ?? {
-              data: {
-                rows: initialInbox,
-                next_cursor: null,
-                unread_count: unread.data ?? 0,
-              },
-            }
+            initialInboxPage ??
+            (initialInbox !== undefined
+              ? {
+                  data: {
+                    rows: initialInbox,
+                    next_cursor: null,
+                    unread_count: unread.data ?? 0,
+                  },
+                }
+              : undefined)
           }
           onEdit={() => {}}
         />

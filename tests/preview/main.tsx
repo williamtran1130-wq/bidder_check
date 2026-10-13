@@ -15,6 +15,7 @@ import { AuthForm } from "@/components/auth-form";
 import { BackgroundBeams } from "@/components/ui/background-beams";
 import { fixture, longWorkspaceName } from "./sample-data";
 import { getBidRows } from "./actions";
+import { getNotificationPage } from "./notification-actions";
 import { bidReadKey, initialBidQuery } from "@/lib/read-keys";
 import { calendarToday } from "@/lib/calendar-period";
 import "@/app/globals.css";
@@ -39,6 +40,26 @@ const bidSeed = parameters.has("bid-seed")
     }
   : undefined;
 if (bidSeed) document.documentElement.dataset.bidListReads = "0";
+// Mirror the real notification page's SSR results, including pagination and
+// failures. Empty arrays would falsely claim a successful empty server read.
+const notificationRole =
+  location.pathname === "/admin-notifications" ? "admin" : fixture.profile.role;
+const [initialInboxPage, initialMessagesPage] = [
+  "/notifications",
+  "/admin-notifications",
+].includes(location.pathname)
+  ? await Promise.all([
+      notificationRole !== "client"
+        ? getNotificationPage({ kind: "inbox" })
+        : Promise.resolve(undefined),
+      notificationRole !== "bidder"
+        ? getNotificationPage({
+            kind: "messages",
+            workspace_id: fixture.workspaces[0]?.id,
+          })
+        : Promise.resolve(undefined),
+    ])
+  : [undefined, undefined];
 window.addEventListener("fixture-change-bid", (event) => {
   const change = (
     event as CustomEvent<{
@@ -90,8 +111,8 @@ const pages: Record<string, React.ReactNode> = {
   "/admin-notifications": (
     <Notifications
       data={{ ...fixture, profile: { ...fixture.profile, role: "admin" } }}
-      initialInbox={[]}
-      initialMessages={[]}
+      initialInboxPage={initialInboxPage}
+      initialMessagesPage={initialMessagesPage}
     />
   ),
   "/admin-users": (
@@ -144,7 +165,11 @@ const pages: Record<string, React.ReactNode> = {
   "/earnings": <Earnings />,
   "/settings": <Settings data={fixture} />,
   "/notifications": (
-    <Notifications data={fixture} initialInbox={[]} initialMessages={[]} />
+    <Notifications
+      data={fixture}
+      initialInboxPage={initialInboxPage}
+      initialMessagesPage={initialMessagesPage}
+    />
   ),
   "/interviews": <InterviewReport />,
 };

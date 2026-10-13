@@ -76,7 +76,7 @@ test("custom dates stay drafts until valid and explicitly applied", async ({ pag
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "2");
 });
 
-test("failed refresh keeps only same-filter results and retries once", async ({ page }) => {
+test("failed refresh keeps only same-filter results and retries only when requested", async ({ page }) => {
   await page.goto(`${preview}/dashboard?report-failure`);
   const existing = page.getByRole("img", { name: "Activity chart: 1 found, 0 applications." });
   await expect(existing).toBeVisible();
@@ -85,11 +85,16 @@ test("failed refresh keeps only same-filter results and retries once", async ({ 
   await page.getByRole("button", { name: "Refresh dashboard" }).click();
   await expect(page.getByRole("alert")).toContainText("Showing the last successful results for these filters.");
   await expect(existing).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-report-reads", "2");
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "3");
+  await expect(existing).toBeVisible();
   await page.getByLabel("Period", { exact: true }).selectOption("yesterday");
   await expect(existing).toHaveCount(0);
   await expect(page.getByRole("alert")).toContainText("This report is temporarily unavailable. Please retry.");
   await expect(page.getByRole("alert")).not.toContainText("last successful");
+  await expect(page.locator("html")).toHaveAttribute("data-report-reads", "4");
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "5");
   await expect(page.getByText("Activity unavailable.", { exact: true })).toBeVisible();
   await expect(page.getByText(/statement timeout|canceling statement|No bids found/)).toHaveCount(0);

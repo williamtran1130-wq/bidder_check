@@ -350,6 +350,7 @@ test.describe("touch grid selection", () => {
 test("decorative paths mount only on desktop without reduced motion and are removed on preference changes", async ({
   page,
 }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.goto("/auth/login");
   await expect(

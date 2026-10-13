@@ -32,6 +32,17 @@ createRoot(document.getElementById('root')).render(React.createElement(Providers
     "http://127.0.0.1:3001/admin-notifications?notification-case=paused",
   );
   await page.getByRole("button", { name: "Messages", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Seeded foreign", exact: true }),
+  ).toBeVisible();
+  // A matching seed intentionally avoids a hydration read. Request the newer
+  // server state explicitly before exercising access loss and scope restoration.
+  await page
+    .getByRole("button", { name: "Refresh messages", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Daily reminder", exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   await expect(page.getByLabel("Title", { exact: true })).toHaveValue(
     "Daily reminder",
@@ -39,6 +50,8 @@ createRoot(document.getElementById('root')).render(React.createElement(Providers
   await page
     .getByRole("button", { name: "Demote same account", exact: true })
     .click();
+  // Scope changes discard seed props and must immediately read the new scope.
+  await expect(page.getByText("Access denied", { exact: true })).toBeVisible();
   await page
     .getByRole("button", { name: "Refresh messages", exact: true })
     .click();
@@ -65,6 +78,89 @@ createRoot(document.getElementById('root')).render(React.createElement(Providers
     page.getByRole("heading", { name: "Seeded foreign", exact: true }),
   ).toHaveCount(0);
 });
+
+for (const seed of [
+  "missing-messages",
+  "missing-inbox",
+  "empty",
+  "error",
+] as const) {
+  test(`notification ${seed} seed keeps missing and successful empty results distinct`, async ({
+    page,
+  }) => {
+    await page.clock.install();
+    await page.route("**/*notification-actions*", async (route) => {
+      const response = await route.fetch();
+      let body = await response.text();
+      for (const [name, counter] of [
+        ["getNotificationPage", "notificationPageReads"],
+        ["getNotificationUnreadCount", "notificationUnreadReads"],
+      ]) {
+        const marker = new RegExp(`(async function ${name}\\([^)]*\\)\\s*\\{)`);
+        if (!marker.test(body))
+          throw new Error(`Preview ${name} marker missing`);
+        body = body.replace(
+          marker,
+          `$1 if(window.__notificationProbe) document.documentElement.dataset.${counter}=String(Number(document.documentElement.dataset.${counter} ?? 0)+1);`,
+        );
+      }
+      await route.fulfill({ response, body });
+    });
+    await page.route("**/main.tsx*", async (route) => {
+      const response = await route.fetch();
+      let body = await response.text();
+      const index = body.indexOf("createRoot(document.getElementById");
+      if (index < 0) throw new Error("Preview root marker missing");
+      const props =
+        seed === "empty"
+          ? ",initialMessages:[]"
+          : seed === "error"
+            ? ",initialMessagesPage:{error:'Seed unavailable'}"
+            : "";
+      body =
+        body.slice(0, index) +
+        `
+window.__notificationProbe=true;
+document.documentElement.dataset.notificationPageReads='0';
+document.documentElement.dataset.notificationUnreadReads='0';
+const probeData={...fixture,profile:{...fixture.profile,role:'${seed === "missing-inbox" ? "admin" : "client"}'}};
+createRoot(document.getElementById('root')).render(React.createElement(Providers,null,React.createElement(Notifications,{data:probeData${props}})));`;
+      await route.fulfill({ response, body });
+    });
+    await page.goto(
+      `http://127.0.0.1:3001/notifications?notification-case=${seed === "missing-inbox" ? "paged" : "paused"}`,
+    );
+    if (seed === "missing-inbox") {
+      await expect(
+        page.getByRole("button", { name: "Inbox (125)", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "Update 0", exact: true }),
+      ).toBeVisible();
+    } else if (seed === "missing-messages") {
+      await expect(
+        page.getByRole("heading", { name: "Daily reminder", exact: true }),
+      ).toBeVisible();
+    } else if (seed === "empty") {
+      await expect(
+        page.getByText("No messages in this view.", { exact: true }),
+      ).toBeVisible();
+    } else {
+      await expect(
+        page.getByText("Seed unavailable", { exact: true }),
+      ).toBeVisible();
+    }
+    await page.clock.runFor(1000);
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-notification-page-reads",
+      seed.startsWith("missing") ? "1" : "0",
+    );
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-notification-unread-reads",
+      seed === "missing-inbox" ? "1" : "0",
+    );
+  });
+}
 test("a disconnected save preserves the composer and never resubmits automatically", async ({
   page,
 }) => {
