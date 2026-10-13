@@ -29,7 +29,9 @@ import { Button } from "./ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "./ui/sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { signOut } from "@/app/auth/actions";
-import { getNotificationUnreadCount } from "@/app/(workspace)/notification-actions";
+import { getNotificationUnreadCount } from "@/lib/read-client";
+import { ReadScope } from "@/lib/read-scope";
+import type { NotificationResult } from "@/lib/notification-types";
 import {
   useNotificationResource,
   useNotificationScope,
@@ -60,12 +62,14 @@ export function Shell({
   profile,
   workspace,
   unreadCount = 0,
+  initialUnread,
   notificationWorkspaces = [],
 }: {
   children: React.ReactNode;
   profile: Row<"profiles">;
   workspace: string;
   unreadCount?: number;
+  initialUnread?: NotificationResult<number>;
   notificationWorkspaces?: NotificationMembership[];
 }) {
   const pathname = usePathname();
@@ -76,13 +80,6 @@ export function Shell({
   const [collapsed, setCollapsed] = useState(false);
   const [mobile, setMobile] = useState(false);
   const notificationKey = notificationScope(profile, notificationWorkspaces);
-  const allowInitial = useNotificationScope(notificationKey);
-  const unreadResult = useNotificationResource(
-    `${notificationKey}unread`,
-    getNotificationUnreadCount,
-    allowInitial ? { data: unreadCount } : {},
-  );
-  const unread = unreadResult.data ?? (allowInitial ? unreadCount : 0);
   const { resolvedTheme, setTheme } = useTheme();
   const nav = (small = false) => (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
@@ -142,6 +139,7 @@ export function Shell({
               onClick={() => setMobile(false)}
               key={l.href}
               href={l.href}
+              aria-current={pathname.startsWith(l.href) ? "page" : undefined}
               className={cn(
                 "flex h-11 items-center gap-3 rounded-lg px-3 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground",
                 pathname.startsWith(l.href) &&
@@ -170,6 +168,7 @@ export function Shell({
         <Link
           title="Settings"
           href="/settings"
+          aria-current={pathname.startsWith("/settings") ? "page" : undefined}
           className={cn(
             "flex h-11 items-center gap-3 rounded-lg px-3 text-muted-foreground hover:bg-secondary",
             small && "justify-center",
@@ -194,128 +193,155 @@ export function Shell({
     </div>
   );
   return (
-    <div className="flex min-h-screen">
-      <a
-        href="#main"
-        className="sr-only z-50 focus:not-sr-only focus:fixed focus:bg-card focus:p-4"
-      >
-        Skip to content
-      </a>
-      <aside
-        className={cn(
-          "fixed inset-y-0 left-0 z-30 hidden border-r bg-card transition-[width] lg:block",
-          collapsed ? "w-20" : "w-60",
-        )}
-      >
-        {nav(collapsed)}
-      </aside>
-      <div
-        className={cn(
-          "min-w-0 flex-1 transition-[padding]",
-          collapsed ? "lg:pl-20" : "lg:pl-60",
-        )}
-      >
-        <header className="flex h-[76px] items-center gap-4 border-b bg-card px-5 sm:px-9">
-          <Sheet open={mobile} onOpenChange={setMobile}>
-            <SheetTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="lg:hidden"
-                aria-label="Open navigation"
-              >
-                <Menu />
-              </Button>
-            </SheetTrigger>
-            <SheetContent side="left" className="w-64 p-0">
-              <SheetTitle className="sr-only">Navigation</SheetTitle>
-              {nav()}
-            </SheetContent>
-          </Sheet>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="hidden text-muted-foreground lg:inline-flex"
-            onClick={() => setCollapsed(!collapsed)}
-            aria-label="Toggle sidebar"
-          >
-            {collapsed ? (
-              <PanelLeftOpen size={18} />
-            ) : (
-              <PanelLeftClose size={18} />
-            )}
-          </Button>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="hidden sm:inline">Workspace</span>
-            <ChevronRight size={12} className="hidden sm:block" />
-            <span className="font-medium text-foreground">
-              {links.find((l) => pathname.startsWith(l.href))?.label ??
-                "Settings"}
-            </span>
-          </div>
-          <div className="ml-auto flex items-center gap-3">
-            {profile.role !== "client" && (
-              <Link
-                href="/notifications"
-                aria-label={
-                  unreadResult.error
-                    ? "Unread notifications unavailable"
-                    : `${unread} unread notifications`
-                }
-                className="relative rounded-md p-2 text-muted-foreground hover:bg-secondary"
-              >
-                <Bell size={17} />
-                {unread > 0 && (
-                  <span className="absolute -right-0.5 -top-0.5 flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-semibold text-primary-foreground">
-                    {unread > 9 ? "9+" : unread}
-                  </span>
-                )}
-              </Link>
-            )}
-            <span className="hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] text-muted-foreground sm:flex">
-              <span className="size-1.5 rounded-full bg-emerald-500" /> Private
-              workspace
-            </span>
+    <ReadScope scope={notificationKey}>
+      <div className="flex min-h-screen">
+        <a
+          href="#main"
+          className="sr-only z-50 focus:not-sr-only focus:fixed focus:bg-card focus:p-4"
+        >
+          Skip to content
+        </a>
+        <aside
+          className={cn(
+            "fixed inset-y-0 left-0 z-30 hidden border-r bg-card transition-[width] lg:block",
+            collapsed ? "w-20" : "w-60",
+          )}
+        >
+          {nav(collapsed)}
+        </aside>
+        <div
+          className={cn(
+            "min-w-0 flex-1 transition-[padding]",
+            collapsed ? "lg:pl-20" : "lg:pl-60",
+          )}
+        >
+          <header className="flex h-[76px] items-center gap-4 border-b bg-card px-5 sm:px-9">
+            <Sheet open={mobile} onOpenChange={setMobile}>
+              <SheetTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="lg:hidden"
+                  aria-label="Open navigation"
+                >
+                  <Menu />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="left" className="w-64 p-0">
+                <SheetTitle className="sr-only">Navigation</SheetTitle>
+                {nav()}
+              </SheetContent>
+            </Sheet>
             <Button
               variant="ghost"
               size="icon"
-              aria-label="Toggle color theme"
-              onClick={() =>
-                setTheme(resolvedTheme === "dark" ? "light" : "dark")
-              }
+              className="hidden text-muted-foreground lg:inline-flex"
+              onClick={() => setCollapsed(!collapsed)}
+              aria-label="Toggle sidebar"
             >
-              <Sun className="hidden size-4 dark:block" />
-              <Moon className="size-4 dark:hidden" />
+              {collapsed ? (
+                <PanelLeftOpen size={18} />
+              ) : (
+                <PanelLeftClose size={18} />
+              )}
             </Button>
-            <span className="h-7 border-l" />
-            <Link href="/settings" className="flex items-center gap-2.5">
-              <span className="flex size-9 items-center justify-center rounded-full bg-[#f2e6dc] text-xs font-bold text-[#795539]">
-                {initials(profile.display_name || profile.email)}
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="hidden sm:inline">Workspace</span>
+              <ChevronRight size={12} className="hidden sm:block" />
+              <span className="font-medium text-foreground">
+                {links.find((l) => pathname.startsWith(l.href))?.label ??
+                  "Settings"}
               </span>
-              <span className="hidden sm:block">
-                <span className="block text-xs font-semibold">
-                  {profile.display_name || "Your account"}
-                </span>
-                <span className="mt-0.5 block text-[10px] capitalize text-muted-foreground">
-                  {profile.role}
-                </span>
+            </div>
+            <div className="ml-auto flex items-center gap-3">
+              {profile.role !== "client" && (
+                <UnreadBell
+                  scope={notificationKey}
+                  initial={initialUnread}
+                  fallback={unreadCount}
+                />
+              )}
+              <span className="hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] text-muted-foreground sm:flex">
+                <span className="size-1.5 rounded-full bg-emerald-500" />{" "}
+                Private workspace
               </span>
-            </Link>
-          </div>
-        </header>
-        <main
-          id="main"
-          className="page-enter mx-auto max-w-[1600px] p-5 sm:p-9"
-        >
-          {children}
-        </main>
-        <footer className="mx-5 flex justify-between border-t py-5 text-[10px] text-muted-foreground sm:mx-9">
-          <span>© {new Date().getFullYear()} Bidder Check</span>
-          <span className="flex items-center gap-1">
-            A clearer way to work <ArrowUpRight size={12} />
-          </span>
-        </footer>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Toggle color theme"
+                onClick={() =>
+                  setTheme(resolvedTheme === "dark" ? "light" : "dark")
+                }
+              >
+                <Sun className="hidden size-4 dark:block" />
+                <Moon className="size-4 dark:hidden" />
+              </Button>
+              <span className="h-7 border-l" />
+              <Link href="/settings" className="flex items-center gap-2.5">
+                <span className="flex size-9 items-center justify-center rounded-full bg-[#f2e6dc] text-xs font-bold text-[#795539]">
+                  {initials(profile.display_name || profile.email)}
+                </span>
+                <span className="hidden sm:block">
+                  <span className="block text-xs font-semibold">
+                    {profile.display_name || "Your account"}
+                  </span>
+                  <span className="mt-0.5 block text-[10px] capitalize text-muted-foreground">
+                    {profile.role}
+                  </span>
+                </span>
+              </Link>
+            </div>
+          </header>
+          <main
+            id="main"
+            className="page-enter mx-auto max-w-[1600px] p-5 sm:p-9"
+          >
+            {children}
+          </main>
+          <footer className="mx-5 flex justify-between border-t py-5 text-[10px] text-muted-foreground sm:mx-9">
+            <span>© {new Date().getFullYear()} Bidder Check</span>
+            <span className="flex items-center gap-1">
+              A clearer way to work <ArrowUpRight size={12} />
+            </span>
+          </footer>
+        </div>
       </div>
-    </div>
+    </ReadScope>
+  );
+}
+
+function UnreadBell({
+  scope,
+  initial,
+  fallback,
+}: {
+  scope: string;
+  initial?: NotificationResult<number>;
+  fallback: number;
+}) {
+  const allowInitial = useNotificationScope(scope);
+  const result = useNotificationResource(
+    `${scope}unread`,
+    getNotificationUnreadCount,
+    allowInitial ? (initial ?? {}) : {},
+  );
+  const unread = result.data ?? (allowInitial ? fallback : 0);
+  return (
+    <Link
+      href="/notifications"
+      aria-label={
+        result.error
+          ? "Unread notifications unavailable"
+          : `${unread} unread notifications`
+      }
+      className="relative rounded-md p-2 text-muted-foreground hover:bg-secondary focus-visible:outline-2 focus-visible:outline-primary"
+    >
+      <Bell size={17} />
+      {unread > 0 && (
+        <span className="absolute -right-0.5 -top-0.5 flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-semibold text-primary-foreground">
+          {unread > 9 ? "9+" : unread}
+        </span>
+      )}
+    </Link>
   );
 }

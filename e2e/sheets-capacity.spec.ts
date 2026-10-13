@@ -23,9 +23,9 @@ test("500-row preview remains usable with Unicode, quoted multiline values", asy
   await expect(
     page.getByRole("button", { name: "Import 500 allowed bids", exact: true }),
   ).toBeEnabled();
-  await expect(page.getByLabel("Row 500 Company", { exact: true })).toHaveText(
-    "\u6771\u4eac 499",
-  );
+  await expect(
+    page.getByRole("dialog").getByRole("table").locator("tbody tr").nth(499).getByRole("cell").nth(0),
+  ).toHaveText("\u6771\u4eac 499");
   await expect(page.getByRole("button", { name: /Remove row/ })).toHaveCount(0);
   await expect(page.getByRole("table").getByRole("textbox")).toHaveCount(0);
 });

@@ -5,6 +5,20 @@ import { cn } from "@/lib/utils";
 
 export const BackgroundBeams = React.memo(
   ({ className }: { className?: string }) => {
+    const [enabled, setEnabled] = React.useState(false);
+    React.useEffect(() => {
+      const desktop = window.matchMedia("(min-width: 1024px)");
+      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
+      const update = () => setEnabled(desktop.matches && !reduced.matches);
+      update();
+      desktop.addEventListener("change", update);
+      reduced.addEventListener("change", update);
+      return () => {
+        desktop.removeEventListener("change", update);
+        reduced.removeEventListener("change", update);
+      };
+    }, []);
+    if (!enabled) return null;
     const paths = [
       "M-380 -189C-380 -189 -312 216 152 343C616 470 684 875 684 875",
       "M-373 -197C-373 -197 -305 208 159 335C623 462 691 867 691 867",
@@ -59,6 +73,7 @@ export const BackgroundBeams = React.memo(
     ];
     return (
       <div
+        aria-hidden="true"
         className={cn(
           "absolute inset-0 flex h-full w-full items-center justify-center [mask-repeat:no-repeat] [mask-size:40px]",
           className,

@@ -15,17 +15,19 @@ import type {
   NotificationCursor,
 } from "@/lib/notification-types";
 import {
-  getNotificationPage,
-  getNotificationById,
-  getNotificationUnreadCount,
   markNotificationRead,
   saveNotificationMessage,
   setNotificationStatus,
   previewNotificationSchedule,
-  getNotificationDeviceEnabled,
   saveNotificationDevice,
   deleteNotificationDevice,
 } from "@/app/(workspace)/notification-actions";
+import {
+  getNotificationPage,
+  getNotificationById,
+  getNotificationUnreadCount,
+  getNotificationDeviceEnabled,
+} from "@/lib/read-client";
 import {
   useNotificationResource,
   useNotificationScope,
@@ -187,9 +189,9 @@ function PushSettings() {
     }
   }
   return (
-    <div className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border bg-card p-4">
-      <Bell size={18} />
-      <div className="min-w-0 flex-1 text-sm">
+    <div className="mb-6 grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 rounded-xl border bg-card p-4 sm:flex sm:flex-wrap sm:items-center">
+      <Bell size={18} className="mt-0.5 shrink-0" />
+      <div className="min-w-0 flex-1 text-sm sm:basis-48">
         <p>
           Browser notifications:{" "}
           {state === "checking"
@@ -208,20 +210,22 @@ function PushSettings() {
           your Home Screen first.
         </p>
       </div>
-      <Button
-        variant="outline"
-        disabled={busy || state === "enabled"}
-        onClick={enable}
-      >
-        Enable on this device
-      </Button>
-      <Button
-        variant="ghost"
-        disabled={busy || state !== "enabled"}
-        onClick={disable}
-      >
-        Disable
-      </Button>
+      <div className="col-span-2 flex flex-wrap gap-2 sm:contents">
+        <Button
+          variant="outline"
+          disabled={busy || state === "enabled"}
+          onClick={enable}
+        >
+          Enable on this device
+        </Button>
+        <Button
+          variant="ghost"
+          disabled={busy || state !== "enabled"}
+          onClick={disable}
+        >
+          Disable
+        </Button>
+      </div>
     </div>
   );
 }
@@ -839,28 +843,15 @@ type NotificationsProps = {
 export function Notifications(props: NotificationsProps) {
   const notificationKey = scope(props.data);
   const allowInitial = useNotificationScope(notificationKey);
-  return (
-    <NotificationContent
-      key={notificationKey}
-      {...(allowInitial ? props : { data: props.data })}
-    />
+  const scoped = allowInitial ? props : { data: props.data };
+  return props.data.profile.role === "client" ? (
+    <NotificationContent key={notificationKey} {...scoped} />
+  ) : (
+    <CountedNotificationContent key={notificationKey} {...scoped} />
   );
 }
-function NotificationContent({
-  data,
-  initialInbox = [],
-  initialMessages = [],
-  initialInboxPage,
-  initialMessagesPage,
-}: NotificationsProps) {
-  const manager = data.profile.role !== "bidder";
-  const [pane, setPane] = useState(
-    data.profile.role === "client" ? "messages" : "inbox",
-  );
-  const [workspace, setWorkspace] = useState(data.workspaces[0]?.id ?? "");
-  const [view, setView] = useState("all");
-  const [editing, setEditing] = useState<NotificationMessage | null>(null);
-  const [composerVersion, setComposerVersion] = useState(0);
+function CountedNotificationContent(props: NotificationsProps) {
+  const { data, initialInbox = [], initialInboxPage } = props;
   const unread = useNotificationResource(
     `${scope(data)}unread`,
     getNotificationUnreadCount,
@@ -873,6 +864,24 @@ function NotificationContent({
               .length,
         },
   );
+  return <NotificationContent {...props} unread={unread} />;
+}
+function NotificationContent({
+  data,
+  initialInbox = [],
+  initialMessages = [],
+  initialInboxPage,
+  initialMessagesPage,
+  unread = { data: 0 },
+}: NotificationsProps & { unread?: NotificationResult<number> }) {
+  const manager = data.profile.role !== "bidder";
+  const [pane, setPane] = useState(
+    data.profile.role === "client" ? "messages" : "inbox",
+  );
+  const [workspace, setWorkspace] = useState(data.workspaces[0]?.id ?? "");
+  const [view, setView] = useState("all");
+  const [editing, setEditing] = useState<NotificationMessage | null>(null);
+  const [composerVersion, setComposerVersion] = useState(0);
   const stop = () => {
     setEditing(null);
     setComposerVersion((v) => v + 1);

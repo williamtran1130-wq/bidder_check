@@ -1,22 +1,61 @@
 import type { WorkspaceData } from "@/lib/data";
 import type { ComparisonRow } from "@/lib/report-types";
 const now = new Date().toISOString();
-export const longWorkspaceName = "Workspace - Alexandra Catherine Montgomery Rivera and the International Candidate Operations Team";
+export const longWorkspaceName =
+  "Workspace - Alexandra Catherine Montgomery Rivera and the International Candidate Operations Team";
 export function comparisonFixtures(scenario: string): ComparisonRow[] {
   if (scenario === "empty") return [];
-  const mixed = { id: "group-a", label: "ENG-01", found: 10, foundApplied: 6, arrangements: {
-    remote: { found: 5, foundApplied: 3 }, onsiteHybrid: { found: 3, foundApplied: 2 }, unspecified: { found: 2, foundApplied: 1 },
-  } };
-  if (scenario === "unavailable") return [{ id: "group-a", label: "ENG-01", found: 10, foundApplied: 6 }];
-  if (scenario === "unknown") return [{ ...mixed, arrangements: {
-    remote: { found: 0, foundApplied: 0 }, onsiteHybrid: { found: 0, foundApplied: 0 }, unspecified: { found: 10, foundApplied: 6 },
-  } }];
-  if (scenario === "ten") return [...Array.from({ length: 11 }, (_, i) => ({
-    id: `group-${String(i + 1).padStart(2, "0")}`, label: `Profile ${String(i + 1).padStart(2, "0")}`, found: 10, foundApplied: 6,
-    arrangements: { remote: { found: 10, foundApplied: 6 }, onsiteHybrid: { found: 0, foundApplied: 0 }, unspecified: { found: 0, foundApplied: 0 } },
-  })).reverse(), { ...mixed, id: "group-00", label: "A full candidate profile name that must remain readable on narrow screens", found: 12, foundApplied: 6,
-    arrangements: { remote: { found: 7, foundApplied: 3 }, onsiteHybrid: { found: 3, foundApplied: 2 }, unspecified: { found: 2, foundApplied: 1 } },
-  }];
+  const mixed = {
+    id: "group-a",
+    label: "ENG-01",
+    found: 10,
+    foundApplied: 6,
+    arrangements: {
+      remote: { found: 5, foundApplied: 3 },
+      onsiteHybrid: { found: 3, foundApplied: 2 },
+      unspecified: { found: 2, foundApplied: 1 },
+    },
+  };
+  if (scenario === "unavailable")
+    return [{ id: "group-a", label: "ENG-01", found: 10, foundApplied: 6 }];
+  if (scenario === "unknown")
+    return [
+      {
+        ...mixed,
+        arrangements: {
+          remote: { found: 0, foundApplied: 0 },
+          onsiteHybrid: { found: 0, foundApplied: 0 },
+          unspecified: { found: 10, foundApplied: 6 },
+        },
+      },
+    ];
+  if (scenario === "ten")
+    return [
+      ...Array.from({ length: 11 }, (_, i) => ({
+        id: `group-${String(i + 1).padStart(2, "0")}`,
+        label: `Profile ${String(i + 1).padStart(2, "0")}`,
+        found: 10,
+        foundApplied: 6,
+        arrangements: {
+          remote: { found: 10, foundApplied: 6 },
+          onsiteHybrid: { found: 0, foundApplied: 0 },
+          unspecified: { found: 0, foundApplied: 0 },
+        },
+      })).reverse(),
+      {
+        ...mixed,
+        id: "group-00",
+        label:
+          "A full candidate profile name that must remain readable on narrow screens",
+        found: 12,
+        foundApplied: 6,
+        arrangements: {
+          remote: { found: 7, foundApplied: 3 },
+          onsiteHybrid: { found: 3, foundApplied: 2 },
+          unspecified: { found: 2, foundApplied: 1 },
+        },
+      },
+    ];
   return [mixed];
 }
 const profile = {
@@ -163,16 +202,39 @@ export const fixture: WorkspaceData = {
   })),
 };
 
+if (new URLSearchParams(window.location.search).has("long-profile")) {
+  fixture.candidateProfiles[0].identifier =
+    "FULLSTACK-ENGINEERING-REMOTE-CHICAGO-SENIOR-CANDIDATE-PRIMARY-PROFILE-01";
+}
+
 // Exact-byte scenarios exist only in this isolated visual fixture. The second
 // 102,400-byte screenshot starts off-page, while 102,401 rounds to the same KB.
 if (new URLSearchParams(window.location.search).has("screenshot-sizes")) {
-  const palette = new URLSearchParams(window.location.search).has("size-palette");
-  const sizes = palette ? Array.from({ length: 12 }, (_, index) => 102400 + index % 6) : [102400, 102401, 2048, null, null, 1572864, 1024, 3145728, 524288, 768000, 4096, 102400];
+  const palette = new URLSearchParams(window.location.search).has(
+    "size-palette",
+  );
+  const sizes = palette
+    ? Array.from({ length: 12 }, (_, index) => 102400 + (index % 6))
+    : [
+        102400,
+        102401,
+        2048,
+        null,
+        null,
+        1572864,
+        1024,
+        3145728,
+        524288,
+        768000,
+        4096,
+        102400,
+      ];
   fixture.bids = fixture.bids.map((bid, index) => ({
     ...bid,
     evidence_file_id: index === 3 && !palette ? null : `screenshot-${index}`,
     screenshot_size_bytes: sizes[index],
-    screenshot_size_match_count: sizes[index] === null ? 0 : sizes[index] === 102400 ? 2 : 1,
+    screenshot_size_match_count:
+      sizes[index] === null ? 0 : sizes[index] === 102400 ? 2 : 1,
     review_status: "approved",
     applied: index !== 3,
     bidder_id: index === 11 ? "bidder-0" : bid.bidder_id,
@@ -183,30 +245,55 @@ if (new URLSearchParams(window.location.search).get("role") === "admin") {
   fixture.profile = { ...fixture.profile, role: "admin" };
 }
 if (new URLSearchParams(window.location.search).has("split-sizes")) {
-  fixture.bids = fixture.bids.map((bid, index) => index === 11 ? { ...bid, applied: false, applied_at: null } : bid);
+  fixture.bids = fixture.bids.map((bid, index) =>
+    index === 11 ? { ...bid, applied: false, applied_at: null } : bid,
+  );
 }
 if (new URLSearchParams(window.location.search).has("shared-resumes")) {
   fixture.resumes[1].profile_id = fixture.resumes[0].profile_id;
   fixture.candidateProfiles[0].candidate_name = "Jordan Lee";
-  fixture.resumes.push(...Array.from({ length: 1100 }, (_, index) => ({ ...fixture.resumes[0], id: `additional-${index}`, email: `assignment${index}@example.test`, archived: index === 1099 })));
+  fixture.resumes.push(
+    ...Array.from({ length: 1100 }, (_, index) => ({
+      ...fixture.resumes[0],
+      id: `additional-${index}`,
+      email: `assignment${index}@example.test`,
+      archived: index === 1099,
+    })),
+  );
 }
 
 // A real bidder-shaped transport fixture: no monetary keys or teammate rows.
 if (new URLSearchParams(window.location.search).get("role") === "bidder") {
   fixture.profile = { ...people[0], role: "bidder" };
   fixture.profiles = [fixture.profile];
-  fixture.bidders = fixture.bidders.filter((row) => row.user_id === fixture.profile.id).map((row) => {
-    const safe = { ...row }; delete safe.default_rate_cents; return safe;
-  });
-  fixture.resumes = fixture.resumes.filter((row) => row.bidder_id === fixture.profile.id).map((row) => {
-    const safe = { ...row }; delete safe.rate_override_cents; return safe;
-  });
-  fixture.candidateProfiles = fixture.candidateProfiles.filter((row) => fixture.resumes.some((assignment) => assignment.profile_id === row.id));
-  fixture.bids = fixture.bids.filter((row) => row.bidder_id === fixture.profile.id).map((row) => {
-    const safe = { ...row }; delete safe.rate_cents;
-    if (!new URLSearchParams(window.location.search).has("leak-size-metadata")) {
-      delete safe.screenshot_size_bytes; delete safe.screenshot_size_match_count;
-    }
-    return safe;
-  });
+  fixture.bidders = fixture.bidders
+    .filter((row) => row.user_id === fixture.profile.id)
+    .map((row) => {
+      const safe = { ...row };
+      delete safe.default_rate_cents;
+      return safe;
+    });
+  fixture.resumes = fixture.resumes
+    .filter((row) => row.bidder_id === fixture.profile.id)
+    .map((row) => {
+      const safe = { ...row };
+      delete safe.rate_override_cents;
+      return safe;
+    });
+  fixture.candidateProfiles = fixture.candidateProfiles.filter((row) =>
+    fixture.resumes.some((assignment) => assignment.profile_id === row.id),
+  );
+  fixture.bids = fixture.bids
+    .filter((row) => row.bidder_id === fixture.profile.id)
+    .map((row) => {
+      const safe = { ...row };
+      delete safe.rate_cents;
+      if (
+        !new URLSearchParams(window.location.search).has("leak-size-metadata")
+      ) {
+        delete safe.screenshot_size_bytes;
+        delete safe.screenshot_size_match_count;
+      }
+      return safe;
+    });
 }

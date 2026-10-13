@@ -26,9 +26,9 @@ test("preview shows immutable values and statuses without validation reasons", a
   await expect(
     dialog.getByRole("button", { name: "Import 1 allowed bids", exact: true }),
   ).toBeEnabled();
-  await expect(dialog.getByLabel("Row 1 Company", { exact: true })).toHaveText(
-    "Eligible",
-  );
+  await expect(
+    dialog.getByRole("table").locator("tbody tr").nth(0).getByRole("cell").nth(0),
+  ).toHaveText("Eligible");
   await expect(dialog.getByRole("table").getByRole("textbox")).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: /Remove row/ })).toHaveCount(
     0,

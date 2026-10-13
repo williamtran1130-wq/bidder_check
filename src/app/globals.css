@@ -35,6 +35,7 @@
   --muted: #626a7f;
   --primary-foreground: #fff;
   --border: #e9eaf1;
+  --error-text: #b92f43;
 }
 .dark {
   --primary-foreground: #171324;
@@ -46,6 +47,10 @@
   --accent: #2d2846;
   --muted: #a2a7bd;
   --border: #2e3243;
+  --error-text: #ff8797;
+}
+.text-destructive {
+  color: var(--error-text);
 }
 * {
   border-color: var(--border);

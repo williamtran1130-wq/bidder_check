@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { formatInTimeZone } from "date-fns-tz";
 import type { WorkspaceData } from "@/lib/data";
 import { BID_TIMEZONE } from "@/lib/domain";
@@ -37,12 +37,14 @@ export function SheetsImport({
   data,
   initialText,
   bidderId,
+  fallbackFocusRef,
   onClose,
   onSuccess,
 }: {
   data: WorkspaceData;
   initialText: string;
   bidderId?: string;
+  fallbackFocusRef: RefObject<HTMLElement | null>;
   onClose: () => void;
   onSuccess: (result: ImportResult) => void;
 }) {
@@ -82,6 +84,11 @@ export function SheetsImport({
   } | null>(null);
   const [uncertain, setUncertain] = useState(false);
   const [validated, setValidated] = useState(false);
+  const returnFocus = useRef<HTMLElement | null>(
+    typeof document === "undefined"
+      ? null
+      : (document.activeElement as HTMLElement),
+  );
   const [approvedSourceRows, setApprovedSourceRows] = useState<number[] | null>(
     null,
   );
@@ -253,6 +260,9 @@ export function SheetsImport({
         toast.success(
           `${result.data.ids.length} ${result.data.ids.length === 1 ? "bid" : "bids"} added`,
         );
+        // Import refreshes the result set, so the origin cell may disappear
+        // even after the dialog closes. Use the stable workspace launcher.
+        returnFocus.current = fallbackFocusRef.current;
         onSuccess({
           date: result.data.date,
           bidder: result.data.bidder,
@@ -301,8 +311,20 @@ export function SheetsImport({
         if (!open && !busy && !uncertain) onClose();
       }}
     >
-      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-5xl">
-        <DialogHeader>
+      <DialogContent
+        className="max-h-[92vh] min-w-0 overflow-x-hidden overflow-y-auto p-4 sm:max-w-5xl sm:p-6 [&>*]:min-w-0"
+        showCloseButton={!busy && !uncertain}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          const origin = returnFocus.current;
+          if (origin?.isConnected && origin !== document.body) {
+            origin.focus({ preventScroll: true });
+            if (document.activeElement === origin) return;
+          }
+          fallbackFocusRef.current?.focus({ preventScroll: true });
+        }}
+      >
+        <DialogHeader className="pr-6 [overflow-wrap:anywhere]">
           <DialogTitle>Paste new bids from Sheets</DialogTitle>
           <DialogDescription>
             Create new bids only. One bidder, resume and Added date apply to
@@ -448,30 +470,35 @@ export function SheetsImport({
               {rows.length} bids · {date} CT ·{" "}
               {assignmentLabels.get(resume)?.label}
             </p>
-            <div className="max-h-[45vh] overflow-auto rounded border">
+            <div
+              role="region"
+              aria-label="Import preview, scroll horizontally for all columns"
+              tabIndex={0}
+              className="max-h-[45vh] min-w-0 overflow-auto rounded border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            >
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-background">
                   <tr>
-                    <th className="p-2">Row</th>
+                    <th scope="col" className="p-2">
+                      Row
+                    </th>
                     {importFields.map((f) => (
-                      <th className="p-2 text-left" key={f}>
+                      <th scope="col" className="p-2 text-left" key={f}>
                         {fieldLabels[f]}
                       </th>
                     ))}
-                    <th>Status</th>
+                    <th scope="col">Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((row, i) => (
                     <tr key={i}>
-                      <th className="border p-2">{sourceRows[i] ?? i + 1}</th>
+                      <th scope="row" className="border p-2">
+                        {sourceRows[i] ?? i + 1}
+                      </th>
                       {importFields.map((f) => (
                         <td key={f} className="min-w-40 border p-2">
-                          <span
-                            aria-label={`Row ${sourceRows[i] ?? i + 1} ${fieldLabels[f]}`}
-                          >
-                            {row[f]}
-                          </span>
+                          <span>{row[f]}</span>
                         </td>
                       ))}
                       <td className="border px-2">
@@ -505,7 +532,7 @@ export function SheetsImport({
                 Checking profile restrictions and duplicate applications...
               </p>
             )}
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2 [&_button]:h-auto [&_button]:min-h-9 [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:py-2">
               <Button
                 variant="outline"
                 disabled={busy || uncertain}

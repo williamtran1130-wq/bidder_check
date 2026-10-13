@@ -29,14 +29,16 @@ import { usd, BID_TIMEZONE } from "@/lib/domain";
 import {
   saveBid,
   trashBid,
-  getBidRows,
   reconcileBidTargets,
   unapplyBid,
-  getBidHistory,
   reviewBidAction,
   resubmitBidAction,
   setBidInterviewAction,
 } from "@/app/(workspace)/actions";
+import { getBidRows, getBidHistory } from "@/lib/read-client";
+import { bidReadKey, actorReadScope } from "@/lib/read-keys";
+import { ReadRequests, seedFor, type ReadSeed } from "@/lib/read-state";
+import type { BidListResult, BidListLoadResult } from "@/lib/bid-list";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Badge } from "./ui/badge";
@@ -70,13 +72,52 @@ import { BulkBidToolbar } from "./bulk-bid-toolbar";
 import { BidGrid } from "./bid-grid";
 import { SheetsImport, type ImportResult } from "./sheets-import";
 import type { BidRow } from "@/lib/workspace-types";
-import { calendarToday, shiftCalendarDate, type CalendarPeriod } from "@/lib/calendar-period";
+import {
+  calendarToday,
+  shiftCalendarDate,
+  type CalendarPeriod,
+} from "@/lib/calendar-period";
 import { PeriodSelector } from "./period-selector";
-import { buildResumeOptions, compatibleResume, filterResumeOptions } from "@/lib/resume-options";
+import {
+  buildResumeOptions,
+  compatibleResume,
+  filterResumeOptions,
+} from "@/lib/resume-options";
 import { ResumeSelector } from "./resume-selector";
 import { UploadHistory } from "./upload-details";
 type Bid = BidRow;
-export function BidDialog({ data, bid, bidderId }: { data: WorkspaceData; bid?: Bid; bidderId?: string }) {
+async function bidAction<T>(
+  run: () => Promise<T>,
+): Promise<T | { error: string; data?: never }> {
+  try {
+    return await run();
+  } catch (error) {
+    // Framework navigation must reach Next instead of becoming a form error.
+    const digest =
+      error && typeof error === "object" && "digest" in error
+        ? String(error.digest)
+        : "";
+    if (
+      digest.startsWith("NEXT_REDIRECT;") ||
+      digest.startsWith("NEXT_HTTP_ERROR_FALLBACK;") ||
+      (error instanceof Error && error.message === "NEXT_REDIRECT")
+    )
+      throw error;
+    return {
+      error:
+        "Could not complete this action. Check the current status before retrying; your draft is kept.",
+    };
+  }
+}
+export function BidDialog({
+  data,
+  bid,
+  bidderId,
+}: {
+  data: WorkspaceData;
+  bid?: Bid;
+  bidderId?: string;
+}) {
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
   const [saveError, setSaveError] = useState("");
@@ -85,15 +126,22 @@ export function BidDialog({ data, bid, bidderId }: { data: WorkspaceData; bid?: 
   const assignmentLabels = useMemo(() => buildResumeOptions(data), [data]);
   const active = data.resumes.filter(
     (r) =>
-      (!(bid?.bidder_id ?? bidderId) || r.bidder_id === (bid?.bidder_id ?? bidderId)) &&
-      (
-      (!r.archived &&
+      (!(bid?.bidder_id ?? bidderId) ||
+        r.bidder_id === (bid?.bidder_id ?? bidderId)) &&
+      ((!r.archived &&
         !!r.file_id &&
         !data.bidders.find((b) => b.user_id === r.bidder_id)?.archived) ||
-      r.id === bid?.resume_id),
+        r.id === bid?.resume_id),
   );
   return (
-    <Dialog open={open} onOpenChange={(next) => { setOpen(next); setBlocked(false); setSaveError(""); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        setBlocked(false);
+        setSaveError("");
+      }}
+    >
       <DialogTrigger asChild>
         <Button
           variant={bid ? "outline" : "default"}
@@ -116,15 +164,16 @@ export function BidDialog({ data, bid, bidderId }: { data: WorkspaceData; bid?: 
         </DialogHeader>
         <form
           className="space-y-4"
-          action={(form) =>
+          onSubmit={(event) => {
+            event.preventDefault();
+            const form = new FormData(event.currentTarget);
             start(async () => {
               setBlocked(false);
-              const result = await saveBid(form);
+              const result = await bidAction(() => saveBid(form));
               if (result.error) {
                 setSaveError(result.error);
                 toast.error(result.error);
-              }
-              else if (result.data?.status === "blocked") {
+              } else if (result.data?.status === "blocked") {
                 setSaveError("");
                 setBlocked(true);
               } else if (result.data?.status === "saved") {
@@ -133,24 +182,36 @@ export function BidDialog({ data, bid, bidderId }: { data: WorkspaceData; bid?: 
                 setOpen(false);
                 router.refresh();
               }
-            })
-          }
+            });
+          }}
         >
-          {blocked && <p role="status" className="rounded-lg bg-muted p-3 text-sm">Blocked</p>}
-          {saveError && !["url", "company", "role_name", "resume_id"].some((field) => {
-            if (field === "url") return /url|link|job/i.test(saveError);
-            if (field === "company") return /company|limit/i.test(saveError);
-            if (field === "role_name") return /role|application for this job/i.test(saveError);
-            return /profile|resume/i.test(saveError);
-          }) && <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{saveError}</p>}
+          {blocked && (
+            <p role="status" className="rounded-lg bg-muted p-3 text-sm">
+              Blocked
+            </p>
+          )}
+          {saveError &&
+            !["url", "company", "role_name", "resume_id"].some((field) => {
+              if (field === "url") return /url|link|job/i.test(saveError);
+              if (field === "company") return /company|limit/i.test(saveError);
+              if (field === "role_name")
+                return /role|application for this job/i.test(saveError);
+              return /profile|resume/i.test(saveError);
+            }) && (
+              <p
+                role="alert"
+                className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive"
+              >
+                {saveError}
+              </p>
+            )}
           <input type="hidden" name="id" value={bid?.id ?? ""} />
           {bid?.first_applied_at ? (
             <>
               <input type="hidden" name="resume_id" value={bid.resume_id} />
               <p className="rounded-lg bg-secondary p-3 text-xs">
-                Resume:{" "}
-                {assignmentLabels.get(bid.resume_id)?.label} ·
-                Locked after first application
+                Resume: {assignmentLabels.get(bid.resume_id)?.label} · Locked
+                after first application
               </p>
             </>
           ) : (
@@ -168,34 +229,52 @@ export function BidDialog({ data, bid, bidderId }: { data: WorkspaceData; bid?: 
             </SelectField>
           )}
           <div>
-          <Field
-            label="Job URL"
-            name="url"
-            type="url"
-            required
-            placeholder="https://company.com/careers/…"
-            defaultValue={bid?.url}
-            onChange={() => setSaveError("")}
-          />
-          {/url|link|job/i.test(saveError) && <p role="alert" className="mt-1 text-xs text-destructive">{saveError}</p>}
+            <Field
+              label="Job URL"
+              name="url"
+              type="url"
+              required
+              placeholder="https://company.com/careers/…"
+              defaultValue={bid?.url}
+              onChange={() => setSaveError("")}
+            />
+            {/url|link|job/i.test(saveError) && (
+              <p role="alert" className="mt-1 text-xs text-destructive">
+                {saveError}
+              </p>
+            )}
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <div><Field
-              label="Company name"
-              name="company"
-              required
-              defaultValue={bid?.company}
-              placeholder="Acme"
-              onChange={() => setSaveError("")}
-            />{/company|limit/i.test(saveError) && <p role="alert" className="mt-1 text-xs text-destructive">{saveError}</p>}</div>
-            <div><Field
-              label="Role name"
-              name="role_name"
-              required
-              defaultValue={bid?.role_name}
-              placeholder="Senior Software Engineer"
-              onChange={() => setSaveError("")}
-            />{/role|application for this job/i.test(saveError) && <p role="alert" className="mt-1 text-xs text-destructive">{saveError}</p>}</div>
+            <div>
+              <Field
+                label="Company name"
+                name="company"
+                required
+                defaultValue={bid?.company}
+                placeholder="Acme"
+                onChange={() => setSaveError("")}
+              />
+              {/company|limit/i.test(saveError) && (
+                <p role="alert" className="mt-1 text-xs text-destructive">
+                  {saveError}
+                </p>
+              )}
+            </div>
+            <div>
+              <Field
+                label="Role name"
+                name="role_name"
+                required
+                defaultValue={bid?.role_name}
+                placeholder="Senior Software Engineer"
+                onChange={() => setSaveError("")}
+              />
+              {/role|application for this job/i.test(saveError) && (
+                <p role="alert" className="mt-1 text-xs text-destructive">
+                  {saveError}
+                </p>
+              )}
+            </div>
             <SelectField
               label="Work arrangement"
               name="arrangement"
@@ -246,34 +325,72 @@ export function BidDialog({ data, bid, bidderId }: { data: WorkspaceData; bid?: 
   );
 }
 export function BidWorkspace({
-  data, embedded = false, bidderId,
-}: { data: WorkspaceData; embedded?: boolean; bidderId?: string }) {
+  data,
+  embedded = false,
+  bidderId,
+  initial,
+}: {
+  data: WorkspaceData;
+  embedded?: boolean;
+  bidderId?: string;
+  initial?: ReadSeed<BidListResult>;
+}) {
   // A new auth scope must never inherit another user's review cache or controls.
-  return <BidWorkspaceContent key={`${data.profile.id}:${data.profile.role}:${data.profile.approval_status}:${data.profile.archived}:${bidderId ?? ""}`} data={data} embedded={embedded} bidderId={bidderId} />;
+  return (
+    <BidWorkspaceContent
+      key={`${actorReadScope(data)}:${bidderId ?? ""}`}
+      data={data}
+      embedded={embedded}
+      bidderId={bidderId}
+      initial={initial}
+    />
+  );
 }
 function BidWorkspaceContent({
   data,
   embedded = false,
   bidderId,
+  initial,
 }: {
   data: WorkspaceData;
   embedded?: boolean;
   bidderId?: string;
+  initial?: ReadSeed<BidListResult>;
 }) {
-  const canReview = (data.profile.role === "client" || data.profile.role === "admin") && data.profile.approval_status === "approved" && !data.profile.archived;
+  const canReview =
+    (data.profile.role === "client" || data.profile.role === "admin") &&
+    data.profile.approval_status === "approved" &&
+    !data.profile.archived;
   const assignmentLabels = useMemo(() => buildResumeOptions(data), [data]);
-  const assignments = useMemo(() => [...assignmentLabels.values()], [assignmentLabels]);
-  const resumeById = useMemo(() => new Map(data.resumes.map((item) => [item.id, item])), [data.resumes]);
-  const profileById = useMemo(() => new Map(data.candidateProfiles.map((item) => [item.id, item])), [data.candidateProfiles]);
-  const [checked, setChecked] = useState<Record<string, { version: number; applied: boolean }>>({});
+  const assignments = useMemo(
+    () => [...assignmentLabels.values()],
+    [assignmentLabels],
+  );
+  const resumeById = useMemo(
+    () => new Map(data.resumes.map((item) => [item.id, item])),
+    [data.resumes],
+  );
+  const profileById = useMemo(
+    () => new Map(data.candidateProfiles.map((item) => [item.id, item])),
+    [data.candidateProfiles],
+  );
+  const [checked, setChecked] = useState<
+    Record<string, { version: number; applied: boolean }>
+  >({});
   const [bulkBusy, setBulkBusy] = useState(false);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [search, setSearch] = useState("");
   const [paste, setPaste] = useState<string | null>(null);
+  const importLauncher = useRef<HTMLButtonElement | null>(null);
   const editing = useRef(false);
   const deferredRefresh = useRef(false);
   const [isEditing, setIsEditing] = useState(false);
+  const requests = useRef(new ReadRequests<BidListLoadResult>());
+  const historyRequest = useRef(0);
+  const seedEligible = useRef(true);
+  const [preferencesReady, setPreferencesReady] = useState(false);
   function refreshSnapshot() {
+    requests.current.invalidate();
     if (editing.current) deferredRefresh.current = true;
     else setRevision((n) => n + 1);
   }
@@ -289,7 +406,7 @@ function BidWorkspaceContent({
     // may have changed result membership or evidence while the grid was locked.
     if (!value && (deferredRefresh.current || wasEditing)) {
       deferredRefresh.current = false;
-      setRevision((n) => n + 1);
+      refreshSnapshot();
     }
   }
   function imported(result: ImportResult) {
@@ -306,14 +423,17 @@ function BidWorkspaceContent({
     setFrom(result.date);
     setTo(result.date);
     setFilters(true);
-    setRevision((n) => n + 1);
+    refreshSnapshot();
     router.refresh();
   }
   const [status, setStatus] = useState("all");
   const [arrangement, setArrangement] = useState("all");
   const [resume, setResume] = useState("all");
   const [bidder, setBidder] = useState(bidderId ?? "all");
-  const resumeChoices = useMemo(() => filterResumeOptions(assignments, "", bidderId ?? bidder), [assignments, bidderId, bidder]);
+  const resumeChoices = useMemo(
+    () => filterResumeOptions(assignments, "", bidderId ?? bidder),
+    [assignments, bidderId, bidder],
+  );
   function changeBidder(next: string) {
     setResume((current) => compatibleResume(assignments, current, next));
     setBidder(next);
@@ -332,7 +452,9 @@ function BidWorkspaceContent({
   const [customPageSize, setCustomPageSize] = useState(false);
   const pageSize = pagination.pageSize;
   const [selected, setSelected] = useState<string>();
-  const [history, setHistory] = useState<Omit<Row<"bid_events">, "details">[]>([]);
+  const [history, setHistory] = useState<Omit<Row<"bid_events">, "details">[]>(
+    [],
+  );
   const [reason, setReason] = useState("");
   const [interviewEditor, setInterviewEditor] = useState<Bid | null>(null);
   const [interviewAt, setInterviewAt] = useState("");
@@ -354,12 +476,44 @@ function BidWorkspaceContent({
   const [loading, setLoading] = useState(true);
   const [revision, setRevision] = useState(0);
   const [debouncedSearch, setDebouncedSearch] = useState(search);
-  const queryKey = JSON.stringify([
-    data.profile.id, data.profile.role, dateMode, from, to, trash, bidderId,
-    dateMode !== "custom" && dateMode !== "all" || columnFilters.some((filter) => filter.value && typeof filter.value === "object" && "preset" in filter.value && filter.value.preset !== "custom" && filter.value.preset !== "all") ? today : "",
-    debouncedSearch, status, arrangement, resume, bidder, source, job,
-    columnFilters, sorting, pagination.pageIndex, pageSize,
-  ]);
+  const query = useMemo(
+    () => ({
+      search: debouncedSearch,
+      status,
+      arrangement,
+      resume,
+      bidder,
+      source,
+      job,
+      columnFilters,
+      sorting,
+      pageIndex: pagination.pageIndex,
+      pageSize,
+    }),
+    [
+      debouncedSearch,
+      status,
+      arrangement,
+      resume,
+      bidder,
+      source,
+      job,
+      columnFilters,
+      sorting,
+      pagination.pageIndex,
+      pageSize,
+    ],
+  );
+  const queryKey = bidReadKey(
+    data,
+    dateMode,
+    from,
+    to,
+    trash,
+    bidderId,
+    query,
+    today,
+  );
   const [loadedKey, setLoadedKey] = useState<string>();
   const hasResults = loadedKey === queryKey;
   useEffect(() => {
@@ -373,7 +527,9 @@ function BidWorkspaceContent({
     return () => window.clearTimeout(timer);
   }, [search]);
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("review") === "pending") {
+    if (
+      new URLSearchParams(window.location.search).get("review") === "pending"
+    ) {
       setStatus("pending_review");
       setDateMode("all");
       setTrash(false);
@@ -385,7 +541,10 @@ function BidWorkspaceContent({
       clearTimeout(timer);
       const now = new Date();
       const day = calendarToday(now);
-      const next = fromZonedTime(`${shiftCalendarDate(day, 1)}T00:00:00`, BID_TIMEZONE);
+      const next = fromZonedTime(
+        `${shiftCalendarDate(day, 1)}T00:00:00`,
+        BID_TIMEZONE,
+      );
       timer = setTimeout(update, Math.max(1, next.getTime() - now.getTime()));
       if (editing.current) {
         deferredRefresh.current = true;
@@ -416,12 +575,20 @@ function BidWorkspaceContent({
         return;
       }
       setLoading(true);
-      const query = { search: debouncedSearch, status, arrangement, resume, bidder, source, job, columnFilters, sorting, pageIndex: pagination.pageIndex, pageSize };
-      const result = await getBidRows(dateMode, from, to, trash, bidderId, query).catch(() => ({
-        error: "Could not refresh bids. Please retry.",
-        data: undefined,
-      }));
-      if (cancelled) return;
+      if (revision > 0 || initial?.key !== queryKey)
+        seedEligible.current = false;
+      const seed = seedEligible.current
+        ? seedFor(queryKey, initial)
+        : undefined;
+      const ticket = seed
+        ? null
+        : requests.current.load(queryKey, () =>
+            getBidRows(dateMode, from, to, trash, bidderId, query).catch(
+              () => ({ error: "Could not refresh bids. Please retry." }),
+            ),
+          );
+      const result = seed ?? (await ticket!.promise);
+      if (cancelled || (ticket && !requests.current.current(ticket))) return;
       if (editing.current) {
         deferredRefresh.current = true;
         setLoading(false);
@@ -429,10 +596,19 @@ function BidWorkspaceContent({
       }
       setLoading(false);
       if (result.error || !result.data) {
-        setLoadError(result.error || "Bid results could not be loaded. Please retry.");
+        setLoadError(
+          result.error || "Bid results could not be loaded. Please retry.",
+        );
       } else {
         setLoadError("");
-        const page = result.data as { rows: Bid[]; total: number; sources: string[]; statusCounts: Record<string, number> } | undefined;
+        const page = result.data as
+          | {
+              rows: Bid[];
+              total: number;
+              sources: string[];
+              statusCounts: Record<string, number>;
+            }
+          | undefined;
         setList(page?.rows ?? []);
         setTotalCount(page?.total ?? 0);
         setSourceOptions(page?.sources ?? []);
@@ -440,25 +616,82 @@ function BidWorkspaceContent({
         setLoadedKey(queryKey);
       }
     };
-    void run();
+    if (preferencesReady) void run();
     return () => {
       cancelled = true;
     };
-  }, [data, dateMode, from, to, trash, bidderId, today, revision, debouncedSearch, status, arrangement, resume, bidder, source, job, columnFilters, sorting, pagination.pageIndex, pageSize, queryKey]);
+  }, [
+    initial,
+    preferencesReady,
+    query,
+    data,
+    dateMode,
+    from,
+    to,
+    trash,
+    bidderId,
+    today,
+    revision,
+    debouncedSearch,
+    status,
+    arrangement,
+    resume,
+    bidder,
+    source,
+    job,
+    columnFilters,
+    sorting,
+    pagination.pageIndex,
+    pageSize,
+    queryKey,
+  ]);
   useEffect(() => {
-    const targets = Object.entries(checked).map(([id, target]) => ({ id, version: target.version }));
+    const targets = Object.entries(checked).map(([id, target]) => ({
+      id,
+      version: target.version,
+    }));
     if (!targets.length) return;
     let cancelled = false;
-    void reconcileBidTargets(targets, trash).then(({ data: ids }) => {
-      if (cancelled || !ids) return;
-      const eligible = new Set(ids);
-      setChecked((current) => {
-        const next = Object.fromEntries(Object.entries(current).filter(([id]) => eligible.has(id)));
-        return Object.keys(next).length === Object.keys(current).length ? current : next;
+    void reconcileBidTargets(targets, trash)
+      .catch(() => ({ data: undefined }))
+      .then(({ data: ids }) => {
+        if (cancelled || !ids) return;
+        const eligible = new Set(ids);
+        setChecked((current) => {
+          const next = Object.fromEntries(
+            Object.entries(current).filter(([id]) => eligible.has(id)),
+          );
+          return Object.keys(next).length === Object.keys(current).length
+            ? current
+            : next;
+        });
       });
-    });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [checked, trash]);
+  useEffect(() => {
+    const requestStore = requests.current;
+    const historyGeneration = historyRequest;
+    const clear = () => {
+      requestStore.invalidate();
+      historyGeneration.current++;
+      setList([]);
+      setTotalCount(0);
+      setSourceOptions([]);
+      setStatusCounts({});
+      setChecked({});
+      setSelected(undefined);
+      setHistory([]);
+      setLoadedKey(undefined);
+    };
+    window.addEventListener("workspace-access-revoked", clear);
+    return () => {
+      requestStore.invalidate();
+      historyGeneration.current++;
+      window.removeEventListener("workspace-access-revoked", clear);
+    };
+  }, []);
   const filteredRows = hasResults ? list : [];
   const active = filteredRows.find((b) => b.id === selected);
   const timezone = BID_TIMEZONE;
@@ -466,19 +699,24 @@ function BidWorkspaceContent({
     setSelected(b.id);
     setReason("");
     setHistory([]);
+    const generation = ++historyRequest.current;
     start(async () => {
-      const result = await getBidHistory(b.id);
+      const result = await getBidHistory(b.id).catch(() => ({
+        error: "Could not load bid history. Reopen this bid to retry.",
+        data: undefined,
+      }));
+      if (generation !== historyRequest.current) return;
       if (result.error) toast.error(result.error);
       else setHistory(result.data ?? []);
     });
   }
   async function toggleTrash(b: Bid) {
-    const result = await trashBid(b.id, !b.deleted_at);
+    const result = await bidAction(() => trashBid(b.id, !b.deleted_at));
     if (result.error) toast.error(result.error);
     else {
       toast.success(b.deleted_at ? "Bid restored" : "Bid moved to trash");
       setSelected(undefined);
-      setRevision((n) => n + 1);
+      refreshSnapshot();
       router.refresh();
     }
   }
@@ -489,49 +727,199 @@ function BidWorkspaceContent({
   function editInterview(bid: Bid, clearing = false) {
     setInterviewEditor(bid);
     setClearInterview(clearing);
-    setInterviewAt(bid.interview_at ? formatInTimeZone(bid.interview_at, BID_TIMEZONE, "yyyy-MM-dd'T'HH:mm") : "");
+    setInterviewAt(
+      bid.interview_at
+        ? formatInTimeZone(bid.interview_at, BID_TIMEZONE, "yyyy-MM-dd'T'HH:mm")
+        : "",
+    );
     setInterviewNotes(bid.interview_notes);
     setInterviewReason("");
   }
   function saveInterview() {
     if (!interviewEditor) return;
-    if (clearInterview && !interviewReason.trim()) { toast.error("A correction reason is required"); return; }
+    if (clearInterview && !interviewReason.trim()) {
+      toast.error("A correction reason is required");
+      return;
+    }
     start(async () => {
-      const result = await setBidInterviewAction({ bid: interviewEditor.id, scheduled: !clearInterview, localTime: clearInterview ? "" : interviewAt, notes: clearInterview ? "" : interviewNotes, reason: interviewReason });
+      const result = await bidAction(() =>
+        setBidInterviewAction({
+          bid: interviewEditor.id,
+          scheduled: !clearInterview,
+          localTime: clearInterview ? "" : interviewAt,
+          notes: clearInterview ? "" : interviewNotes,
+          reason: interviewReason,
+        }),
+      );
       if (result.error) toast.error(result.error);
-      else { toast.success(clearInterview ? "Interview status corrected" : "Interview invitation saved"); setInterviewEditor(null); setRevision((n) => n + 1); }
+      else {
+        toast.success(
+          clearInterview
+            ? "Interview status corrected"
+            : "Interview invitation saved",
+        );
+        setInterviewEditor(null);
+        refreshSnapshot();
+      }
     });
   }
   function headerControl(id: string, label: string, options?: string[]) {
     // The returned callback is TanStack's header renderer, not a React component.
     // eslint-disable-next-line react/display-name
-    return ({ column }: { column: import("@tanstack/react-table").Column<Bid> }) => (
+    return ({
+      column,
+    }: {
+      column: import("@tanstack/react-table").Column<Bid>;
+    }) => (
       <div className="flex items-center gap-1">
-        <button disabled={isEditing} onClick={() => column.toggleSorting()} className="flex items-center gap-1">
-          {label}<ArrowUpDown size={11} />
+        <button
+          disabled={isEditing}
+          onClick={() => column.toggleSorting()}
+          className="flex items-center gap-1"
+        >
+          {label}
+          <ArrowUpDown size={11} />
         </button>
         <div data-filter-column={id}>
-          <PopoverPrimitive.Root open={openFilter===id} onOpenChange={(open)=>setOpenFilter(open?id:null)}>
-            <PopoverPrimitive.Trigger asChild><button type="button" aria-label={`Filter ${label}`} title={`Filter ${label}`} aria-expanded={openFilter===id} disabled={isEditing} className="rounded p-1 text-muted-foreground hover:bg-secondary"><SlidersHorizontal size={12}/></button></PopoverPrimitive.Trigger>
-            <PopoverPrimitive.Portal><PopoverPrimitive.Content sideOffset={4} align="start" collisionPadding={8} className="z-50 max-h-[min(24rem,calc(100dvh-1rem))] w-56 overflow-y-auto rounded-md border bg-card p-3 text-foreground shadow-lg">
-            {id === "screenshot" && canReview && <div className="mb-3 space-y-1 border-b pb-3">
-              {[{ label: "Size: smallest first", desc: false }, { label: "Size: largest first", desc: true }].map((order) => <button
-                key={order.label}
+          <PopoverPrimitive.Root
+            open={openFilter === id}
+            onOpenChange={(open) => setOpenFilter(open ? id : null)}
+          >
+            <PopoverPrimitive.Trigger asChild>
+              <button
                 type="button"
+                aria-label={`Filter ${label}`}
+                title={`Filter ${label}`}
+                aria-expanded={openFilter === id}
                 disabled={isEditing}
-                aria-pressed={sorting[0]?.id === "screenshot_size_bytes" && sorting[0]?.desc === order.desc}
-                className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-secondary aria-pressed:bg-secondary aria-pressed:font-medium disabled:opacity-50"
-                onClick={() => { setOpenFilter(null); setSorting([{ id: "screenshot_size_bytes", desc: order.desc }]); }}
-              >{order.label}</button>)}
-            </div>}
-            {id === "found_at" || id === "applied_at" ? (() => {
-              const range = (column.getFilterValue() as { preset?: CalendarPeriod; from?: string; to?: string; presence?: string } | undefined) ?? {};
-              return <div className="space-y-2"><select aria-label={`${label} presence`} className="native-select" value={range.presence ?? "all"} onChange={(event)=>column.setFilterValue({...range,presence:event.target.value})}><option value="all">Any</option><option value="has">Has time</option><option value="empty">No time</option></select><PeriodSelector label={`${label} period`} value={{ preset: range.preset ?? (range.from && range.to ? "custom" : "all"), from: range.from, to: range.to }} onChange={(selection) => column.setFilterValue({ ...selection, presence: range.presence })} /></div>;
-            })() : options ? <select aria-label={`${label} filter`} className="native-select" value={String(column.getFilterValue() ?? "")} onChange={(event) => column.setFilterValue(event.target.value || undefined)}>
-              <option value="">All</option>{options.map((option) => <option key={option} value={option}>{option}</option>)}
-            </select> : <Input aria-label={`${label} filter`} placeholder={`Filter ${label.toLowerCase()}`} value={String(column.getFilterValue() ?? "")} onChange={(event) => column.setFilterValue(event.target.value || undefined)} />}
-            <div className="mt-2 flex justify-between"><button className="text-xs text-primary" onClick={() => column.setFilterValue(undefined)}>Clear filter</button><button className="text-xs text-muted-foreground" onClick={()=>setOpenFilter(null)}>Close</button></div>
-            </PopoverPrimitive.Content></PopoverPrimitive.Portal>
+                className="rounded p-1 text-muted-foreground hover:bg-secondary"
+              >
+                <SlidersHorizontal size={12} />
+              </button>
+            </PopoverPrimitive.Trigger>
+            <PopoverPrimitive.Portal>
+              <PopoverPrimitive.Content
+                sideOffset={4}
+                align="start"
+                collisionPadding={8}
+                className="z-50 max-h-[min(24rem,calc(100dvh-1rem))] w-56 overflow-y-auto rounded-md border bg-card p-3 text-foreground shadow-lg"
+              >
+                {id === "screenshot" && canReview && (
+                  <div className="mb-3 space-y-1 border-b pb-3">
+                    {[
+                      { label: "Size: smallest first", desc: false },
+                      { label: "Size: largest first", desc: true },
+                    ].map((order) => (
+                      <button
+                        key={order.label}
+                        type="button"
+                        disabled={isEditing}
+                        aria-pressed={
+                          sorting[0]?.id === "screenshot_size_bytes" &&
+                          sorting[0]?.desc === order.desc
+                        }
+                        className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-secondary aria-pressed:bg-secondary aria-pressed:font-medium disabled:opacity-50"
+                        onClick={() => {
+                          setOpenFilter(null);
+                          setSorting([
+                            { id: "screenshot_size_bytes", desc: order.desc },
+                          ]);
+                        }}
+                      >
+                        {order.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {id === "found_at" || id === "applied_at" ? (
+                  (() => {
+                    const range =
+                      (column.getFilterValue() as
+                        | {
+                            preset?: CalendarPeriod;
+                            from?: string;
+                            to?: string;
+                            presence?: string;
+                          }
+                        | undefined) ?? {};
+                    return (
+                      <div className="space-y-2">
+                        <select
+                          aria-label={`${label} presence`}
+                          className="native-select"
+                          value={range.presence ?? "all"}
+                          onChange={(event) =>
+                            column.setFilterValue({
+                              ...range,
+                              presence: event.target.value,
+                            })
+                          }
+                        >
+                          <option value="all">Any</option>
+                          <option value="has">Has time</option>
+                          <option value="empty">No time</option>
+                        </select>
+                        <PeriodSelector
+                          label={`${label} period`}
+                          value={{
+                            preset:
+                              range.preset ??
+                              (range.from && range.to ? "custom" : "all"),
+                            from: range.from,
+                            to: range.to,
+                          }}
+                          onChange={(selection) =>
+                            column.setFilterValue({
+                              ...selection,
+                              presence: range.presence,
+                            })
+                          }
+                        />
+                      </div>
+                    );
+                  })()
+                ) : options ? (
+                  <select
+                    aria-label={`${label} filter`}
+                    className="native-select"
+                    value={String(column.getFilterValue() ?? "")}
+                    onChange={(event) =>
+                      column.setFilterValue(event.target.value || undefined)
+                    }
+                  >
+                    <option value="">All</option>
+                    {options.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <Input
+                    aria-label={`${label} filter`}
+                    placeholder={`Filter ${label.toLowerCase()}`}
+                    value={String(column.getFilterValue() ?? "")}
+                    onChange={(event) =>
+                      column.setFilterValue(event.target.value || undefined)
+                    }
+                  />
+                )}
+                <div className="mt-2 flex justify-between">
+                  <button
+                    className="text-xs text-primary"
+                    onClick={() => column.setFilterValue(undefined)}
+                  >
+                    Clear filter
+                  </button>
+                  <button
+                    className="text-xs text-muted-foreground"
+                    onClick={() => setOpenFilter(null)}
+                  >
+                    Close
+                  </button>
+                </div>
+              </PopoverPrimitive.Content>
+            </PopoverPrimitive.Portal>
           </PopoverPrimitive.Root>
         </div>
       </div>
@@ -541,9 +929,18 @@ function BidWorkspaceContent({
     {
       accessorKey: "found_at",
       filterFn: (row, _id, value) => {
-        const range = value as { from?: string; to?: string; presence?: string } | undefined;
-        const day = formatInTimeZone(row.original.found_at, BID_TIMEZONE, "yyyy-MM-dd");
-        return (!range?.from || day >= range.from) && (!range?.to || day <= range.to) && range?.presence !== "empty";
+        const range = value as
+          { from?: string; to?: string; presence?: string } | undefined;
+        const day = formatInTimeZone(
+          row.original.found_at,
+          BID_TIMEZONE,
+          "yyyy-MM-dd",
+        );
+        return (
+          (!range?.from || day >= range.from) &&
+          (!range?.to || day <= range.to) &&
+          range?.presence !== "empty"
+        );
       },
       header: headerControl("found_at", "Added date (CT)"),
       cell: ({ row }) => (
@@ -555,12 +952,16 @@ function BidWorkspaceContent({
       filterFn: (row, _id, value) => {
         const resume = resumeById.get(row.original.resume_id);
         const profile = profileById.get(resume?.profile_id ?? "");
-        return `${profile?.identifier ?? ""} ${profile?.candidate_name ?? ""} ${resume?.email ?? ""}`.toLowerCase().includes(String(value).toLowerCase());
+        return `${profile?.identifier ?? ""} ${profile?.candidate_name ?? ""} ${resume?.email ?? ""}`
+          .toLowerCase()
+          .includes(String(value).toLowerCase());
       },
       header: headerControl("resume_id", "Profile ID"),
       cell: ({ row }) => (
         <Badge variant="outline">
-          {profileById.get(resumeById.get(row.original.resume_id)?.profile_id ?? "")?.identifier ?? "-"}
+          {profileById.get(
+            resumeById.get(row.original.resume_id)?.profile_id ?? "",
+          )?.identifier ?? "-"}
         </Badge>
       ),
     },
@@ -590,8 +991,12 @@ function BidWorkspaceContent({
     {
       accessorKey: "bidder_id",
       filterFn: (row, _id, value) => {
-        const profile = data.profiles.find((item) => item.id === row.original.bidder_id);
-        return `${profile?.display_name ?? ""} ${row.original.bidder_id}`.toLowerCase().includes(String(value).toLowerCase());
+        const profile = data.profiles.find(
+          (item) => item.id === row.original.bidder_id,
+        );
+        return `${profile?.display_name ?? ""} ${row.original.bidder_id}`
+          .toLowerCase()
+          .includes(String(value).toLowerCase());
       },
       header: headerControl("bidder_id", "Bidder ID"),
       cell: ({ row }) => (
@@ -614,20 +1019,37 @@ function BidWorkspaceContent({
         </button>
       ),
     },
-    { accessorKey: "source", header: headerControl("source", "Job site", sourceOptions) },
+    {
+      accessorKey: "source",
+      header: headerControl("source", "Job site", sourceOptions),
+    },
     {
       accessorKey: "applied",
-      filterFn: (row, _id, value) => value === (row.original.applied ? "Applied" : "Unapplied"),
-      header: headerControl("applied", "Applied status", ["Applied", "Unapplied"]),
+      filterFn: (row, _id, value) =>
+        value === (row.original.applied ? "Applied" : "Unapplied"),
+      header: headerControl("applied", "Applied status", [
+        "Applied",
+        "Unapplied",
+      ]),
       cell: ({ row }) => <AppliedBadge applied={row.original.applied} />,
     },
     {
       accessorKey: "applied_at",
       filterFn: (row, _id, value) => {
-        const range = value as { from?: string; to?: string; presence?: string } | undefined;
-        if (!row.original.applied_at) return range?.presence === "empty" && !range.from && !range.to;
-        const day = formatInTimeZone(row.original.applied_at, BID_TIMEZONE, "yyyy-MM-dd");
-        return range?.presence !== "empty" && (!range?.from || day >= range.from) && (!range?.to || day <= range.to);
+        const range = value as
+          { from?: string; to?: string; presence?: string } | undefined;
+        if (!row.original.applied_at)
+          return range?.presence === "empty" && !range.from && !range.to;
+        const day = formatInTimeZone(
+          row.original.applied_at,
+          BID_TIMEZONE,
+          "yyyy-MM-dd",
+        );
+        return (
+          range?.presence !== "empty" &&
+          (!range?.from || day >= range.from) &&
+          (!range?.to || day <= range.to)
+        );
       },
       header: headerControl("applied_at", "Applied time (CT)"),
       cell: ({ row }) => (
@@ -636,49 +1058,191 @@ function BidWorkspaceContent({
     },
     {
       accessorKey: "arrangement",
-      header: headerControl("arrangement", "Work arrangement", ["remote", "onsite", "hybrid"]),
+      header: headerControl("arrangement", "Work arrangement", [
+        "remote",
+        "onsite",
+        "hybrid",
+      ]),
       cell: ({ getValue }) => (
         <span className="capitalize">{String(getValue())}</span>
       ),
     },
-    { accessorKey: "job_status", header: headerControl("job_status", "Job status", ["open", "closed"]) },
+    {
+      accessorKey: "job_status",
+      header: headerControl("job_status", "Job status", ["open", "closed"]),
+    },
     {
       accessorKey: "review_status",
-      header: headerControl("review_status", "Review status", ["pending", "approved", "rejected"]),
+      header: headerControl("review_status", "Review status", [
+        "pending",
+        "approved",
+        "rejected",
+      ]),
       cell: ({ row }) => {
         const bid = row.original;
         const manager = data.profile.role !== "bidder";
-        return <div className="min-w-36 space-y-1">
-          <Badge variant={bid.review_status === "approved" ? "secondary" : "outline"}>{bid.review_status.replaceAll("_", " ")}</Badge>
-          {bid.review_status === "rejected" && bid.review_reason && <p className="max-w-40 text-[10px] text-destructive">{bid.review_reason}</p>}
-          {!bid.deleted_at && manager && !bid.applied && bid.review_status !== "approved" && <div className="flex gap-1"><Button size="sm" variant="outline" disabled={pending} onClick={() => start(async () => { const result = await reviewBidAction(bid.id,"approved","",bid.version); if(result.error) toast.error(result.error); else { toast.success("Application approved"); setRevision(n=>n+1); } })}>Approve</Button><Button size="sm" variant="ghost" disabled={pending} onClick={() => { const reason = window.prompt("Reason for rejection (required)"); if(!reason?.trim()) return; start(async () => { const result = await reviewBidAction(bid.id,"rejected",reason,bid.version); if(result.error) toast.error(result.error); else { toast.success("Application returned for correction"); setRevision(n=>n+1); } }); }}>Reject</Button></div>}
-          {!manager && bid.review_status === "rejected" && !bid.applied && <Button size="sm" variant="outline" disabled={pending} onClick={() => start(async () => { const result = await resubmitBidAction(bid.id,bid.version); if(result.error) toast.error(result.error); else { toast.success("Resubmitted for review"); setRevision(n=>n+1); } })}>Resubmit</Button>}
-        </div>;
+        return (
+          <div className="min-w-36 space-y-1">
+            <Badge
+              variant={
+                bid.review_status === "approved" ? "secondary" : "outline"
+              }
+            >
+              {bid.review_status.replaceAll("_", " ")}
+            </Badge>
+            {bid.review_status === "rejected" && bid.review_reason && (
+              <p className="max-w-40 text-[10px] text-destructive">
+                {bid.review_reason}
+              </p>
+            )}
+            {!bid.deleted_at &&
+              manager &&
+              !bid.applied &&
+              bid.review_status !== "approved" && (
+                <div className="flex gap-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={pending}
+                    onClick={() =>
+                      start(async () => {
+                        const result = await bidAction(() =>
+                          reviewBidAction(bid.id, "approved", "", bid.version),
+                        );
+                        if (result.error) toast.error(result.error);
+                        else {
+                          toast.success("Application approved");
+                          refreshSnapshot();
+                        }
+                      })
+                    }
+                  >
+                    Approve
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() => {
+                      const reason = window.prompt(
+                        "Reason for rejection (required)",
+                      );
+                      if (!reason?.trim()) return;
+                      start(async () => {
+                        const result = await bidAction(() =>
+                          reviewBidAction(
+                            bid.id,
+                            "rejected",
+                            reason,
+                            bid.version,
+                          ),
+                        );
+                        if (result.error) toast.error(result.error);
+                        else {
+                          toast.success("Application returned for correction");
+                          refreshSnapshot();
+                        }
+                      });
+                    }}
+                  >
+                    Reject
+                  </Button>
+                </div>
+              )}
+            {!manager && bid.review_status === "rejected" && !bid.applied && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending}
+                onClick={() =>
+                  start(async () => {
+                    const result = await bidAction(() =>
+                      resubmitBidAction(bid.id, bid.version),
+                    );
+                    if (result.error) toast.error(result.error);
+                    else {
+                      toast.success("Resubmitted for review");
+                      refreshSnapshot();
+                    }
+                  })
+                }
+              >
+                Resubmit
+              </Button>
+            )}
+          </div>
+        );
       },
     },
     {
       accessorKey: "interview_scheduled",
-      filterFn: (row, _id, value) => value === (row.original.interview_scheduled ? "Scheduled" : "Not scheduled"),
-      header: headerControl("interview_scheduled", "Interview status", ["Scheduled", "Not scheduled"]),
+      filterFn: (row, _id, value) =>
+        value ===
+        (row.original.interview_scheduled ? "Scheduled" : "Not scheduled"),
+      header: headerControl("interview_scheduled", "Interview status", [
+        "Scheduled",
+        "Not scheduled",
+      ]),
       cell: ({ row }) => {
         const bid = row.original;
-        return <div className="min-w-36 space-y-1"><Badge variant={bid.interview_scheduled ? "secondary" : "outline"}>{bid.interview_scheduled ? "Interview scheduled" : "—"}</Badge>
-        {bid.interview_scheduled && <p className="text-[10px] text-muted-foreground">{bid.interview_at ? ct(bid.interview_at) : "Date not set"}</p>}
-        {data.profile.role !== "bidder" && bid.applied && !bid.deleted_at && <div className="flex flex-wrap gap-1"><Button size="sm" variant="ghost" onClick={() => editInterview(bid)}>{bid.interview_scheduled ? "Edit" : "Record"}</Button>{bid.interview_scheduled && <Button size="sm" variant="ghost" onClick={() => editInterview(bid,true)}>Clear</Button>}</div>}</div>;
+        return (
+          <div className="min-w-36 space-y-1">
+            <Badge variant={bid.interview_scheduled ? "secondary" : "outline"}>
+              {bid.interview_scheduled ? "Interview scheduled" : "—"}
+            </Badge>
+            {bid.interview_scheduled && (
+              <p className="text-[10px] text-muted-foreground">
+                {bid.interview_at ? ct(bid.interview_at) : "Date not set"}
+              </p>
+            )}
+            {data.profile.role !== "bidder" &&
+              bid.applied &&
+              !bid.deleted_at && (
+                <div className="flex flex-wrap gap-1">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => editInterview(bid)}
+                  >
+                    {bid.interview_scheduled ? "Edit" : "Record"}
+                  </Button>
+                  {bid.interview_scheduled && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => editInterview(bid, true)}
+                    >
+                      Clear
+                    </Button>
+                  )}
+                </div>
+              )}
+          </div>
+        );
       },
     },
     {
       id: "screenshot",
       accessorFn: (row) => Boolean(row.evidence_file_id),
-      filterFn: (row, _id, value) => value === (row.original.evidence_file_id ? "Has screenshot" : "No screenshot"),
-      sortingFn: (a, b) => Number(Boolean(a.original.evidence_file_id)) - Number(Boolean(b.original.evidence_file_id)),
-      header: headerControl("screenshot", "Screenshot", ["Has screenshot", "No screenshot", ...(canReview ? ["Repeated sizes only"] : [])]),
+      filterFn: (row, _id, value) =>
+        value ===
+        (row.original.evidence_file_id ? "Has screenshot" : "No screenshot"),
+      sortingFn: (a, b) =>
+        Number(Boolean(a.original.evidence_file_id)) -
+        Number(Boolean(b.original.evidence_file_id)),
+      header: headerControl("screenshot", "Screenshot", [
+        "Has screenshot",
+        "No screenshot",
+        ...(canReview ? ["Repeated sizes only"] : []),
+      ]),
       cell: ({ row }) => (
         <ScreenshotCell
           bid={row.original}
           role={data.profile.role}
           onUploaded={refreshSnapshot}
-          disabled={isEditing || pending || row.original.review_status !== "approved"}
+          disabled={
+            isEditing || pending || row.original.review_status !== "approved"
+          }
           onBusy={(value) => {
             setUploadBusy(value);
             editingChanged(value);
@@ -742,7 +1306,17 @@ function BidWorkspaceContent({
     trash,
     sorting,
     columnFilters,
-    dateMode !== "custom" && dateMode !== "all" || columnFilters.some((filter) => filter.value && typeof filter.value === "object" && "preset" in filter.value && filter.value.preset !== "custom" && filter.value.preset !== "all") ? today : "",
+    (dateMode !== "custom" && dateMode !== "all") ||
+    columnFilters.some(
+      (filter) =>
+        filter.value &&
+        typeof filter.value === "object" &&
+        "preset" in filter.value &&
+        filter.value.preset !== "custom" &&
+        filter.value.preset !== "all",
+    )
+      ? today
+      : "",
   ]);
   useEffect(() => {
     setChecked({});
@@ -750,9 +1324,17 @@ function BidWorkspaceContent({
   }, [filterKey, table]);
   useEffect(() => {
     try {
-      const saved = Number(localStorage.getItem(`bidder-check-page-size:${data.profile.id}`));
-      if (Number.isInteger(saved) && saved >= 1 && saved <= 100) { setPagination((current) => ({ ...current, pageSize: saved })); setCustomPageSize(![10,25,50,100].includes(saved)); }
-    } catch { /* Browser storage is optional. */ }
+      const saved = Number(
+        localStorage.getItem(`bidder-check-page-size:${data.profile.id}`),
+      );
+      if (Number.isInteger(saved) && saved >= 1 && saved <= 100) {
+        setPagination((current) => ({ ...current, pageSize: saved }));
+        setCustomPageSize(![10, 25, 50, 100].includes(saved));
+      }
+    } catch {
+      /* Browser storage is optional. */
+    }
+    setPreferencesReady(true);
   }, [data.profile.id]);
   useEffect(() => {
     if (!hasResults) return;
@@ -766,6 +1348,7 @@ function BidWorkspaceContent({
           data={data}
           initialText={paste}
           bidderId={bidderId}
+          fallbackFocusRef={importLauncher}
           onClose={() => setPaste(null)}
           onSuccess={imported}
         />
@@ -776,43 +1359,78 @@ function BidWorkspaceContent({
           title="Your bid workspace."
           description="From the first find to the final click. Keep every application in view."
         >
-          <Button variant="outline" onClick={() => setPaste("")}>
+          <Button
+            ref={importLauncher}
+            variant="outline"
+            onClick={() => setPaste("")}
+          >
             Paste from Sheets
           </Button>
-          <BidDialog data={data} bidderId={bidderId ?? (bidder === "all" ? undefined : bidder)} />
+          <BidDialog
+            data={data}
+            bidderId={bidderId ?? (bidder === "all" ? undefined : bidder)}
+          />
         </PageHeading>
       )}
       <section className="panel overflow-hidden">
         <fieldset disabled={isEditing} className="min-w-0">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
             <div className="flex flex-wrap gap-1">
-              {["all", "unapplied", "applied", ...(data.profile.role === "bidder" ? [] : ["pending_review"])].map((s) => (
+              {[
+                "all",
+                "unapplied",
+                "applied",
+                ...(data.profile.role === "bidder" ? [] : ["pending_review"]),
+              ].map((s) => (
                 <Button
                   key={s}
                   variant={status === s ? "secondary" : "ghost"}
                   size="sm"
                   aria-pressed={status === s}
-                  onClick={() => { setStatus(s); if (s === "pending_review") setDateMode("all"); }}
+                  onClick={() => {
+                    setStatus(s);
+                    if (s === "pending_review") setDateMode("all");
+                  }}
                   className="text-xs capitalize"
                 >
-                  {s === "all" ? "All bids" : s === "pending_review" ? "Pending review" : s}
+                  {s === "all"
+                    ? "All bids"
+                    : s === "pending_review"
+                      ? "Pending review"
+                      : s}
                   <span className="ml-1 rounded bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                    {hasResults ? statusCounts[s] ?? 0 : "—"}
+                    {hasResults ? (statusCounts[s] ?? 0) : "—"}
                   </span>
                 </Button>
               ))}
             </div>
             {embedded && (
               <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setPaste("")}>
+                <Button
+                  ref={importLauncher}
+                  variant="outline"
+                  onClick={() => setPaste("")}
+                >
                   Paste from Sheets
                 </Button>
-                <BidDialog data={data} bidderId={bidderId ?? (bidder === "all" ? undefined : bidder)} />
+                <BidDialog
+                  data={data}
+                  bidderId={bidderId ?? (bidder === "all" ? undefined : bidder)}
+                />
               </div>
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2 px-5 pt-4">
-            <PeriodSelector key={`${dateMode}:${from}:${to}`} label="Found period" value={{ preset: dateMode, from, to }} onChange={(selection) => { setDateMode(selection.preset); setFrom(selection.from ?? ""); setTo(selection.to ?? ""); }} />
+            <PeriodSelector
+              key={`${dateMode}:${from}:${to}`}
+              label="Found period"
+              value={{ preset: dateMode, from, to }}
+              onChange={(selection) => {
+                setDateMode(selection.preset);
+                setFrom(selection.from ?? "");
+                setTo(selection.to ?? "");
+              }}
+            />
             <Button
               size="sm"
               className="ml-auto"
@@ -860,7 +1478,12 @@ function BidWorkspaceContent({
           </div>
           {filters && (
             <div className="grid gap-3 border-b px-5 pb-5 sm:grid-cols-3 xl:grid-cols-4">
-              <ResumeSelector options={resumeChoices} value={resume} onChange={setResume} disabled={isEditing} />
+              <ResumeSelector
+                options={resumeChoices}
+                value={resume}
+                onChange={setResume}
+                disabled={isEditing}
+              />
               {data.profile.role !== "bidder" && !bidderId && (
                 <SelectField
                   label="Bidder"
@@ -905,13 +1528,11 @@ function BidWorkspaceContent({
                 onChange={(e) => setSource(e.target.value)}
               >
                 <option value="all">All sources</option>
-                {sourceOptions
-                  .filter(Boolean)
-                  .map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
+                {sourceOptions.filter(Boolean).map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
               </SelectField>
               <Button
                 variant="ghost"
@@ -922,6 +1543,7 @@ function BidWorkspaceContent({
                   setArrangement("all");
                   setJob("all");
                   setSource("all");
+                  setDateMode("today");
                   setFrom("");
                   setTo("");
                   setSearch("");
@@ -951,120 +1573,230 @@ function BidWorkspaceContent({
           onDone={() => {
             setChecked({});
             setSelected(undefined);
-            setRevision((n) => n + 1);
+            refreshSnapshot();
             router.refresh();
           }}
         />
-            <BidGrid
-              key={JSON.stringify([
-                table.getState().pagination.pageIndex,
-                table
-                  .getRowModel()
-                  .rows.map((row) => row.original.id)
-                  .join(","),
-                dateMode !== "custom" && dateMode !== "all" ? today : "",
-                sorting,
-                search,
-                status,
-                arrangement,
-                resume,
-                bidder,
-                source,
-                job,
-                dateMode,
-                from,
-                to,
-                trash,
-                columnFilters,
-                pageSize,
-              ])}
-              checked={checked}
-              disabled={pending || bulkBusy || uploadBusy}
-              onCheck={(rows, value) =>
-                setChecked((current) => {
-                  const next = { ...current };
-                  rows.forEach((row) => {
-                    if (value) next[row.id] = { version: row.version, applied: row.applied };
-                    else delete next[row.id];
-                  });
-                  if (Object.keys(next).length > 500) {
-                    toast.error("Select at most 500 bids per operation");
-                    return current;
-                  }
-                  return next;
-                })
+        <BidGrid
+          checked={checked}
+          disabled={pending || bulkBusy || uploadBusy}
+          onCheck={(rows, value) =>
+            setChecked((current) => {
+              const next = { ...current };
+              rows.forEach((row) => {
+                if (value)
+                  next[row.id] = { version: row.version, applied: row.applied };
+                else delete next[row.id];
+              });
+              if (Object.keys(next).length > 500) {
+                toast.error("Select at most 500 bids per operation");
+                return current;
               }
-              table={table}
-              data={data}
-              onRow={(row) => {
-                setList((current) =>
-                  current.map((b) => (b.id === row.id ? { ...b, ...row } : b)),
-                );
-                refreshSnapshot();
-              }}
-              onBusy={editingChanged}
-              onPaste={setPaste}
-              onOpen={openBid}
-              emptyMessage={loading
-                ? "Loading bid applications…"
-                : loadError
-                  ? "Bid results could not be loaded. Use Retry above to try again."
-                  : canReview && columnFilters.some((filter) => filter.id === "screenshot" && filter.value === "Repeated sizes only")
-                    ? "No applications with matching screenshot sizes"
+              return next;
+            })
+          }
+          table={table}
+          data={data}
+          onRow={(row) => {
+            setList((current) =>
+              current.map((b) => (b.id === row.id ? { ...b, ...row } : b)),
+            );
+            refreshSnapshot();
+          }}
+          onBusy={editingChanged}
+          onPaste={setPaste}
+          onOpen={openBid}
+          emptyMessage={
+            loading
+              ? "Loading bid applications…"
+              : loadError
+                ? "Bid results could not be loaded. Use Retry above to try again."
+                : canReview &&
+                    columnFilters.some(
+                      (filter) =>
+                        filter.id === "screenshot" &&
+                        filter.value === "Repeated sizes only",
+                    )
+                  ? "No applications with matching screenshot sizes"
                   : totalCount > 0
-                ? "No matching opportunities. Clear filters or change your search to see bids."
-                : "Your next opportunity starts here. Add a job URL and choose a resume to start tracking."}
-            />
-            <div className="flex items-center justify-between border-t px-5 py-4 text-xs text-muted-foreground">
-              <span>
-                {hasResults ? <>{totalCount === 0 ? 0 : table.getState().pagination.pageIndex * pageSize + 1}–
-                {Math.min((table.getState().pagination.pageIndex + 1) * pageSize,totalCount)}{" "}
-                of {totalCount} bids</> : loading ? "Loading results…" : "Results unavailable"}
-              </span>
-              <div className="flex items-center gap-2">
-                <label className="flex items-center gap-2">Rows per page <select aria-label="Rows per page" disabled={isEditing} className="native-select w-20" value={customPageSize?"custom":pageSize} onChange={(event)=>{if(event.target.value==="custom"){setCustomPageSize(true);return;}setCustomPageSize(false);const value=Number(event.target.value);setPagination({pageIndex:0,pageSize:value});try{localStorage.setItem(`bidder-check-page-size:${data.profile.id}`,String(value));}catch{}}}>{[10,25,50,100].map(n=><option key={n} value={n}>{n}</option>)}<option value="custom">Custom</option></select>{customPageSize&&<input aria-label="Custom rows per page" disabled={isEditing} type="number" min={1} max={100} value={pageSize} className="h-9 w-16 rounded-md border bg-background px-2" onChange={(event)=>{const value=Number(event.target.value);if(Number.isInteger(value)&&value>=1&&value<=100){setPagination({pageIndex:0,pageSize:value});try{localStorage.setItem(`bidder-check-page-size:${data.profile.id}`,String(value));}catch{}}}} />}</label>
-                <Button
-                  aria-label="Previous page"
-                  size="icon-sm"
-                  variant="outline"
-                  disabled={isEditing || !hasResults || !table.getCanPreviousPage()}
-                  onClick={() => table.previousPage()}
-                >
-                  <ChevronLeft size={14} />
-                </Button>
-                <span className="px-2">
-                  {table.getState().pagination.pageIndex + 1}
-                </span>
-                <Button
-                  aria-label="Next page"
-                  size="icon-sm"
-                  variant="outline"
-                  disabled={isEditing || !hasResults || !table.getCanNextPage()}
-                  onClick={() => table.nextPage()}
-                >
-                  <ChevronRight size={14} />
-                </Button>
-              </div>
-            </div>
+                    ? "No matching opportunities. Clear filters or change your search to see bids."
+                    : "Your next opportunity starts here. Add a job URL and choose a resume to start tracking."
+          }
+        />
+        <div className="flex items-center justify-between border-t px-5 py-4 text-xs text-muted-foreground">
+          <span>
+            {hasResults ? (
+              <>
+                {totalCount === 0
+                  ? 0
+                  : table.getState().pagination.pageIndex * pageSize + 1}
+                –
+                {Math.min(
+                  (table.getState().pagination.pageIndex + 1) * pageSize,
+                  totalCount,
+                )}{" "}
+                of {totalCount} bids
+              </>
+            ) : loading ? (
+              "Loading results…"
+            ) : (
+              "Results unavailable"
+            )}
+          </span>
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2">
+              Rows per page{" "}
+              <select
+                aria-label="Rows per page"
+                disabled={isEditing}
+                className="native-select w-20"
+                value={customPageSize ? "custom" : pageSize}
+                onChange={(event) => {
+                  if (event.target.value === "custom") {
+                    setCustomPageSize(true);
+                    return;
+                  }
+                  setCustomPageSize(false);
+                  const value = Number(event.target.value);
+                  setPagination({ pageIndex: 0, pageSize: value });
+                  try {
+                    localStorage.setItem(
+                      `bidder-check-page-size:${data.profile.id}`,
+                      String(value),
+                    );
+                  } catch {}
+                }}
+              >
+                {[10, 25, 50, 100].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+                <option value="custom">Custom</option>
+              </select>
+              {customPageSize && (
+                <input
+                  aria-label="Custom rows per page"
+                  disabled={isEditing}
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={pageSize}
+                  className="h-9 w-16 rounded-md border bg-background px-2"
+                  onChange={(event) => {
+                    const value = Number(event.target.value);
+                    if (Number.isInteger(value) && value >= 1 && value <= 100) {
+                      setPagination({ pageIndex: 0, pageSize: value });
+                      try {
+                        localStorage.setItem(
+                          `bidder-check-page-size:${data.profile.id}`,
+                          String(value),
+                        );
+                      } catch {}
+                    }
+                  }}
+                />
+              )}
+            </label>
+            <Button
+              aria-label="Previous page"
+              size="icon-sm"
+              variant="outline"
+              disabled={isEditing || !hasResults || !table.getCanPreviousPage()}
+              onClick={() => table.previousPage()}
+            >
+              <ChevronLeft size={14} />
+            </Button>
+            <span className="px-2">
+              {table.getState().pagination.pageIndex + 1}
+            </span>
+            <Button
+              aria-label="Next page"
+              size="icon-sm"
+              variant="outline"
+              disabled={isEditing || !hasResults || !table.getCanNextPage()}
+              onClick={() => table.nextPage()}
+            >
+              <ChevronRight size={14} />
+            </Button>
+          </div>
+        </div>
       </section>
-      <Dialog open={!!interviewEditor} onOpenChange={(open) => { if (!open) setInterviewEditor(null); }}>
+      <Dialog
+        open={!!interviewEditor}
+        onOpenChange={(open) => {
+          if (!open) setInterviewEditor(null);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{clearInterview ? "Correct interview status" : interviewEditor?.interview_scheduled ? "Edit interview invitation" : "Record interview invitation"}</DialogTitle>
-            <DialogDescription>{interviewEditor?.company} · {interviewEditor?.role_name}. Interview details are visible only within this workspace and the assigned bidder.</DialogDescription>
+            <DialogTitle>
+              {clearInterview
+                ? "Correct interview status"
+                : interviewEditor?.interview_scheduled
+                  ? "Edit interview invitation"
+                  : "Record interview invitation"}
+            </DialogTitle>
+            <DialogDescription>
+              {interviewEditor?.company} · {interviewEditor?.role_name}.
+              Interview details are visible only within this workspace and the
+              assigned bidder.
+            </DialogDescription>
           </DialogHeader>
-          {!clearInterview && <>
-            <Field label="Interview date and time (CT)" type="datetime-local" value={interviewAt} onChange={(event)=>setInterviewAt(event.target.value)} />
-            <label className="block space-y-2 text-xs">Notes<Textarea rows={4} maxLength={2000} value={interviewNotes} onChange={(event)=>setInterviewNotes(event.target.value)} placeholder="Optional details for the interview." /></label>
-          </>}
-          {clearInterview && <label className="block space-y-2 text-xs">Correction reason<Textarea rows={3} maxLength={1000} value={interviewReason} onChange={(event)=>setInterviewReason(event.target.value)} required placeholder="Explain why this interview status is being cleared." /></label>}
-          <div className="flex justify-end gap-2"><Button variant="outline" onClick={()=>setInterviewEditor(null)}>Cancel</Button><Button variant={clearInterview?"destructive":"default"} disabled={pending || (clearInterview && !interviewReason.trim())} onClick={saveInterview}>{clearInterview?"Clear status":"Save interview"}</Button></div>
+          {!clearInterview && (
+            <>
+              <Field
+                label="Interview date and time (CT)"
+                type="datetime-local"
+                value={interviewAt}
+                onChange={(event) => setInterviewAt(event.target.value)}
+              />
+              <label className="block space-y-2 text-xs">
+                Notes
+                <Textarea
+                  rows={4}
+                  maxLength={2000}
+                  value={interviewNotes}
+                  onChange={(event) => setInterviewNotes(event.target.value)}
+                  placeholder="Optional details for the interview."
+                />
+              </label>
+            </>
+          )}
+          {clearInterview && (
+            <label className="block space-y-2 text-xs">
+              Correction reason
+              <Textarea
+                rows={3}
+                maxLength={1000}
+                value={interviewReason}
+                onChange={(event) => setInterviewReason(event.target.value)}
+                required
+                placeholder="Explain why this interview status is being cleared."
+              />
+            </label>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setInterviewEditor(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant={clearInterview ? "destructive" : "default"}
+              disabled={pending || (clearInterview && !interviewReason.trim())}
+              onClick={saveInterview}
+            >
+              {clearInterview ? "Clear status" : "Save interview"}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
       <Sheet
         open={!!active}
         onOpenChange={(open) => {
-          if (!open) setSelected(undefined);
+          if (!open) {
+            historyRequest.current++;
+            setSelected(undefined);
+          }
         }}
       >
         <SheetContent className="w-full overflow-y-auto p-6 sm:max-w-lg">
@@ -1097,17 +1829,29 @@ function BidWorkspaceContent({
                     {
                       label: "Resume",
                       value: data.resumes.find((r) => r.id === active.resume_id)
-                        ?.profile_id ? data.candidateProfiles.find((p) => p.id === data.resumes.find((r) => r.id === active.resume_id)?.profile_id)?.identifier : undefined,
+                        ?.profile_id
+                        ? data.candidateProfiles.find(
+                            (p) =>
+                              p.id ===
+                              data.resumes.find(
+                                (r) => r.id === active.resume_id,
+                              )?.profile_id,
+                          )?.identifier
+                        : undefined,
                     },
                     { label: "Source", value: active.source },
                     { label: "Job status", value: active.job_status },
-                    ...(data.profile.role !== "bidder" ? [{
-                      label: "Saved rate",
-                      value:
-                        active.rate_cents == null
-                          ? "Set on application"
-                          : usd(active.rate_cents),
-                    }] : []),
+                    ...(data.profile.role !== "bidder"
+                      ? [
+                          {
+                            label: "Saved rate",
+                            value:
+                              active.rate_cents == null
+                                ? "Set on application"
+                                : usd(active.rate_cents),
+                          },
+                        ]
+                      : []),
                     {
                       label: "Found",
                       value: formatInTimeZone(
@@ -1161,7 +1905,7 @@ function BidWorkspaceContent({
                       disabled={active.review_status !== "approved"}
                       onUploaded={() => {
                         setSelected(undefined);
-                        setRevision((n) => n + 1);
+                        refreshSnapshot();
                         router.refresh();
                       }}
                     />
@@ -1188,12 +1932,14 @@ function BidWorkspaceContent({
                         disabled={pending || !reason.trim()}
                         onClick={() =>
                           start(async () => {
-                            const result = await unapplyBid(active.id, reason);
+                            const result = await bidAction(() =>
+                              unapplyBid(active.id, reason),
+                            );
                             if (result.error) toast.error(result.error);
                             else {
                               toast.success("Marked unapplied");
                               setSelected(undefined);
-                              setRevision((n) => n + 1);
+                              refreshSnapshot();
                               router.refresh();
                             }
                           })
@@ -1203,7 +1949,13 @@ function BidWorkspaceContent({
                       </Button>
                     </div>
                   )}
-                {canReview && <UploadHistory key={`${data.profile.id}:${active.id}`} bidId={active.id} role={data.profile.role} />}
+                {canReview && (
+                  <UploadHistory
+                    key={`${data.profile.id}:${active.id}`}
+                    bidId={active.id}
+                    role={data.profile.role}
+                  />
+                )}
                 <div className="border-t pt-5">
                   <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold">
                     <Clock size={15} /> Activity history

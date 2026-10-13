@@ -5,7 +5,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Badge } from "./ui/badge";
 import { LoaderCircle, Inbox, ArrowUpRight } from "lucide-react";
-import { getFileUrl } from "@/app/(workspace)/actions";
+import { getFileUrl } from "@/lib/read-client";
 import { toast } from "sonner";
 export function PageHeading({
   eyebrow,
@@ -20,13 +20,13 @@ export function PageHeading({
 }) {
   return (
     <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
-      <div>
+      <div className="min-w-0">
         {eyebrow && <p className="eyebrow mb-2.5">{eyebrow}</p>}
         <h1 className="text-[28px] font-semibold tracking-[-1px]">{title}</h1>
         <p className="mt-2 text-[13px] text-muted-foreground">{description}</p>
       </div>
       {children && (
-        <div className="flex shrink-0 items-center gap-2">{children}</div>
+        <div className="flex flex-wrap items-center gap-2">{children}</div>
       )}
     </div>
   );
@@ -41,7 +41,7 @@ export function Field({
 }) {
   const auto = useId();
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2">
       <Label htmlFor={props.id ?? auto} className="text-xs">
         {label}
       </Label>
@@ -56,7 +56,7 @@ export function SelectField({
 }: React.ComponentProps<"select"> & { label: string }) {
   const auto = useId();
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2">
       <Label htmlFor={props.id ?? auto} className="text-xs">
         {label}
       </Label>

@@ -10,7 +10,7 @@ import { updateBidCell } from "@/app/(workspace)/actions";
 import { Button } from "./ui/button";
 import { buildResumeOptions } from "@/lib/resume-options";
 type Bid = BidRow;
-type Point = { r: number; c: number };
+type Point = { r: number; c: number; rowId?: string; columnId?: string };
 type Edit = {
   id: string;
   field: string;
@@ -53,7 +53,7 @@ export function BidGrid({
   emptyMessage: string;
 }) {
   const assignmentLabels = useMemo(() => buildResumeOptions(data), [data]);
-  const [selection, setSelection] = useState<{
+  const [storedSelection, setSelection] = useState<{
     anchor: Point;
     end: Point;
   } | null>(null);
@@ -68,6 +68,36 @@ export function BidGrid({
     editor = useRef<HTMLInputElement & HTMLSelectElement>(null);
   const rows = table.getRowModel().rows,
     columns = table.getVisibleLeafColumns();
+  function identify(point: Point): Point {
+    return {
+      ...point,
+      rowId: rows[point.r]?.id,
+      columnId: columns[point.c]?.id,
+    };
+  }
+  function locate(point: Point): Point | null {
+    const r = point.rowId
+      ? rows.findIndex((row) => row.id === point.rowId)
+      : point.r;
+    const c = point.columnId
+      ? columns.findIndex((column) => column.id === point.columnId)
+      : point.c;
+    return r >= 0 && c >= 0 && rows[r] && columns[c]
+      ? { ...point, r, c }
+      : null;
+  }
+  const anchor = storedSelection && locate(storedSelection.anchor);
+  const end = storedSelection && locate(storedSelection.end);
+  const selection = anchor && end ? { anchor, end } : null;
+  const rowSignature =
+    rows.map((row) => row.id).join(",") +
+    ":" +
+    columns.map((column) => column.id).join(",");
+  const [previousRows, setPreviousRows] = useState(rowSignature);
+  if (previousRows !== rowSignature) {
+    setPreviousRows(rowSignature);
+    if (storedSelection && !selection && !edit) setSelection(null);
+  }
   useEffect(() => {
     const stop = () => {
       dragging.current = false;
@@ -85,19 +115,25 @@ export function BidGrid({
     }
   }, [edit?.id, edit?.field]); // eslint-disable-line react-hooks/exhaustive-deps
   function focus(point: Point) {
+    const current = locate(point);
+    if (!current) return;
     cancelAnimationFrame(focusFrame.current);
     focusFrame.current = requestAnimationFrame(() =>
       container.current
         ?.querySelector<HTMLElement>(
-          `[data-grid-r="${point.r}"][data-grid-c="${point.c}"]`,
+          `[data-grid-r="${current.r}"][data-grid-c="${current.c}"]`,
         )
         ?.focus(),
     );
   }
   function select(point: Point, extend = false) {
+    const target = identify(point);
     setSelection((previous) => ({
-      anchor: extend && previous ? previous.anchor : point,
-      end: point,
+      anchor:
+        extend && previous && locate(previous.anchor)
+          ? previous.anchor
+          : target,
+      end: target,
     }));
     focus(point);
   }
@@ -123,7 +159,7 @@ export function BidGrid({
       field,
       value: String(bid[field as keyof Bid] ?? ""),
       version: bid.version,
-      point,
+      point: identify(point),
     });
     onBusy(true);
   }
@@ -176,7 +212,13 @@ export function BidGrid({
   }
   function value(bid: Bid, field: string): string {
     if (field === "resume_id")
-      return data.candidateProfiles.find((p) => p.id === data.resumes.find((r) => r.id === bid.resume_id)?.profile_id)?.identifier ?? "";
+      return (
+        data.candidateProfiles.find(
+          (p) =>
+            p.id ===
+            data.resumes.find((r) => r.id === bid.resume_id)?.profile_id,
+        )?.identifier ?? ""
+      );
     if (field === "applied") return bid.applied ? "Applied" : "Unapplied";
     if (field === "found_at" || field === "applied_at")
       return bid[field]
@@ -224,9 +266,12 @@ export function BidGrid({
       }}
       onPaste={(e) => {
         if (
-          edit || e.defaultPrevented || !selection ||
+          edit ||
+          e.defaultPrevented ||
+          !selection ||
           (e.target as HTMLElement).closest("[data-grid-interactive]")
-        ) return;
+        )
+          return;
         const text = e.clipboardData.getData("text/plain");
         if (text.includes("\t") || text.includes("\n")) {
           e.preventDefault();
@@ -305,17 +350,26 @@ export function BidGrid({
                   key={header.id}
                   aria-sort={(() => {
                     const sort = table.getState().sorting[0];
-                    if (sort?.id !== header.column.id && !(header.column.id === "screenshot" && sort?.id === "screenshot_size_bytes")) return undefined;
+                    if (
+                      sort?.id !== header.column.id &&
+                      !(
+                        header.column.id === "screenshot" &&
+                        sort?.id === "screenshot_size_bytes"
+                      )
+                    )
+                      return undefined;
                     return sort.desc ? "descending" : "ascending";
                   })()}
                   className="whitespace-nowrap border px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
                 >
                   {header.isPlaceholder
                     ? null
-                    : flexRender(
-                        header.column.columnDef.header,
-                        header.getContext(),
-                      )}
+                    : typeof header.column.columnDef.header === "function"
+                      ? header.column.columnDef.header(header.getContext())
+                      : flexRender(
+                          header.column.columnDef.header,
+                          header.getContext(),
+                        )}
                 </th>
               ))}
             </tr>
@@ -324,7 +378,10 @@ export function BidGrid({
         <tbody>
           {rows.length === 0 && (
             <tr>
-              <td colSpan={columns.length + 2} className="h-48 border px-6 text-center text-sm text-muted-foreground">
+              <td
+                colSpan={columns.length + 2}
+                className="h-48 border px-6 text-center text-sm text-muted-foreground"
+              >
                 {emptyMessage}
               </td>
             </tr>
@@ -381,10 +438,19 @@ export function BidGrid({
                     className={`relative min-w-24 border px-3 py-2 align-middle outline-none ${selected ? "bg-primary/10" : ""} ${active ? "ring-2 ring-inset ring-primary" : ""}`}
                     onFocus={(e) => {
                       if (e.target === e.currentTarget && !selection && !edit)
-                        setSelection({ anchor: point, end: point });
+                        setSelection({
+                          anchor: identify(point),
+                          end: identify(point),
+                        });
                     }}
                     onKeyDown={(e) => {
-                      if (edit || (e.target as HTMLElement).closest("button,a,input,select,textarea")) return;
+                      if (
+                        edit ||
+                        (e.target as HTMLElement).closest(
+                          "button,a,input,select,textarea",
+                        )
+                      )
+                        return;
                       if (e.key === "Enter" || e.key === "F2") {
                         e.preventDefault();
                         e.stopPropagation();
@@ -392,7 +458,11 @@ export function BidGrid({
                       }
                     }}
                     onPointerDown={(e) => {
-                      if ((e.target as HTMLElement).closest("button,a,input,select,textarea,[data-grid-interactive]")) {
+                      if (
+                        (e.target as HTMLElement).closest(
+                          "button,a,input,select,textarea,[data-grid-interactive]",
+                        )
+                      ) {
                         dragging.current = false;
                         return;
                       }
@@ -476,7 +546,8 @@ export function BidGrid({
                                   )
                                   .map((v) => (
                                     <option key={v.id} value={v.id}>
-                                      {assignmentLabels.get(v.id)?.label ?? "Profile"}
+                                      {assignmentLabels.get(v.id)?.label ??
+                                        "Profile"}
                                     </option>
                                   ))}
                           </select>

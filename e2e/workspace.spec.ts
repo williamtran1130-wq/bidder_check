@@ -219,7 +219,9 @@ test("Sheets mapping keeps blocked rows visible and allows valid rows to import"
     page.getByRole("button", { name: "Import 1 allowed bids", exact: true }),
   ).toBeEnabled();
   await expect(page.getByText("Blocked", { exact: true })).toHaveCount(1);
-  await expect(page.getByLabel("Row 2 Job URL", { exact: true })).toHaveText("bad-url");
+  await expect(
+    page.getByRole("dialog").getByRole("table").locator("tbody tr").nth(1).getByRole("cell").nth(2),
+  ).toHaveText("bad-url");
   await expect(page.getByRole("dialog").getByRole("table").getByRole("textbox")).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Remove row/ })).toHaveCount(0);
   await expect(page.getByText("Enter a valid HTTP/HTTPS URL", { exact: false })).toHaveCount(0);
@@ -301,7 +303,9 @@ test("a lost import response freezes the reviewed batch for retry", async ({ pag
   await expect(page.getByText("Validating profile restrictions")).toHaveCount(0);
   await page.getByRole("button", { name: "Import 1 allowed bids", exact: true }).click();
   await expect(page.getByRole("button", { name: "Retry same import", exact: true }).first()).toBeEnabled();
-  await expect(page.getByLabel("Row 1 Company", { exact: true })).toHaveText("Acme");
+  await expect(
+    page.getByRole("dialog").getByRole("table").locator("tbody tr").nth(0).getByRole("cell").nth(0),
+  ).toHaveText("Acme");
 });
 
 test("Sheets import stays available when every row is blocked and explains the result", async ({

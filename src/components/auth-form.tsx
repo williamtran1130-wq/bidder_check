@@ -52,12 +52,20 @@ export function AuthForm({
           <Label htmlFor="name">Your name</Label>
           <Input
             id="name"
+            aria-invalid={!!errors.name}
+            aria-describedby={errors.name ? "name-error" : undefined}
             autoComplete="name"
             placeholder="Alex Morgan"
             {...register("name", { required: "Your name is required." })}
           />
           {errors.name && (
-            <p className="text-xs text-destructive">{errors.name.message}</p>
+            <p
+              id="name-error"
+              role="alert"
+              className="text-xs text-destructive"
+            >
+              {errors.name.message}
+            </p>
           )}
         </div>
       )}
@@ -66,11 +74,22 @@ export function AuthForm({
           <Label htmlFor="email">Email address</Label>
           <Input
             id="email"
+            aria-invalid={!!errors.email}
+            aria-describedby={errors.email ? "email-error" : undefined}
             type="email"
             autoComplete="email"
             placeholder="you@company.com"
             {...register("email", { required: "Email is required." })}
           />
+          {errors.email && (
+            <p
+              id="email-error"
+              role="alert"
+              className="text-xs text-destructive"
+            >
+              {errors.email.message}
+            </p>
+          )}
         </div>
       )}
       {mode !== "forgot" && (
@@ -91,6 +110,8 @@ export function AuthForm({
           <div className="relative">
             <Input
               id="password"
+              aria-invalid={!!errors.password}
+              aria-describedby={errors.password ? "password-error" : undefined}
               type={show ? "text" : "password"}
               autoComplete={
                 isSignup || isUpdate ? "new-password" : "current-password"
@@ -98,7 +119,7 @@ export function AuthForm({
               placeholder={
                 mode === "login" ? "Your password" : "At least 8 characters"
               }
-              className="pr-10"
+              className="pr-12"
               {...register("password", {
                 required: "Password is required.",
                 minLength: {
@@ -117,14 +138,19 @@ export function AuthForm({
             <button
               type="button"
               aria-label={show ? "Hide password" : "Show password"}
-              className="absolute right-3 top-2.5 text-muted-foreground"
+              aria-pressed={show}
+              className="absolute right-0 top-0 flex size-9 items-center justify-center rounded-md text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
               onClick={() => setShow(!show)}
             >
               {show ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
           </div>
           {errors.password && (
-            <p className="text-xs text-destructive">
+            <p
+              id="password-error"
+              role="alert"
+              className="text-xs text-destructive"
+            >
               {errors.password.message}
             </p>
           )}

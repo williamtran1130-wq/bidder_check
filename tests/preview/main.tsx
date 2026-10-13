@@ -11,17 +11,71 @@ import { Earnings } from "@/components/earnings";
 import { Settings } from "@/components/settings";
 import { Notifications } from "@/components/notifications";
 import { InterviewReport } from "@/components/interviews";
+import { AuthForm } from "@/components/auth-form";
+import { BackgroundBeams } from "@/components/ui/background-beams";
 import { fixture, longWorkspaceName } from "./sample-data";
+import { getBidRows } from "./actions";
+import { bidReadKey, initialBidQuery } from "@/lib/read-keys";
+import { calendarToday } from "@/lib/calendar-period";
 import "@/app/globals.css";
+const parameters = new URLSearchParams(location.search);
+const seedQuery = initialBidQuery(parameters.get("review") === "pending");
+const seedMode = parameters.get("review") === "pending" ? "all" : "today";
+const bidSeed = parameters.has("bid-seed")
+  ? {
+      key: bidReadKey(
+        fixture,
+        seedMode,
+        "",
+        "",
+        false,
+        undefined,
+        seedQuery,
+        calendarToday(),
+      ),
+      result: parameters.has("seed-error")
+        ? { error: "Seed results unavailable" }
+        : await getBidRows(seedMode, "", "", false, undefined, seedQuery),
+    }
+  : undefined;
+if (bidSeed) document.documentElement.dataset.bidListReads = "0";
+window.addEventListener("fixture-change-bid", (event) => {
+  const change = (
+    event as CustomEvent<{
+      id: string;
+      patch: Partial<(typeof fixture.bids)[number]>;
+    }>
+  ).detail;
+  fixture.bids = fixture.bids.map((bid) =>
+    bid.id === change.id ? { ...bid, ...change.patch } : bid,
+  );
+});
 if (new URLSearchParams(window.location.search).has("screenshot-sizes")) {
   window.addEventListener("fixture-screenshot-change", (event) => {
     const change = (event as CustomEvent<{ id: string; bytes: number }>).detail;
-    fixture.bids = fixture.bids.map((bid) => bid.id === change.id ? { ...bid, screenshot_size_bytes: change.bytes, version: bid.version + 1 } : bid);
+    fixture.bids = fixture.bids.map((bid) =>
+      bid.id === change.id
+        ? {
+            ...bid,
+            screenshot_size_bytes: change.bytes,
+            version: bid.version + 1,
+          }
+        : bid,
+    );
   });
 }
 const pages: Record<string, React.ReactNode> = {
+  "/auth/login": (
+    <div className="mx-auto max-w-sm">
+      <div className="pointer-events-none relative h-12">
+        <BackgroundBeams className="hidden lg:block" />
+      </div>
+      <h1 className="mb-5 text-2xl">Sign in</h1>
+      <AuthForm mode="login" />
+    </div>
+  ),
   "/dashboard": <Dashboard data={fixture} />,
-  "/bids": <BidWorkspace data={fixture} />,
+  "/bids": <BidWorkspace data={fixture} initial={bidSeed} />,
   "/switch-account": <ChangingAccountBids />,
   "/scoped-admin": (
     <BidWorkspace
@@ -33,7 +87,13 @@ const pages: Record<string, React.ReactNode> = {
   "/resumes": <ResumeLibrary data={fixture} />,
   "/profiles": <CandidateProfileLibrary data={fixture} />,
   "/users": <People data={fixture} />,
-  "/admin-notifications": <Notifications data={{ ...fixture, profile: { ...fixture.profile, role: "admin" } }} initialInbox={[]} initialMessages={[]} />,
+  "/admin-notifications": (
+    <Notifications
+      data={{ ...fixture, profile: { ...fixture.profile, role: "admin" } }}
+      initialInbox={[]}
+      initialMessages={[]}
+    />
+  ),
   "/admin-users": (
     <People
       data={{
@@ -83,14 +143,19 @@ const pages: Record<string, React.ReactNode> = {
   ),
   "/earnings": <Earnings />,
   "/settings": <Settings data={fixture} />,
-  "/notifications": <Notifications data={fixture} initialInbox={[]} initialMessages={[]} />,
+  "/notifications": (
+    <Notifications data={fixture} initialInbox={[]} initialMessages={[]} />
+  ),
   "/interviews": <InterviewReport />,
 };
 function ChangingAccountBids() {
   const [data, setData] = React.useState(fixture);
   React.useEffect(() => {
     const change = () => {
-      fixture.profile = { ...fixture.profiles.find((profile) => profile.id === "bidder-0")!, role: "bidder" };
+      fixture.profile = {
+        ...fixture.profiles.find((profile) => profile.id === "bidder-0")!,
+        role: "bidder",
+      };
       setData({ ...fixture });
     };
     window.addEventListener("fixture-change-account", change);
@@ -100,7 +165,17 @@ function ChangingAccountBids() {
 }
 createRoot(document.getElementById("root")!).render(
   <Providers>
-    <Shell profile={fixture.profile} notificationWorkspaces={fixture.workspaces} workspace={new URLSearchParams(window.location.search).has("long-workspace") ? longWorkspaceName : new URLSearchParams(window.location.search).has("no-workspace") ? "" : "Northstar Studio"}>
+    <Shell
+      profile={fixture.profile}
+      notificationWorkspaces={fixture.workspaces}
+      workspace={
+        new URLSearchParams(window.location.search).has("long-workspace")
+          ? longWorkspaceName
+          : new URLSearchParams(window.location.search).has("no-workspace")
+            ? ""
+            : "Northstar Studio"
+      }
+    >
       {pages[window.location.pathname] ?? pages["/dashboard"]}
     </Shell>
   </Providers>,
