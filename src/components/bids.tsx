@@ -1261,6 +1261,7 @@ function BidWorkspaceContent({
               <AppliedIpLocationCell
                 key={row.original.evidence_file_id ?? "no-screenshot"}
                 fileId={row.original.evidence_file_id}
+                actorScope={actorReadScope(data)}
                 role={data.profile.role}
                 disabled={isEditing || pending}
               />

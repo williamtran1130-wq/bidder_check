@@ -42,6 +42,7 @@ const operations = new Set([
   "bids",
   "history",
   "files",
+  "upload-contexts",
   "purge",
   "purges",
   "dashboard",
@@ -103,6 +104,11 @@ export async function handleRead(
       case "files":
         result = await reads.getFileUrls(
           z.array(z.string()).max(100).parse(input),
+        );
+        break;
+      case "upload-contexts":
+        result = await reads.getScreenshotUploadContexts(
+          z.array(z.uuid()).max(100).parse(input),
         );
         break;
       case "purge":

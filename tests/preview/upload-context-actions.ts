@@ -30,3 +30,25 @@ export async function getScreenshotUploadHistory(bidId: string, cursor?: UploadC
   if (cursor) return { data: { items: [{ ...first, id: "50000000-0000-4000-8000-000000000003", uploadedAt: "2026-10-10T16:30:00Z" }], nextCursor: null } };
   return { data: { items: [first, deleted], nextCursor: params.has("upload-context-pages") ? { uploadedAt: deleted.uploadedAt, id: deleted.id } : null } };
 }
+document.documentElement.setAttribute("data-upload-context-batches", "0");
+let managerChanged = false;
+window.addEventListener("fixture-change-manager", () => { managerChanged = true; });
+export async function getScreenshotUploadContexts(ids: string[]) {
+  const n = increment("data-upload-context-batches");
+  const params = new URLSearchParams(location.search);
+  const replacedActor = managerChanged;
+  document.documentElement.dataset.uploadContextBatchIds = JSON.stringify(ids);
+  if (params.has("upload-context-delay") && n === 1)
+    await new Promise<void>(resolve => window.addEventListener("fixture-release-upload-context", () => resolve(), { once: true }));
+  if (params.get("role") === "bidder") return { error: "Access denied" };
+  return { data: ids.map(id => {
+    if (params.has("upload-context-error") || (params.has("upload-context-recover") && n === 1))
+      return { id, error: "Upload details could not be loaded. Please retry." };
+    if (params.has("upload-context-old")) return { id, data: null };
+    const data = record(id);
+    if (replacedActor || id === "replacement-screenshot") data.ip = "203.0.113.20";
+    if (params.has("upload-context-ipv6")) Object.assign(data, { ip: "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff", city: "São Paulo", region: "SP", country: "BR" });
+    if (params.has("upload-context-unavailable")) Object.assign(data, { ip: null, city: null, region: null, country: null, source: "unavailable", status: "unavailable" });
+    return { id, data };
+  }) };
+}

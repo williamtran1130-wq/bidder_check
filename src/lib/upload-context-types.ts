@@ -19,3 +19,4 @@ export type UploadContext = {
 };
 export type UploadHistoryPage = { items: UploadContext[]; nextCursor: UploadContextCursor | null };
 export type CapturedUploadContext = Pick<UploadContext, "ip" | "city" | "region" | "country" | "source" | "status">;
+export type UploadContextOutcome = { id: string; data?: UploadContext | null; error?: string };

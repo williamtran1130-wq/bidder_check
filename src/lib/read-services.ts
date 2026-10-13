@@ -16,6 +16,7 @@ import { getManagerFinancialValues } from "./financial-data";
 import type { Database } from "./database.types";
 import type { PurgeStatus } from "./bulk-types";
 import type { FileUrlOutcome } from "./read-types";
+import type { UploadContext, UploadContextOutcome } from "./upload-context-types";
 async function perform<T>(
   run: () => Promise<T>,
   _mutate = false,
@@ -179,6 +180,51 @@ export function createReadServices(
       if (error) throw new Error(error.message);
       return data;
     }, false);
+  }
+
+  async function getScreenshotUploadContexts(
+    input: string[],
+  ): Promise<{ data?: UploadContextOutcome[]; error?: string }> {
+    return perform(async () => {
+      const ids = [...new Set(z.array(z.uuid()).max(100).parse(input))];
+      const { supabase, profile } = await getReadContext();
+      if (
+        !["admin", "client"].includes(profile.role) ||
+        profile.archived ||
+        profile.approval_status !== "approved"
+      )
+        throw new Error("Access denied");
+
+      const outcomes: UploadContextOutcome[] = new Array(ids.length);
+      let next = 0;
+      // Share one live actor check without fanning a page out into 100 RPCs at once.
+      // Each caller-JWT RPC still enforces the existing per-file manager boundary.
+      await Promise.all(
+        Array.from({ length: Math.min(4, ids.length) }, async () => {
+          while (next < ids.length) {
+            const index = next++;
+            const id = ids[index];
+            try {
+              const { data, error } = await supabase.rpc(
+                "manager_screenshot_upload_context",
+                { p_file: id },
+              );
+              outcomes[index] = error
+                ? { id, error: "Upload details could not be loaded. Please retry." }
+                : { id, data: data as UploadContext | null };
+            } catch (error) {
+              unstable_rethrow(error);
+              if (error instanceof AuthorizationError) throw error;
+              outcomes[index] = {
+                id,
+                error: "Upload details could not be loaded. Please retry.",
+              };
+            }
+          }
+        }),
+      );
+      return outcomes;
+    });
   }
 
   async function getBidRows(
@@ -348,6 +394,7 @@ export function createReadServices(
     getClientMessages,
     getFileUrl,
     getFileUrls,
+    getScreenshotUploadContexts,
     getBidHistory,
     getBidRows,
     getPurgeStatus,
@@ -360,6 +407,7 @@ export const {
   getClientMessages,
   getFileUrl,
   getFileUrls,
+  getScreenshotUploadContexts,
   getBidHistory,
   getBidRows,
   getPurgeStatus,

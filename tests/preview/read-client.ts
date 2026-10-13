@@ -20,6 +20,7 @@ import { getFileUrl } from "./actions";
 import { recentBidPurges as fixtureRecentBidPurges } from "./actions";
 import { recentBidPurges as readRecentBidPurges } from "../../src/lib/read-client";
 import type { FileUrlOutcome } from "@/lib/read-types";
+export { getScreenshotUploadContexts } from "./upload-context-actions";
 export const recentBidPurges = () =>
   new URLSearchParams(location.search).has("purge-read-transport")
     ? readRecentBidPurges()

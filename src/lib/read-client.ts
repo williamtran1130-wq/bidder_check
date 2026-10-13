@@ -16,7 +16,10 @@ async function request<T>(
 ): Promise<T> {
   const payload = JSON.stringify(input);
   const query = `/api/read/${operation}?q=${encodeURIComponent(payload)}`;
-  const post = operation === "files" || query.length > 1800;
+  const post =
+    operation === "files" ||
+    operation === "upload-contexts" ||
+    query.length > 1800;
   try {
     const response = await fetch(post ? `/api/read/${operation}` : query, {
       method: post ? "POST" : "GET",
@@ -48,6 +51,8 @@ export const getBidHistory: typeof reads.getBidHistory = (id) =>
   request("history", id);
 export const getFileUrls: typeof reads.getFileUrls = (ids) =>
   request("files", ids);
+export const getScreenshotUploadContexts: typeof reads.getScreenshotUploadContexts = (ids) =>
+  request("upload-contexts", ids);
 export const getFileUrl: typeof reads.getFileUrl = async (id) => {
   const result = await getFileUrls([id]);
   const file = result.data?.[0];

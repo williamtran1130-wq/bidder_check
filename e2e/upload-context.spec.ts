@@ -15,7 +15,7 @@ async function previewScreenshot(page: Page, mobile: boolean) {
   if (mobile) await trigger.tap(); else { await trigger.focus(); await page.keyboard.press("Enter"); }
   return trigger;
 }
-test("loads private upload details only on preview, with keyboard/mobile access and copyable IP", async ({ page }, info) => {
+test("loads full private upload details on preview, with keyboard/mobile access and copyable IP", async ({ page }, info) => {
   await open(page);
   expect(await page.locator("html").getAttribute("data-upload-context-reads") ?? "0").toBe("0");
   expect(await page.locator("html").getAttribute("data-upload-history-reads") ?? "0").toBe("0");
@@ -46,7 +46,7 @@ test("distinguishes historical not-recorded, new unavailable metadata, and retry
   const unavailable = page.getByRole("region", { name: "Upload details", exact: true });
   await expect(unavailable).toContainText("Unavailable"); await expect(unavailable.getByRole("button", { name: "Copy IP address" })).toHaveCount(0);
   await open(page, "upload-context-recover"); await previewScreenshot(page, info.project.name === "mobile");
-  await expect(page.getByRole("alert")).toContainText("could not be loaded");
+  await expect(page.getByRole("region", { name: "Upload details", exact: true }).getByRole("alert")).toContainText("could not be loaded");
   await page.getByRole("button", { name: "Retry upload details" }).click();
   await expect(page.getByRole("region", { name: "Upload details", exact: true })).toContainText("Chicago, IL, US");
 });
