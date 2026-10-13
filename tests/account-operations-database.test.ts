@@ -633,3 +633,330 @@ it("probes only the authenticated actor's request and confirms rejected creates 
     await call("abandon_account_operation", [existing.requestId]);
   }
 });
+
+it.each([
+  ["ready", false],
+  ["ready", true],
+  ["skipped", false],
+  ["skipped", true],
+  ["dispatched", false],
+  ["dispatched", true],
+  ["accepted", false],
+  ["accepted", true],
+] as const)(
+  "rejects an unmarked password transaction for a %s intent (retained metadata: %s)",
+  async (step, retainedMetadata) => {
+    await db.exec("reset role");
+    await db.query(
+      "update auth.users set encrypted_password='before-guard-test' where id=$1",
+      [owner],
+    );
+    const op =
+      step === "skipped"
+        ? await begin("update_client", {
+            target: owner,
+            name: "Owner",
+            email: null,
+            archived: false,
+          })
+        : await begin("reset_password", { target: owner });
+    try {
+      if (step === "dispatched" || step === "accepted") {
+        const sent = await dispatch(op.requestId);
+        if (step === "accepted") await accept(sent, false);
+      }
+      await db.exec("reset role; begin");
+      await db.query(
+        retainedMetadata
+          ? "update auth.users set encrypted_password='unmarked-guard-test',raw_app_meta_data=raw_app_meta_data||'{\"unrelated\":true}' where id=$1"
+          : "update auth.users set encrypted_password='unmarked-guard-test' where id=$1",
+        [owner],
+      );
+      await expect(db.exec("commit")).rejects.toMatchObject({ code: "PBA01" });
+      await db.exec("reset role");
+      expect(
+        (
+          await db.query<{ unchanged: boolean }>(
+            "select encrypted_password='before-guard-test' unchanged from auth.users where id=$1",
+            [owner],
+          )
+        ).rows[0].unchanged,
+      ).toBe(true);
+      await actor();
+      const current = await call("account_operation_status", [op.requestId]);
+      expect(current.authStep).toBe(step);
+      await expect(
+        call("record_account_event", [owner, "password_reset"]),
+      ).rejects.toMatchObject({ code: "PBA01" });
+    } finally {
+      await db.exec("rollback");
+      await actor();
+      await call("abandon_account_operation", [op.requestId]);
+    }
+  },
+);
+
+it.each(["password-first", "marker-first"])(
+  "accepts multiple password changes only with a current reset receipt in the same transaction (%s)",
+  async (order) => {
+    const op = await begin("reset_password", { target: owner });
+    const sent = await dispatch(op.requestId);
+    try {
+      await db.exec("reset role; begin");
+      if (order === "marker-first") await accept(sent, false);
+      await db.query(
+        "update auth.users set encrypted_password='first-guard-test' where id=$1",
+        [owner],
+      );
+      await db.query(
+        "update auth.users set encrypted_password='final-guard-test' where id=$1",
+        [owner],
+      );
+      if (order === "password-first") await accept(sent, false);
+      await db.exec("commit");
+      expect(
+        (
+          await db.query<{ changed: boolean }>(
+            "select encrypted_password='final-guard-test' changed from auth.users where id=$1",
+            [owner],
+          )
+        ).rows[0].changed,
+      ).toBe(true);
+      await actor();
+      expect(
+        (await call("finish_account_operation", [op.requestId])).status,
+      ).toBe("completed");
+    } finally {
+      await db.exec("rollback");
+      await actor();
+      await call("abandon_account_operation", [op.requestId]);
+    }
+  },
+);
+
+it("does not let an accepted email-only receipt authorize a password mutation", async () => {
+  await db.exec("reset role");
+  await db.query(
+    "update auth.users set encrypted_password='email-before-guard-test' where id=$1",
+    [owner],
+  );
+  const before = (
+    await db.query<{ email: string }>(
+      "select email from auth.users where id=$1",
+      [owner],
+    )
+  ).rows[0].email;
+  const op = await begin("update_client", {
+    target: owner,
+    name: "Owner",
+    email: "email-only-guard@example.test",
+    archived: false,
+  });
+  const sent = await dispatch(op.requestId);
+  try {
+    await db.exec("reset role; begin");
+    await db.query(
+      "update auth.users set email=$2,encrypted_password='email-after-guard-test' where id=$1",
+      [owner, "email-only-guard@example.test"],
+    );
+    await accept(sent, false);
+    await expect(db.exec("commit")).rejects.toMatchObject({ code: "PBA01" });
+    await db.exec("reset role");
+    expect(
+      (
+        await db.query<{ unchanged: boolean }>(
+          "select encrypted_password='email-before-guard-test' and email=$2 unchanged from auth.users where id=$1",
+          [owner, before],
+        )
+      ).rows[0].unchanged,
+    ).toBe(true);
+    await actor();
+    expect(
+      (await call("account_operation_status", [op.requestId])).authStep,
+    ).toBe("dispatched");
+  } finally {
+    await db.exec("rollback");
+    await actor();
+    await call("abandon_account_operation", [op.requestId]);
+  }
+});
+
+it("preserves no-op passwords and unrelated Auth updates while an intent is pending", async () => {
+  const op = await begin("reset_password", { target: owner });
+  try {
+    await dispatch(op.requestId);
+    await db.exec("reset role");
+    await db.query(
+      'update auth.users set encrypted_password=encrypted_password,raw_app_meta_data=raw_app_meta_data||\'{"ordinary":true}\',raw_user_meta_data=\'{"display_name":"ordinary update"}\',email_confirmed_at=now() where id=$1',
+      [owner],
+    );
+    expect(
+      (
+        await db.query<{ ordinary: boolean }>(
+          "select (raw_app_meta_data->>'ordinary')::boolean ordinary from auth.users where id=$1",
+          [owner],
+        )
+      ).rows[0].ordinary,
+    ).toBe(true);
+    await actor();
+    expect(
+      (await call("account_operation_status", [op.requestId])).authStep,
+    ).toBe("dispatched");
+  } finally {
+    await actor();
+    await call("abandon_account_operation", [op.requestId]);
+  }
+});
+
+it.each(["completed", "abandoned"])(
+  "allows an ordinary password update with a retained %s marker and no unresolved intent",
+  async (terminal) => {
+    const op = await begin("reset_password", { target: owner });
+    const sent = await dispatch(op.requestId);
+    await accept(sent, false);
+    await actor();
+    await call(
+      terminal === "completed"
+        ? "finish_account_operation"
+        : "abandon_account_operation",
+      [op.requestId],
+    );
+    await db.exec("reset role");
+    await db.query(
+      "update auth.users set encrypted_password=$2,raw_app_meta_data=raw_app_meta_data||'{\"ordinary\":true}' where id=$1",
+      [owner, `ordinary-${terminal}-guard-test`],
+    );
+    expect(
+      (
+        await db.query<{ changed: boolean }>(
+          "select encrypted_password=$2 changed from auth.users where id=$1",
+          [owner, `ordinary-${terminal}-guard-test`],
+        )
+      ).rows[0].changed,
+    ).toBe(true);
+  },
+);
+
+it.each(["create_client", "create_bidder"])(
+  "allows deferred password initialization for an accepted %s transaction",
+  async (kind) => {
+    const op = await begin(kind, {
+      name: "Password guard creation",
+      email: `${kind}-guard@example.test`,
+      ...(kind === "create_bidder" ? { workspace, rate: 123 } : {}),
+    });
+    const sent = await dispatch(op.requestId);
+    try {
+      await db.exec("reset role; begin");
+      await db.query("insert into auth.users(id,email) values($1,$2)", [
+        sent.targetId,
+        (sent.payload as { email: string }).email,
+      ]);
+      await db.query(
+        "update auth.users set encrypted_password='creation-guard-test' where id=$1",
+        [sent.targetId],
+      );
+      await accept(sent, false);
+      await db.exec("commit");
+      await actor();
+      expect(
+        (await call("finish_account_operation", [op.requestId])).status,
+      ).toBe("completed");
+    } finally {
+      await db.exec("rollback");
+      await actor();
+      await call("abandon_account_operation", [op.requestId]);
+    }
+  },
+);
+
+it("still rejects unmarked creation at the existing deferred provisioning guard", async () => {
+  const op = await begin("create_client", {
+    name: "Unmarked creation",
+    email: "unmarked-creation-guard@example.test",
+  });
+  try {
+    await db.exec("reset role; begin");
+    await db.query(
+      "insert into auth.users(id,email,encrypted_password) values($1,$2,'unmarked-creation-guard-test')",
+      [op.targetId, (op.payload as { email: string }).email],
+    );
+    await expect(db.exec("commit")).rejects.toMatchObject({ code: "PBA01" });
+    await db.exec("reset role");
+    expect(
+      (
+        await db.query<{ absent: boolean }>(
+          "select not exists(select 1 from auth.users where id=$1) absent",
+          [op.targetId],
+        )
+      ).rows[0].absent,
+    ).toBe(true);
+  } finally {
+    await db.exec("rollback");
+    await actor();
+    await call("abandon_account_operation", [op.requestId]);
+  }
+});
+
+it("does not expose the password guard as a client-callable helper", async () => {
+  await db.exec("reset role");
+  expect(
+    (
+      await db.query<{ allowed: boolean }>(
+        "select has_function_privilege('authenticated','public.guard_account_auth_password_write()','EXECUTE') or has_function_privilege('anon','public.guard_account_auth_password_write()','EXECUTE') or has_function_privilege('service_role','public.guard_account_auth_password_write()','EXECUTE') allowed",
+      )
+    ).rows[0].allowed,
+  ).toBe(false);
+});
+
+it("allows an ordinary no-intent password change without a managed marker", async () => {
+  await db.exec("reset role");
+  await db.query(
+    "update auth.users set raw_app_meta_data=raw_app_meta_data-'managed_account_operation',encrypted_password='no-intent-guard-test' where id=$1",
+    [owner],
+  );
+  expect(
+    (
+      await db.query<{ changed: boolean }>(
+        "select encrypted_password='no-intent-guard-test' changed from auth.users where id=$1",
+        [owner],
+      )
+    ).rows[0].changed,
+  ).toBe(true);
+});
+
+it("rolls back password changes when current actor permission rejects the marker", async () => {
+  const op = await begin("reset_password", { target: owner });
+  const sent = await dispatch(op.requestId);
+  await db.exec("reset role");
+  await db.query("update public.profiles set archived=true where id=$1", [
+    admin,
+  ]);
+  try {
+    await db.exec("begin");
+    await db.query(
+      "update auth.users set encrypted_password='revoked-guard-test' where id=$1",
+      [owner],
+    );
+    await expect(accept(sent, false)).rejects.toThrow(/Access denied/);
+    await db.exec("rollback; reset role");
+    expect(
+      (
+        await db.query<{ unchanged: boolean }>(
+          "select encrypted_password is distinct from 'revoked-guard-test' unchanged from auth.users where id=$1",
+          [owner],
+        )
+      ).rows[0].unchanged,
+    ).toBe(true);
+  } finally {
+    await db.exec("rollback; reset role");
+    await db.query("update public.profiles set archived=false where id=$1", [
+      admin,
+    ]);
+    await actor();
+    expect(
+      (await call("account_operation_status", [op.requestId])).authStep,
+    ).toBe("dispatched");
+    await call("abandon_account_operation", [op.requestId]);
+  }
+});
