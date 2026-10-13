@@ -2,6 +2,7 @@
 // Explicit auth exception: generate a no-email link for EXISTING accounts,
 // verify an isolated session, and revoke only that generated local session.
 // node --env-file=.env.local scripts/reporting-production-smoke.mjs --production-read-only
+// Add --private-review after the notification/private-review migrations and application release.
 // node --env-file=.env.staging scripts/reporting-production-smoke.mjs --staging-read-only
 import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";
@@ -14,6 +15,7 @@ const productionMode = process.argv.includes("--production-read-only");
 const stagingMode = process.argv.includes("--staging-read-only");
 const checkArrangements = process.argv.includes("--arrangements");
 const checkScreenshotSizes = process.argv.includes("--screenshot-sizes");
+const checkPrivateReview = process.argv.includes("--private-review");
 const expectedUrl = stagingMode
   ? "https://kdmvludtvhuuewmhurpw.supabase.co"
   : "https://aizorlyfggwbewetnwqm.supabase.co";
@@ -926,7 +928,8 @@ async function ui(role, session, sample) {
 async function main() {
   if (
     productionMode === stagingMode ||
-    process.env.NEXT_PUBLIC_SUPABASE_URL !== expectedUrl
+    process.env.NEXT_PUBLIC_SUPABASE_URL !== expectedUrl ||
+    (checkPrivateReview && !productionMode)
   )
     throw new Error("Requires exactly one hosted read-only mode and its exact Supabase URL");
   if (
@@ -939,10 +942,12 @@ async function main() {
   });
   step = "choose-existing-actors";
   const actors = await chooseActors(service);
+  const actorSessions = {};
   browser = await chromium.launch();
   for (const role of ["manager", "bidder"]) {
     step = `${role}:no-email-session`;
     const session = await authenticate(service, actors[role]);
+    actorSessions[role] = session;
     await reports(role, session.client, actors.sample.workspace_id);
     await boundary(role, session.client, actors.sample);
     if (checkScreenshotSizes) {
@@ -950,6 +955,21 @@ async function main() {
       await screenshotSizes(role, session.client, actors.sample, session.screenshotOracle);
     }
     await ui(role, session, actors.sample);
+  }
+  let privateReview;
+  if (checkPrivateReview) {
+    step = "production:private-review";
+    const { runPrivateReviewReadOnlySmoke } = await import("./private-review-production-smoke.mjs");
+    const managerSession = ok(await actorSessions.manager.client.auth.getSession()).session;
+    const bidderSession = ok(await actorSessions.bidder.client.auth.getSession()).session;
+    assert.ok(managerSession && bidderSession);
+    privateReview = await runPrivateReviewReadOnlySmoke({
+      productionReadOnly: true,
+      target: expectedUrl,
+      publishableKey: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+      managerAccessToken: managerSession.access_token,
+      bidderAccessToken: bidderSession.access_token,
+    });
   }
   console.log(
     JSON.stringify(
@@ -959,6 +979,7 @@ async function main() {
         customerDataReadOnly: true,
         existingRolesChecked: 2,
         checks: results,
+        privateReview,
       },
       null,
       2,
@@ -983,6 +1004,11 @@ try {
   process.exitCode = 1;
 } finally {
   if (browser) await browser.close().catch(() => {});
-  for (const session of sessions)
-    await session.auth.signOut({ scope: "local" }).catch(() => {});
+  let sessionsRevoked = 0;
+  for (const session of sessions) {
+    const result = await session.auth.signOut({ scope: "local" }).catch(() => ({ error: true }));
+    if (!result.error) sessionsRevoked++;
+  }
+  console.log(JSON.stringify({ authSessionCleanup: { attempted: sessions.length, succeeded: sessionsRevoked, failed: sessions.length - sessionsRevoked } }));
+  if (sessionsRevoked !== sessions.length) process.exitCode = 1;
 }
