@@ -1,5 +1,8 @@
 "use server";
 import { z } from "zod";
+import { unstable_rethrow } from "next/navigation";
+import { centralWallTimeToISO } from "@/lib/central-time";
+import { ActionValidationError } from "@/lib/action-errors";
 import { getContext } from "@/lib/auth";
 import type { Database } from "@/lib/database.types";
 import type {
@@ -19,7 +22,13 @@ const scheduleSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("now") }),
   z.object({
     kind: z.literal("once"),
-    scheduled_local: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/),
+    scheduled_local: z.string().superRefine((value, context) => {
+      try { centralWallTimeToISO(value); }
+      catch (error) {
+        if (!(error instanceof ActionValidationError)) throw error;
+        context.addIssue({ code: "custom", message: error.message });
+      }
+    }),
   }),
   z.object({ kind: z.literal("daily"), local_time: time }),
   z.object({
@@ -54,6 +63,7 @@ async function perform<T>(
   try {
     return { data: await run() };
   } catch (error) {
+    unstable_rethrow(error);
     return {
       error:
         error instanceof z.ZodError
@@ -128,7 +138,7 @@ export async function getNotificationPage(
         p_workspace: query.workspace_id
           ? z.uuid().parse(query.workspace_id)
           : null,
-        p_status: query.status ?? null,
+        p_status: query.status === undefined ? null : z.string().parse(query.status),
         p_cursor: query.cursor
           ? z
               .object({

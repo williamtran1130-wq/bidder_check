@@ -1,4 +1,5 @@
 import "server-only";
+import { unstable_rethrow } from "next/navigation";
 import { z } from "zod";
 import { getContext } from "./auth";
 import { PeriodValidationError, resolveCalendarPeriod } from "./calendar-period";
@@ -40,6 +41,7 @@ export async function readReport<T>(operation: ReportOperation, input: ReportQue
     console.info("Report query", { operation, period, filterShape, group: grouping, durationMs: Math.round(performance.now() - started), outcome: "success" });
     return { data: data as unknown as T };
   } catch (error) {
+    unstable_rethrow(error);
     if (error instanceof PeriodValidationError || error instanceof z.ZodError)
       return { error: "Choose a valid period and report filters.", code: "validation" };
     console.info("Report query", { operation, period, filterShape, durationMs: Math.round(performance.now() - started), outcome: "failed", errorCode });

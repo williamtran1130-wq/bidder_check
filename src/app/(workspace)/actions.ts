@@ -11,6 +11,10 @@ import type { Database } from "@/lib/database.types";
 import { BID_LIST_RPC, type BidListLoadResult, type BidListQuery, type BidListResult } from "@/lib/bid-list";
 import { createHash } from "node:crypto";
 import { fromZonedTime } from "date-fns-tz";
+import { unstable_rethrow } from "next/navigation";
+import { actionErrorMessage, ActionValidationError } from "@/lib/action-errors";
+import { editableBidField, workArrangement, jobStatus, importDate, importRows } from "@/lib/action-validation";
+import { centralWallTimeToISO } from "@/lib/central-time";
 import { z } from "zod";
 import { validateScreenshotBytes } from "@/lib/image-validation";
 import { headers } from "next/headers";
@@ -45,15 +49,8 @@ async function perform<T>(
     void mutate;
     return { data };
   } catch (e) {
-    const message =
-      e instanceof Error
-        ? e.message
-        : "Something went wrong. Please try again.";
-    return {
-      error: message.includes("duplicate key")
-        ? "This record already exists. Check the resume identifier or job URL."
-        : message,
-    };
+    unstable_rethrow(e);
+    return { error: actionErrorMessage(e) };
   }
 }
 async function rpc<N extends keyof Database["public"]["Functions"]>(
@@ -77,15 +74,16 @@ export async function saveBid(form: FormData): Promise<Result<SaveBidOutcome>> {
     const saved = await rpc("save_bid", {
       p_id: bidId,
       p_resume: z.uuid().parse(text(form, "resume_id")),
-      p_company: text(form, "company"),
-      p_role: text(form, "role_name"),
+      p_company: z.string().min(1).max(200).parse(text(form, "company")),
+      p_role: z.string().min(1).max(200).parse(text(form, "role_name")),
       p_url: url,
       p_source: text(form, "source"),
-      p_arrangement: text(form, "arrangement"),
-      p_status: text(form, "job_status"),
+      p_arrangement: workArrangement.parse(text(form, "arrangement")),
+      p_status: jobStatus.parse(text(form, "job_status")),
     });
     return { status: "saved", id: saved };
     } catch (error) {
+      unstable_rethrow(error);
       if (!bidId && error && typeof error === "object" && "code" in error && error.code === "PBC01")
         return { status: "blocked" };
       throw error;
@@ -156,8 +154,8 @@ export async function setBidInterviewAction(input: {
   reason: string;
 }) {
   return perform(async () => {
-    const localTime = z.string().max(16).parse(input.localTime).trim();
-    const instant = localTime ? fromZonedTime(localTime, "America/Chicago").toISOString() : null;
+    const localTime = z.string().parse(input.localTime).trim();
+    const instant = localTime ? centralWallTimeToISO(localTime) : null;
     return rpc("set_bid_interview", {
       p_bid: z.uuid().parse(input.bid),
       p_scheduled: z.boolean().parse(input.scheduled),
@@ -326,7 +324,7 @@ export async function saveResumeAssignment(input: {
     if (!validated.success) {
       const issue = validated.error.issues[0];
       const label = ({ id: "Assignment", profileId: "Candidate profile", bidderId: "Bidder", email: "Email", phone: "Phone" } as Record<string, string>)[String(issue.path[0])] ?? "Assignment";
-      throw new Error(`${label}: ${issue.message}`);
+      throw new ActionValidationError(`${label}: ${issue.message}`);
     }
     const rate = moneyToCents(validated.data.rate);
     const assignment = await rpc("save_resume_assignment", {
@@ -363,7 +361,7 @@ export async function archiveResumeAssignment(
 export async function archiveResume(resumeId: string, archived: boolean) {
   return perform(
     async () =>
-      await rpc("archive_resume", { p_id: resumeId, p_archived: archived }),
+      await rpc("archive_resume", { p_id: z.uuid().parse(resumeId), p_archived: z.boolean().parse(archived) }),
   );
 }
 async function changeManagedEmail(form: FormData, role: "client" | "bidder") {
@@ -420,9 +418,9 @@ export async function reviewClient(
 ) {
   return perform(async () =>
     rpc("review_client", {
-      p_client: account,
-      p_status: status,
-      p_reason: reason,
+      p_client: z.uuid().parse(account),
+      p_status: z.enum(["approved", "rejected"]).parse(status),
+      p_reason: z.string().parse(reason),
     }),
   );
 }
@@ -474,15 +472,17 @@ export async function createClientAccount(form: FormData) {
 }
 export async function trashBid(bid: string, deleted: boolean): Promise<{ data?: undefined; error?: string; issues?: BidRestoreIssue[] }> {
   try {
-    await rpc("trash_bid", { p_bid: z.uuid().parse(bid), p_deleted: deleted });
+    await rpc("trash_bid", { p_bid: z.uuid().parse(bid), p_deleted: z.boolean().parse(deleted) });
     return { data: undefined };
   } catch (error) {
+    unstable_rethrow(error);
     const issues = restorationIssues(error, bid);
-    return { error: issues?.map((issue) => issue.message).join(" ") ?? (error instanceof Error ? error.message : "Could not update this bid."), ...(issues ? { issues } : {}) };
+    return { error: issues?.map((issue) => issue.message).join(" ") ?? actionErrorMessage(error, "Could not update this bid. Please retry."), ...(issues ? { issues } : {}) };
   }
 }
 
 function restorationIssues(error: unknown, fallbackId: string): BidRestoreIssue[] | undefined {
+  if ((error as { message?: unknown } | null)?.message !== "Restoration blocked") return undefined;
   const details = (error as { details?: unknown } | null)?.details;
   if (typeof details !== "string") return undefined;
   try {
@@ -533,10 +533,10 @@ export async function unapplyBid(bidId: string, reason: string) {
   return perform(
     async () =>
       await rpc("set_applied", {
-        p_bid: bidId,
+        p_bid: z.uuid().parse(bidId),
         p_applied: false,
         p_file: null,
-        p_reason: reason,
+        p_reason: z.string().refine((value) => value.replace(/^ +| +$/g, "").length > 0).parse(reason),
       }),
   );
 }
@@ -559,6 +559,10 @@ export async function prepareUpload(
   size: number,
 ) {
   return perform(async () => {
+    z.enum(["resume", "screenshot"]).parse(kind);
+    z.uuid().parse(target);
+    z.number().int().parse(size);
+    z.string().parse(name);
     validateUpload(kind, mime, size);
     adminClient();
     const { supabase } = await getContext();
@@ -598,6 +602,7 @@ function matchesSignature(bytes: Uint8Array, mime: string) {
 }
 export async function finalizeUpload(fileId: string) {
   return perform(async () => {
+    z.uuid().parse(fileId);
     const { supabase, profile } = await getContext();
     const { data: file, error } = await supabase
       .from("files")
@@ -639,6 +644,7 @@ export async function finalizeUpload(fileId: string) {
 }
 export async function getFileUrl(fileId: string) {
   return perform(async () => {
+    z.uuid().parse(fileId);
     const { supabase } = await getContext();
     const { data: file, error } = await supabase
       .from("files")
@@ -656,6 +662,7 @@ export async function getFileUrl(fileId: string) {
 }
 export async function getBidHistory(bidId: string) {
   return perform(async () => {
+    z.uuid().parse(bidId);
     const { supabase } = await getContext();
     const { data, error } = await supabase
       .from("bid_events")
@@ -715,8 +722,8 @@ export async function getBidRows(
         search: z.string().max(500).parse(query.search),
         status: z.enum(["all", "applied", "unapplied", "pending_review"]).parse(query.status),
         arrangement: z.string().max(20).parse(query.arrangement),
-        resume: z.string().max(64).parse(query.resume),
-        bidder: z.string().max(64).parse(query.bidder),
+        resume: z.union([z.literal(""), z.literal("all"), z.uuid()]).parse(query.resume),
+        bidder: z.union([z.literal(""), z.literal("all"), z.uuid()]).parse(query.bidder),
         source: z.string().max(200).parse(query.source),
         job: z.string().max(20).parse(query.job),
         columnFilters: filters,
@@ -755,7 +762,8 @@ export async function getBidRows(
       outcome: "success",
     });
     return { data: result };
-  } catch {
+  } catch (error) {
+    unstable_rethrow(error);
     console.info("Bid list query", {
       ...diagnostic,
       durationMs: Math.round(performance.now() - startedAt),
@@ -778,10 +786,12 @@ export async function updateBidCell(
     async () =>
       (await rpc("update_bid_cell", {
         p_bid: z.uuid().parse(bid),
-        p_field: field,
+        p_field: editableBidField.parse(field),
         p_value:
           field === "url"
             ? normalizeJobUrl(value)
+            // SQL checks row versions before state-dependent value constraints,
+            // so invalid stale drafts still receive the current conflict row.
             : z.string().max(8192).parse(value),
         p_version: z.number().int().nonnegative().parse(version),
       })) as {
@@ -802,8 +812,8 @@ export async function checkBidImport(
       throw new Error("Import payload is too large");
     return (await rpc("validate_bid_import", {
       p_resume: z.uuid().parse(resume),
-      p_date: date,
-      p_rows: rows,
+      p_date: importDate.parse(date),
+      p_rows: importRows.parse(rows),
     })) as import("@/lib/sheets").ImportError[];
   }, false);
 }
@@ -819,8 +829,8 @@ export async function importBids(
       throw new Error("Import payload is too large");
     const args = {
       p_resume: z.uuid().parse(resume),
-      p_date: date,
-      p_rows: rows,
+      p_date: importDate.parse(date),
+      p_rows: importRows.parse(rows),
       p_request: z.uuid().parse(request),
     };
     const { supabase } = await getContext();
@@ -829,7 +839,7 @@ export async function importBids(
     if (error) {
       // SQL/PostgREST rejections have a definite outcome; transport failures do not.
       const definite = /^(?:[0-9A-Z]{5}|PGRST\d{3})$/.test(error.code ?? "");
-      return { error: error.message, uncertain: !definite };
+      return { error: actionErrorMessage(error, "Could not complete import. Retry the same request."), uncertain: !definite };
     }
     if (!data) return { error: "The import response was incomplete. Retry the same request.", uncertain: true };
     return { data: data as {
@@ -841,7 +851,8 @@ export async function importBids(
       resume: string;
     }, uncertain: false };
   } catch (error) {
-    return { error: error instanceof Error ? error.message : "Could not complete import.", uncertain: sent };
+    unstable_rethrow(error);
+    return { error: actionErrorMessage(error, "Could not complete import. Retry the same request."), uncertain: sent };
   }
 }
 
@@ -862,14 +873,13 @@ export async function manualApplyBidsAction(input: {
     const { profile } = await getContext();
     if (profile.role === "bidder") throw new Error("Only clients and admins can manually apply bids");
     const targets = z.array(z.object({ id: z.uuid(), version: z.number().int().nonnegative() })).min(1).max(500).parse(input.targets);
-    const localTime = z.string().min(16).max(16).parse(input.localTime);
+    const localTime = z.string().parse(input.localTime);
     const reason = z.string().trim().min(1).max(1000).parse(input.reason);
     const requestId = z.uuid().parse(input.requestId);
-    const appliedAt = fromZonedTime(localTime, "America/Chicago");
-    if (!Number.isFinite(appliedAt.getTime())) throw new Error("Choose a valid Applied time in CT");
+    const appliedAt = centralWallTimeToISO(localTime);
     return (await rpc("manual_apply_bids", {
       p_targets: targets,
-      p_applied_at: appliedAt.toISOString(),
+      p_applied_at: appliedAt,
       p_reason: reason,
       p_request: requestId,
     })) as { applied: number; unchanged: number };
@@ -902,8 +912,8 @@ export async function importReviewedBids(
       throw new Error("Import payload is too large");
     const args = {
       p_resume: z.uuid().parse(resume),
-      p_date: date,
-      p_rows: rows,
+      p_date: importDate.parse(date),
+      p_rows: importRows.parse(rows),
       p_source_rows: sourceRows.map((row) => z.number().int().positive().parse(row)),
       p_request: z.uuid().parse(request),
     };
@@ -914,12 +924,13 @@ export async function importReviewedBids(
       if (error.code === "57014")
         return { error: "The database import timed out. No bids were committed; retry this batch. If the timeout repeats, split it into smaller batches." };
       const definite = /^(?:[0-9A-Z]{5}|PGRST\d{3})$/.test(error.code ?? "");
-      return { error: error.message, uncertain: !definite };
+      return { error: actionErrorMessage(error, "Could not complete import. Retry the same request."), uncertain: !definite };
     }
     if (!data) return { error: "The import response was incomplete. Retry the same request.", uncertain: true };
     return { data: data as unknown as NonNullable<Awaited<ReturnType<typeof importReviewedBids>>["data"]> };
   } catch (error) {
-    return { error: error instanceof Error ? error.message : "Could not complete import.", uncertain: sent };
+    unstable_rethrow(error);
+    return { error: actionErrorMessage(error, "Could not complete import. Retry the same request."), uncertain: sent };
   }
 }
 
@@ -935,10 +946,11 @@ export async function bulkBidState(targets: BidTarget[], deleted: boolean): Prom
     });
     return { data: count as number };
   } catch (error) {
+    unstable_rethrow(error);
     const fallbackId = targets[0]?.id ?? "";
     const issues = !deleted ? restorationIssues(error, fallbackId) : undefined;
     return {
-      error: issues?.map((issue) => issue.message).join(" ") ?? (error instanceof Error ? error.message : "Could not update selected bids."),
+      error: issues?.map((issue) => issue.message).join(" ") ?? actionErrorMessage(error, "Could not update selected bids. Please retry."),
       ...(issues ? { issues } : {}),
     };
   }

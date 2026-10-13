@@ -1,6 +1,7 @@
 "use server";
 import { getContext } from "@/lib/auth";
 import { z } from "zod";
+import { unstable_rethrow } from "next/navigation";
 import type { UploadContext, UploadContextCursor, UploadHistoryPage } from "@/lib/upload-context-types";
 
 type ReviewResult<T> = { data?: T; error?: string };
@@ -19,7 +20,7 @@ export async function getScreenshotUploadContext(fileId: string): Promise<Review
     const { data, error } = await supabase.rpc("manager_screenshot_upload_context", { p_file: z.uuid().parse(fileId) });
     if (error) return { error: "Upload details could not be loaded. Please retry." };
     return { data: data as UploadContext | null };
-  } catch { return { error: "Upload details could not be loaded. Please retry." }; }
+  } catch (error) { unstable_rethrow(error); return { error: "Upload details could not be loaded. Please retry." }; }
 }
 
 /** Keyset pagination is fixed at 50 and authorization runs for every page. */
@@ -32,5 +33,5 @@ export async function getScreenshotUploadHistory(bidId: string, cursor?: UploadC
     });
     if (error || !data) return { error: "Upload history could not be loaded. Please retry." };
     return { data: data as UploadHistoryPage };
-  } catch { return { error: "Upload history could not be loaded. Please retry." }; }
+  } catch (error) { unstable_rethrow(error); return { error: "Upload history could not be loaded. Please retry." }; }
 }
