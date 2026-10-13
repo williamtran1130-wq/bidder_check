@@ -61,7 +61,9 @@ export function Settings({ data }: { data: WorkspaceData }) {
               <div className="border-t pt-5">
                 <h2 className="font-semibold">Workspace preferences</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Your timezone determines daily reporting boundaries.
+                  Reports use Central Time (America/Chicago), including daylight
+                  saving time. Your saved workspace timezone does not change
+                  reporting boundaries.
                 </p>
               </div>
               {data.profile.role === "admin" && (
@@ -86,7 +88,7 @@ export function Settings({ data }: { data: WorkspaceData }) {
                   required
                 />
                 <Field
-                  label="Reporting timezone"
+                  label="Workspace timezone"
                   name="timezone"
                   defaultValue={w.timezone}
                   list="timezones"

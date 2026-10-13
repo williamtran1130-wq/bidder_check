@@ -134,8 +134,8 @@ export function Earnings({
         <p className="mt-6 rounded-lg bg-background p-3 text-[11px] leading-5 text-muted-foreground">
           Earnings use each bid’s saved rate and first application date.
           Unapplied bids are excluded; reapplying restores the original amount.
-          This is an earnings record, not a payment or payout balance. Each
-          workspace’s reporting timezone is used.
+          This is an earnings record, not a payment or payout balance. Reporting
+          dates use Central Time (America/Chicago), including daylight saving time.
         </p>
           {!!total?.retainedCount && <p className="mt-3 text-xs text-muted-foreground">Includes {total.retainedCount} retained historical applications. Their individual application details have been removed.</p>}
       </section>
