@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 const base =
-  "http://127.0.0.1:3102/read-fixes.html?screenshot-sizes&read-fixes";
+  "http://127.0.0.1:3001/read-fixes.html?screenshot-sizes&read-fixes";
 async function open(page: Page) {
   await page.route("https://images.example.test/proof.png", (route) =>
     route.fulfill({

@@ -279,6 +279,8 @@ export function BidGrid({
         }
       }}
       onKeyDown={(e) => {
+        // Native Tab owns focus now; a queued arrow/pointer focus must not undo it.
+        if (!edit && e.key === "Tab") cancelAnimationFrame(focusFrame.current);
         if (
           edit ||
           !selection ||

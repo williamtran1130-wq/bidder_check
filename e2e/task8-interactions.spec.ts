@@ -1,7 +1,8 @@
 import { test, expect } from "@playwright/test";
+test.use({ baseURL: "http://127.0.0.1:3001" });
 test.beforeEach(async ({ page }) => {
   await page.route("**/*", (r) =>
-    new URL(r.request().url()).origin === "http://127.0.0.1:3102"
+    new URL(r.request().url()).origin === "http://127.0.0.1:3001"
       ? r.continue()
       : r.abort(),
   );

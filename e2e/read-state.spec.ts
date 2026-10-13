@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 test("matching seed avoids hydration query; stale generation cannot replace mutation refresh; timeout is user retried", async ({
   page,
 }) => {
-  await page.goto("http://127.0.0.1:3102/read.html");
+  await page.goto("http://127.0.0.1:3001/read.html");
   await expect(page.getByTestId("report-data")).toHaveText("seed");
   await expect(page.getByTestId("request-count")).toHaveText("0");
   await page.getByRole("button", { name: "Query B", exact: true }).click();
@@ -39,7 +39,7 @@ test("visible thumbnails coalesce and sign only requested current files", async 
       body: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="green"/></svg>',
     }),
   );
-  await page.goto("http://127.0.0.1:3102/bids?screenshot-sizes");
+  await page.goto("http://127.0.0.1:3001/bids?screenshot-sizes");
   await page
     .getByRole("combobox", { name: "Found period" })
     .selectOption("all");
@@ -69,7 +69,7 @@ test("visible thumbnails coalesce and sign only requested current files", async 
 test("auth failure clears the private workspace before navigation", async ({
   page,
 }) => {
-  await page.goto("http://127.0.0.1:3102/read.html");
+  await page.goto("http://127.0.0.1:3001/read.html");
   await expect(page.getByTestId("private-scope")).toHaveText("Private proof");
   await page
     .getByRole("button", { name: "Revoke access", exact: true })

@@ -4,7 +4,7 @@ for (const loss of ["accepted", "lost"]) {
     page,
   }) => {
     await page.goto(
-      `http://127.0.0.1:3102/admin-users?account-recovery=${loss}`,
+      `http://127.0.0.1:3001/admin-users?account-recovery=${loss}`,
     );
     await page
       .getByRole("button", { name: "Add client", exact: false })
@@ -61,7 +61,7 @@ test("shows a pending operation in recovery immediately after closing its dialog
   page,
 }) => {
   await page.goto(
-    "http://127.0.0.1:3102/admin-users?account-recovery=accepted",
+    "http://127.0.0.1:3001/admin-users?account-recovery=accepted",
   );
   await page.getByRole("button", { name: "Add client", exact: false }).click();
   const dialog = page.getByRole("dialog");
@@ -83,7 +83,7 @@ test("allows correcting a definitely rejected email without a phantom pending op
   page,
 }) => {
   await page.goto(
-    "http://127.0.0.1:3102/admin-users?account-recovery=duplicate",
+    "http://127.0.0.1:3001/admin-users?account-recovery=duplicate",
   );
   await page.getByRole("button", { name: "Add client", exact: false }).click();
   const dialog = page.getByRole("dialog");
