@@ -308,6 +308,7 @@ it.each([
         const scans = nodes.filter(
           (node) =>
             node["CTE Name"] === "current_evidence_sizes" ||
+            node["CTE Name"] === "evidence_groups" ||
             node["CTE Name"] === "filtered" ||
             node["Relation Name"] === "files",
         );
@@ -390,3 +391,39 @@ it("does no file scan or private metadata window work for an authenticated bidde
     ]);
   }
 });
+
+it("counts valid byte groups without sorting the full authorized snapshot", async () => {
+  for (const repeated of [false, true]) {
+    for (const recent of [false, true]) {
+      const { result } = await listingPlan(true, repeated, recent, 0);
+      const nodes: PlanNode[] = [];
+      const visit = (node: PlanNode) => {
+        nodes.push(node);
+        node.Plans?.forEach(visit);
+      };
+      visit(result.Plan);
+      const snapshot = nodes.find(
+        (node) => node["Subplan Name"] === "CTE current_evidence_sizes",
+      )!;
+      expect(snapshot["Node Type"]).not.toBe("WindowAgg");
+      const groups = nodes.find(
+        (node) => node["Subplan Name"] === "CTE evidence_groups",
+      )!;
+      expect(groups["Node Type"]).toBe("Aggregate");
+      // Counts are grouped only for real current evidence, never the missing
+      // metadata partition. Distinct groups derive from the independent inputs.
+      expect(groups["Actual Rows"]).toBe(
+        expectedRows(repeated, recent, true).sizes.size,
+      );
+      expect(groups["Actual Loops"]).toBe(1);
+      expect(
+        nodes
+          .filter((node) => node["CTE Name"] === "evidence_groups")
+          .every((node) => node["Actual Loops"] <= 1),
+      ).toBe(true);
+      expect(
+        nodes.filter((node) => node["Node Type"] === "WindowAgg"),
+      ).toHaveLength(1); // pagination only
+    }
+  }
+}, 60000);
