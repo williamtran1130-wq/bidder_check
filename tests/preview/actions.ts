@@ -713,6 +713,8 @@ export async function prepareBidPurge(
   mode: string,
   targets: { id: string; version: number }[],
 ) {
+  if (new URLSearchParams(location.search).has("purge-expiry"))
+    return (await import("./purge-expiry")).prepare(mode, targets);
   const { fixture } = await import("./sample-data");
   return {
     data: {
@@ -726,8 +728,12 @@ export async function prepareBidPurge(
     },
   };
 }
-export const confirmBidPurge = unavailable,
-  getPurgeStatus = unavailable;
+export async function confirmBidPurge(id: string, confirmation: string) {
+  if (new URLSearchParams(location.search).has("purge-expiry"))
+    return (await import("./purge-expiry")).confirm(id, confirmation);
+  return unavailable();
+}
+export const getPurgeStatus = unavailable;
 export const getInboxNotifications = async () => ({ data: [] });
 export const getClientMessages = async () => ({ data: [] });
 export const markInboxNotificationAction = unavailable,
