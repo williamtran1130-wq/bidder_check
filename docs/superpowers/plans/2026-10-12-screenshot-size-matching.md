@@ -2,6 +2,8 @@
 
 User-approved implementation plan, 2026-10-12. Implement with Superpowers subagent-driven-development and Product Design grounded in the existing Bids table. Parent owns integration, commits, staging and production rollout.
 
+User amendment, 2026-10-12: the release performance requirement is now strict p95 below **10 seconds**, replacing the original two-second requirement below. Proceed through staging to production with this threshold; retain all historical results under their original criteria. Database/request timeouts, correctness, permissions, the complete benchmark matrix, staged smoke and cleanup requirements remain unchanged.
+
 ## Global Constraints
 
 - Compare exact file sizes in bytes. Compact KB/MB badges appear beside screenshots only for clients/admins, in Bids and embedded bidder activity.

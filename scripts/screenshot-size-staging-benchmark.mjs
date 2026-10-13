@@ -16,6 +16,7 @@ import {
 const STAGING = "https://kdmvludtvhuuewmhurpw.supabase.co";
 const PREFIX = "screenshot-size-bench-";
 const LABELS = ["owner", "admin", "bidder1", "bidder2", "outsider"];
+const P95_LIMIT_MS = 10000;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const args = process.argv.slice(2);
@@ -413,9 +414,10 @@ async function benchmark(
     descending: sort.desc,
     samples: samples.length,
     concurrency: 5,
+    p95LimitMs: P95_LIMIT_MS,
     p95Ms: p95,
     maxMs: Math.round(samples.at(-1)),
-    passed: p95 < 2000,
+    passed: p95 < P95_LIMIT_MS,
   };
   results.push(measurement);
   receipt.results = results;
@@ -767,6 +769,7 @@ async function main() {
     await verifyUnusedPlan(service, planned, ok);
     await claimPlan(receiptPath, planBytes);
   }
+  receipt.p95LimitMs = P95_LIMIT_MS;
   receipt.started = true;
   await save();
   const sponsor = ok(
@@ -934,7 +937,7 @@ async function main() {
   }
   assert.ok(
     results.every((measurement) => measurement.passed),
-    "p95 must be below 2000ms",
+    `p95 must be below ${P95_LIMIT_MS}ms`,
   );
   receipt.passed = true;
   receipt.fixtureRetained = keep;

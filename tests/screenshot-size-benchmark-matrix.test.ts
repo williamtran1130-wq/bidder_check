@@ -25,6 +25,7 @@ const source = readFileSync(
   "scripts/screenshot-size-staging-benchmark.mjs",
   "utf8",
 );
+const threshold = source.match(/^const P95_LIMIT_MS = \d+;$/m)?.[0] ?? "";
 const benchmark = source.slice(
   source.indexOf("async function benchmark("),
   source.indexOf("async function verifyCleanupScope("),
@@ -40,6 +41,7 @@ const lifecycle = source.slice(
 );
 
 type Measurement = {
+  p95LimitMs: number;
   p95Ms: number;
   maxMs: number;
   passed: boolean;
@@ -47,6 +49,7 @@ type Measurement = {
   concurrency: number;
 };
 type Receipt = {
+  p95LimitMs?: number;
   passed: boolean;
   started?: boolean;
   fixtureRetained?: boolean;
@@ -261,7 +264,7 @@ async function runMatrix(scenario: Scenario = {}) {
         return wavePosition < 5
           ? 0
           : caseIndex === scenario.slowCase
-            ? (scenario.slowMs ?? 2500)
+            ? (scenario.slowMs ?? 11000)
             : 1000;
       },
     },
@@ -272,7 +275,7 @@ async function runMatrix(scenario: Scenario = {}) {
     },
   };
   await runInNewContext(
-    `(async () => { ${benchmark}\n${main}\n${lifecycle} })()`,
+    `(async () => { ${threshold}\n${benchmark}\n${main}\n${lifecycle} })()`,
     context,
   );
   return {
@@ -293,8 +296,8 @@ describe("staging benchmark matrix latency gate", () => {
     const run = await runMatrix({ slowCase: 0 });
     expect(run.results).toHaveLength(21);
     expect(run.results[0]).toMatchObject({
-      p95Ms: 2500,
-      maxMs: 2500,
+      p95Ms: 11000,
+      maxMs: 11000,
       passed: false,
     });
     expect(
@@ -324,10 +327,29 @@ describe("staging benchmark matrix latency gate", () => {
     expect(run.signOutCalls).toBe(1);
   });
 
-  it("still rejects p95 exactly at the strict 2000ms threshold", async () => {
-    const run = await runMatrix({ slowCase: 20, slowMs: 2000 });
+  it("accepts p95 just below the authorized 10000ms threshold with complete correctness checks", async () => {
+    const run = await runMatrix({ slowCase: 20, slowMs: 9999 });
     expect(run.results).toHaveLength(21);
-    expect(run.results[20]).toMatchObject({ p95Ms: 2000, passed: false });
+    expect(run.results[20]).toMatchObject({
+      p95Ms: 9999,
+      p95LimitMs: 10000,
+      passed: true,
+    });
+    expect(run.results.every((result) => result.p95LimitMs === 10000)).toBe(true);
+    expect(run.receipt.p95LimitMs).toBe(10000);
+    expect(run.timedReads).toBe(525);
+    expect(run.scopeChecks).toBe(2);
+    expect(run.financialChecks).toBe(3);
+    expect(run.receipt.passed).toBe(true);
+    expect(run.receipt.fixtureRetained).toBe(true);
+    expect(run.exitCode).toBe(0);
+    expect(run.cleanupCalls).toBe(0);
+  });
+
+  it("still rejects p95 exactly at the strict 10000ms threshold", async () => {
+    const run = await runMatrix({ slowCase: 20, slowMs: 10000 });
+    expect(run.results).toHaveLength(21);
+    expect(run.results[20]).toMatchObject({ p95Ms: 10000, passed: false });
     expect(run.receipt.passed).toBe(false);
     expect(run.exitCode).toBe(1);
     expect(run.cleanupCalls).toBe(1);
@@ -393,6 +415,7 @@ describe("staging benchmark matrix latency gate", () => {
     expect(run.timedReads).toBe(525);
     expect(run.results).toHaveLength(21);
     expect(run.receipt.passed).toBe(true);
+    expect(run.receipt.p95LimitMs).toBe(10000);
     expect(run.receipt.fixtureRetained).toBe(true);
     expect(run.cleanupCalls).toBe(0);
   });

@@ -39,7 +39,7 @@ jobs:
           test "$GITHUB_REF" = refs/heads/feat/screenshot-sizes
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           sha256sum --check <<'CHECKSUMS'
-          77c1130ff2b556dc485aa2714165d9577307cd2c3d41a2925ddc3f1c23ba666f  scripts/screenshot-size-staging-benchmark.mjs
+          0d749517ca5e23c279c2879a4599dae28dce585acbb3e2e8ca889dfe3636acdc  scripts/screenshot-size-staging-benchmark.mjs
           f1ed9908aad487d732a5886fcb994ccd678409a010628cf8320034ddb6a10a4e  scripts/screenshot-size-benchmark-plan.mjs
           d2bb9ddf4df2b7faa0f5fcc143d8f9f5c661ee730dc7cbcbae1424c9bc52f741  scripts/screenshot-size-seed-reconciliation.mjs
           9e4a3293e35b78b84152b45e00c12a04bf1eb8e16a470c4077cccb96118e4db0  package-lock.json
@@ -134,11 +134,12 @@ jobs:
           assert.equal(process.env.BENCHMARK_EXIT, '0');
           const receipt = JSON.parse(readFileSync(process.env.RECEIPT, 'utf8'));
           assert.equal(receipt.passed, true);
+          assert.equal(receipt.p95LimitMs, 10000);
           assert.equal(receipt.failure, undefined);
           assert.equal(receipt.signupNotificationCount, 0);
           assert.equal(receipt.results.length, 21);
-          assert.ok(receipt.results.every(r => r.samples === 25 && r.concurrency === 5 && r.p95Ms < 2000 && r.passed === true));
+          assert.ok(receipt.results.every(r => r.samples === 25 && r.concurrency === 5 && r.p95LimitMs === 10000 && r.p95Ms < 10000 && r.passed === true));
           assert.equal(receipt.fixtureRetained, true);
           assert.equal(receipt.cleanupComplete, false);
-          console.log(JSON.stringify({ passed: true, cases: 21, samples: 525, fixtureRetained: true, cleanupComplete: false }));
+          console.log(JSON.stringify({ passed: true, p95LimitMs: 10000, cases: 21, samples: 525, fixtureRetained: true, cleanupComplete: false }));
           VERIFY
