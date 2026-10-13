@@ -4,6 +4,7 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 export default defineConfig({
   testDir: "../../e2e",
   testMatch: "notification-reliability.spec.ts",
+  outputDir: `${root}test-results/browser-notification`,
   workers: 1,
   use: { ...devices["Desktop Chrome"] },
   webServer: {

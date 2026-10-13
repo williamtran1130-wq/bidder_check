@@ -1,5 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
-const { worker, adminRpc } = vi.hoisted(() => ({ worker: vi.fn(), adminRpc: vi.fn() }));
+const { worker, adminRpc } = vi.hoisted(() => ({
+  worker: vi.fn(),
+  adminRpc: vi.fn(),
+}));
 vi.mock("@/lib/storage-cleanup", () => ({ runStorageCleanup: worker }));
 vi.mock("@/lib/admin", () => ({ adminClient: () => ({ rpc: adminRpc }) }));
 import { GET } from "@/app/api/cron/storage-cleanup/route";
@@ -10,8 +13,14 @@ afterEach(() => {
 });
 const mockRetention = () => {
   adminRpc
-    .mockResolvedValueOnce({ data: { deletedApplications: 0, storageTasksQueued: 0 }, error: null })
-    .mockResolvedValueOnce({ data: { pending: 0, verificationPending: 0 }, error: null });
+    .mockResolvedValueOnce({
+      data: { deletedApplications: 0, storageTasksQueued: 0 },
+      error: null,
+    })
+    .mockResolvedValueOnce({
+      data: { pending: 0, verificationPending: 0 },
+      error: null,
+    });
 };
 it("requires the exact server secret and fails closed when unconfigured", async () => {
   vi.stubEnv("CRON_SECRET", "");
@@ -55,7 +64,8 @@ it("drains multiple batches within the function limit and reports a pending retr
   await call();
   expect(worker).toHaveBeenCalledWith(undefined, {
     maxBatches: expect.any(Number),
-    deadlineMs: expect.any(Number),
+    deadlineAt: expect.any(Number),
+    signal: expect.any(AbortSignal),
   });
   expect(worker.mock.calls[0][1].maxBatches).toBeGreaterThan(1);
   worker.mockRejectedValue(new Error("db down"));

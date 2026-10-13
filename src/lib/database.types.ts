@@ -1,6 +1,7 @@
 // Generated from the SQL migration by scripts/generate-types.mjs. Do not edit.
 export type Database = { public: { Tables: {
 account_events: { Row: { id: string; account_id: string; actor_id: string; event: string; reason: string | null; created_at: string }; Insert: Partial<{ id: string; account_id: string; actor_id: string; event: string; reason: string | null; created_at: string }>; Update: Partial<{ id: string; account_id: string; actor_id: string; event: string; reason: string | null; created_at: string }>; Relationships: [] };
+account_operations: { Row: { request_id: string; actor_id: string; kind: string; target_id: string; workspace_id: string | null; email: string | null; payload: unknown; fingerprint: string; status: string; auth_step: string; dispatch_id: string | null; lease_until: string | null; auth_transaction: number | null; reservation_transaction: number | null; accepted_at: string | null; completed_at: string | null; reconciled_by: string | null; disposition: string | null; created_at: string }; Insert: Partial<{ request_id: string; actor_id: string; kind: string; target_id: string; workspace_id: string | null; email: string | null; payload: unknown; fingerprint: string; status: string; auth_step: string; dispatch_id: string | null; lease_until: string | null; auth_transaction: number | null; reservation_transaction: number | null; accepted_at: string | null; completed_at: string | null; reconciled_by: string | null; disposition: string | null; created_at: string }>; Update: Partial<{ request_id: string; actor_id: string; kind: string; target_id: string; workspace_id: string | null; email: string | null; payload: unknown; fingerprint: string; status: string; auth_step: string; dispatch_id: string | null; lease_until: string | null; auth_transaction: number | null; reservation_transaction: number | null; accepted_at: string | null; completed_at: string | null; reconciled_by: string | null; disposition: string | null; created_at: string }>; Relationships: [] };
 application_library_cutover_control: { Row: { singleton: boolean; active: boolean; changed_at: string }; Insert: Partial<{ singleton: boolean; active: boolean; changed_at: string }>; Update: Partial<{ singleton: boolean; active: boolean; changed_at: string }>; Relationships: [] };
 application_library_reset_audits: { Row: { id: string; actor_id: string; scope: string; workspace_count: number; profile_count: number; assignment_count: number; bid_count: number; file_count: number; event_count: number; created_at: string }; Insert: Partial<{ id: string; actor_id: string; scope: string; workspace_count: number; profile_count: number; assignment_count: number; bid_count: number; file_count: number; event_count: number; created_at: string }>; Update: Partial<{ id: string; actor_id: string; scope: string; workspace_count: number; profile_count: number; assignment_count: number; bid_count: number; file_count: number; event_count: number; created_at: string }>; Relationships: [] };
 bid_events: { Row: { id: string; bid_id: string; actor_id: string; event: string; reason: string | null; file_id: string | null; created_at: string; details: unknown | null }; Insert: Partial<{ id: string; bid_id: string; actor_id: string; event: string; reason: string | null; file_id: string | null; created_at: string; details: unknown | null }>; Update: Partial<{ id: string; bid_id: string; actor_id: string; event: string; reason: string | null; file_id: string | null; created_at: string; details: unknown | null }>; Relationships: [] };
@@ -25,10 +26,16 @@ screenshot_upload_contexts: { Row: { id: string; bid_id: string; workspace_id: s
 storage_cleanup_tasks: { Row: { id: string; operation_id: string | null; storage_path: string | null; attempts: number; first_removed_at: string | null; next_attempt_at: string; completed_at: string | null; lease_id: string | null; lease_until: string | null; last_error: string | null }; Insert: Partial<{ id: string; operation_id: string | null; storage_path: string | null; attempts: number; first_removed_at: string | null; next_attempt_at: string; completed_at: string | null; lease_id: string | null; lease_until: string | null; last_error: string | null }>; Update: Partial<{ id: string; operation_id: string | null; storage_path: string | null; attempts: number; first_removed_at: string | null; next_attempt_at: string; completed_at: string | null; lease_id: string | null; lease_until: string | null; last_error: string | null }>; Relationships: [] };
 workspaces: { Row: { id: string; owner_id: string; name: string; timezone: string; created_at: string }; Insert: Partial<{ id: string; owner_id: string; name: string; timezone: string; created_at: string }>; Update: Partial<{ id: string; owner_id: string; name: string; timezone: string; created_at: string }>; Relationships: [] };
 }; Views: { [_ in never]: never }; Functions: {
+abandon_account_operation: { Args: { p_request: string | null }; Returns: unknown };
+account_operation_allowed: { Args: { o: string | null; p_actor: string | null }; Returns: boolean };
+account_operation_request_exists: { Args: { p_request: string | null }; Returns: boolean };
+account_operation_status: { Args: { p_request: string | null }; Returns: unknown };
+account_operation_view: { Args: { o: string | null }; Returns: unknown };
 application_library_inventory: { Args: { p_workspaces: string[] | null }; Returns: unknown };
 archive_candidate_profile: { Args: { p_profile: string | null; p_archived: boolean | null }; Returns: undefined };
 archive_resume: { Args: { p_id: string | null; p_archived: boolean | null }; Returns: undefined };
 archive_resume_assignment: { Args: { p_id: string | null; p_archived: boolean | null }; Returns: undefined };
+begin_account_operation: { Args: { p_request: string | null; p_kind: string | null; p_payload: unknown | null }; Returns: unknown };
 bid_purge_status: { Args: { p_operation: string | null }; Returns: unknown };
 bulk_bid_state: { Args: { p_targets: unknown | null; p_deleted: boolean | null }; Returns: number };
 can_manage_account: { Args: { p_account: string | null }; Returns: boolean };
@@ -43,18 +50,22 @@ dashboard_performance: { Args: { p_from: string | null; p_to: string | null; p_w
 dashboard_performance_v2: { Args: { p_from: string | null; p_to: string | null; p_workspace: string | null; p_bidder: string | null; p_profile: string | null }; Returns: unknown };
 delete_all_push_subscriptions: { Args: Record<string, never>; Returns: undefined };
 delete_push_subscription: { Args: { p_endpoint: string | null }; Returns: undefined };
+dispatch_account_operation: { Args: { p_request: string | null; p_actor: string | null }; Returns: unknown };
 earnings_performance: { Args: { p_from: string | null; p_to: string | null; p_workspace: string | null; p_bidder: string | null; p_profile: string | null; p_group: string | null }; Returns: unknown };
 earnings_performance_v2: { Args: { p_from: string | null; p_to: string | null; p_workspace: string | null; p_bidder: string | null; p_profile: string | null; p_group: string | null }; Returns: unknown };
 finalize_verified_file: { Args: { p_id: string | null; p_sha: string | null; p_actor: string | null }; Returns: undefined };
 finalize_verified_file_v2: { Args: { p_id: string | null; p_sha: string | null; p_actor: string | null; p_context: unknown | null }; Returns: undefined };
+finish_account_operation: { Args: { p_request: string | null }; Returns: unknown };
 finish_push_attempt: { Args: { p_attempt: string | null; p_lease: string | null; p_error: string | null; p_expired: boolean | null }; Returns: undefined };
 finish_storage_cleanup: { Args: { p_task: string | null; p_lease: string | null; p_success: boolean | null }; Returns: undefined };
+finish_storage_cleanup_batch: { Args: { p_tasks: string[] | null; p_leases: string[] | null; p_success: boolean | null }; Returns: undefined };
 has_due_storage_cleanup: { Args: Record<string, never>; Returns: boolean };
 import_bids: { Args: { p_resume: string | null; p_date: string | null; p_rows: unknown | null; p_request: string | null }; Returns: unknown };
 import_bids_reviewed: { Args: { p_resume: string | null; p_date: string | null; p_rows: unknown | null; p_source_rows: number[] | null; p_request: string | null }; Returns: unknown };
 interview_performance: { Args: { p_from: string | null; p_to: string | null; p_workspace: string | null; p_bidder: string | null; p_profile: string | null; p_group: string | null }; Returns: unknown };
 invite_bidder: { Args: { p_workspace: string | null; p_email: string | null; p_name: string | null; p_rate: number | null }; Returns: string };
 is_admin: { Args: Record<string, never>; Returns: boolean };
+list_account_operations: { Args: Record<string, never>; Returns: unknown };
 list_bids: { Args: { p_query: unknown | null }; Returns: unknown };
 list_bids_v2: { Args: { p_query: unknown | null }; Returns: unknown };
 manager_financial_values: { Args: { p_bidder_ids: string[] | null; p_resume_ids: string[] | null; p_bid_ids: string[] | null }; Returns: unknown };
@@ -77,6 +88,7 @@ process_candidate_retention: { Args: { p_limit: number | null }; Returns: unknow
 process_due_messages: { Args: { p_now: string | null; p_limit: number | null }; Returns: unknown };
 queue_notification_pushes: { Args: Record<string, never>; Returns: number };
 recent_bid_purges: { Args: Record<string, never>; Returns: unknown };
+reconcile_account_operation: { Args: { p_request: string | null }; Returns: unknown };
 reconcile_bid_targets: { Args: { p_targets: unknown | null; p_trash: boolean | null }; Returns: string[] };
 record_account_event: { Args: { p_account: string | null; p_event: string | null }; Returns: undefined };
 require_manager: { Args: { w: string | null }; Returns: undefined };
