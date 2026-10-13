@@ -9,7 +9,6 @@ import {
 import path from "node:path";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import {
   assertFreshPlan,
@@ -21,17 +20,7 @@ const target = "https://kdmvludtvhuuewmhurpw.supabase.co";
 const root = ".superpowers/sdd/2026-10-12-screenshot-size-matching";
 mkdirSync(root, { recursive: true });
 const script = "scripts/screenshot-size-staging-benchmark.mjs";
-const source = readFileSync(script, "utf8");
-const validateReceipt = runInNewContext(
-  `(${source.slice(source.indexOf("function validateReceipt("), source.indexOf("async function save("))})`,
-  {
-    assert,
-    STAGING: target,
-    PREFIX: "screenshot-size-bench-",
-    UUID: /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-    LABELS: ["owner", "admin", "bidder1", "bidder2", "outsider"],
-  },
-);
+import { validateReceipt } from "../scripts/screenshot-size-benchmark-helpers.mjs";
 function freshPlan() {
   const marker = `screenshot-size-bench-${randomUUID()}`;
   return {

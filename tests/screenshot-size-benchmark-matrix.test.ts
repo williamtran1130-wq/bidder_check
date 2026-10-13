@@ -1,44 +1,19 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import {
-  mkdirSync,
-  readFileSync,
-  mkdtempSync,
-  writeFileSync,
-  existsSync,
-} from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdirSync, mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
-import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
-import {
-  assertFreshPlan,
-  verifyUnusedPlan,
-  claimPlan,
-} from "../scripts/screenshot-size-benchmark-plan.mjs";
 
 mkdirSync(".superpowers/sdd/2026-10-12-screenshot-size-matching", {
   recursive: true,
 });
 
-const source = readFileSync(
-  "scripts/screenshot-size-staging-benchmark.mjs",
-  "utf8",
-);
-const threshold = source.match(/^const P95_LIMIT_MS = \d+;$/m)?.[0] ?? "";
-const benchmark = source.slice(
-  source.indexOf("async function benchmark("),
-  source.indexOf("async function verifyCleanupScope("),
-);
-const main = source.slice(
-  source.indexOf("async function main("),
-  source.indexOf("function selfTest("),
-);
-const lifecycle = source.slice(
-  source.lastIndexOf("} else {\n  try {\n    await main();") +
-    "} else {".length,
-  source.lastIndexOf("}"),
-);
+import { createBenchmarkRunner } from "../scripts/screenshot-size-benchmark-runner.mjs";
+import {
+  fixture,
+  expected,
+  validate,
+} from "../scripts/screenshot-size-benchmark-helpers.mjs";
 
 type Measurement = {
   matrixKind: "full" | "ordinary-baseline";
@@ -114,7 +89,7 @@ type Scenario = {
 };
 
 // Execute the actual measurement function, main case matrix, and final cleanup
-// orchestration. Only external setup, clock, and RPC results are substituted;
+// orchestration. Only external setup, clock, persistence, and RPC results are substituted;
 // no process environment, filesystem writes, or hosted requests are accessed.
 async function runMatrix(scenario: Scenario = {}) {
   let setupCalls = 0;
@@ -256,14 +231,6 @@ async function runMatrix(scenario: Scenario = {}) {
     },
   };
   const context = {
-    // Convert both arrays into the host realm for Node's prototype-sensitive
-    // strict equality; the VM's real empty-scope assertion still executes.
-    assert: Object.assign((value: unknown) => assert(value), assert, {
-      deepEqual: (actual: unknown, expected: unknown) =>
-        assert.deepEqual(structuredClone(actual), structuredClone(expected)),
-    }),
-    randomUUID,
-    path,
     console: {
       log: (value: string) => {
         const event = JSON.parse(value);
@@ -272,24 +239,9 @@ async function runMatrix(scenario: Scenario = {}) {
       error: () => {},
     },
     process: processStub,
-    STAGING: processStub.env.NEXT_PUBLIC_SUPABASE_URL,
-    PREFIX: "screenshot-size-bench-",
-    LABELS: ["owner", "admin", "bidder1", "bidder2", "outsider"],
+    target: processStub.env.NEXT_PUBLIC_SUPABASE_URL,
     args,
-    before: !!scenario.before,
-    recovery: false,
-    keep: !scenario.before,
-    failed: false,
-    diagnosticHoldSeconds: 0,
-    results: [] as Measurement[],
     sessions: [client],
-    service: undefined,
-    receipt: undefined as Receipt | undefined,
-    receiptPath: undefined,
-    fixtureData: undefined,
-    options: {},
-    option: (name: string) =>
-      args.includes(name) ? args[args.indexOf(name) + 1] : undefined,
     guardedPath: (value: string) => value,
     validateReceipt: () => {},
     createClient: () => {
@@ -301,17 +253,13 @@ async function runMatrix(scenario: Scenario = {}) {
         },
       };
     },
-    readFile,
-    assertFreshPlan,
-    verifyUnusedPlan,
-    claimPlan,
     save: async () => {
       if (
         scenario.holdSaveFailure &&
-        context.receipt?.phase === "diagnostic-hold"
+        runner.receipt?.phase === "diagnostic-hold"
       )
         throw new Error("Synthetic receipt save failure");
-      snapshots.push(structuredClone(context.receipt!));
+      snapshots.push(structuredClone(runner.receipt!));
     },
     account: async (planned: { id: string }, role: string) => {
       if (planPath)
@@ -352,7 +300,7 @@ async function runMatrix(scenario: Scenario = {}) {
     },
     performance: {
       now: () => {
-        if (context.receipt?.phase === "diagnostic-hold") return holdClock;
+        if (runner.receipt?.phase === "diagnostic-hold") return holdClock;
         const caseIndex = Math.floor(clockCalls / 50);
         const wavePosition = clockCalls++ % 10;
         return wavePosition < 5
@@ -369,17 +317,15 @@ async function runMatrix(scenario: Scenario = {}) {
     },
     cleanup: async () => {
       cleanupCalls++;
-      context.receipt!.cleanupComplete = true;
-      context.receipt!.fixtureRetained = false;
+      runner.receipt!.cleanupComplete = true;
+      runner.receipt!.fixtureRetained = false;
     },
   };
-  await runInNewContext(
-    `(async () => { ${threshold}\n${benchmark}\n${main}\n${lifecycle} })()`,
-    context,
-  );
+  const runner = createBenchmarkRunner(context);
+  await runner.run();
   return {
-    receipt: context.receipt!,
-    results: context.results,
+    receipt: runner.receipt as Receipt,
+    results: runner.results as Measurement[],
     exitCode: processStub.exitCode,
     snapshots,
     timedReads,
@@ -882,17 +828,10 @@ describe("staging benchmark matrix latency gate", () => {
 });
 
 function queryOracle(fixtureData: unknown) {
-  return runInNewContext(
-    `${source.slice(source.indexOf("function selected("), source.indexOf("let fixtureData;"))}\n({ expected, validate })`,
-    {
-      fixtureData,
-      assert: Object.assign((value: unknown) => assert(value), assert, {
-        deepEqual: (actual: unknown, expected: unknown) =>
-          assert.deepEqual(structuredClone(actual), structuredClone(expected)),
-      }),
-      noMoney: () => {},
-    },
-  );
+  return {
+    expected,
+    validate: (...args: unknown[]) => validate(...args, fixtureData),
+  };
 }
 
 describe("staging repeat correctness oracle", () => {
@@ -1105,10 +1044,6 @@ describe("staging repeat correctness oracle", () => {
   });
 
   it("seeds mixed-status finalized repeats and a nonadditive applied/unapplied pair", () => {
-    const fixture = runInNewContext(
-      `${source.slice(source.indexOf("const shift ="), source.indexOf("function selected("))}\nfixture`,
-      { randomUUID },
-    );
     const value = fixture(
       {
         owner,

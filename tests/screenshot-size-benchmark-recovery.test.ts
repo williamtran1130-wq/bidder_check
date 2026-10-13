@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, mkdtempSync, writeFileSync } from "node:fs";
-import { readFile, writeFile, mkdir, open, rename } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
-import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 
 mkdirSync(".superpowers/sdd/2026-10-12-screenshot-size-matching", {
@@ -12,10 +10,7 @@ mkdirSync(".superpowers/sdd/2026-10-12-screenshot-size-matching", {
 });
 
 type Row = Record<string, unknown>;
-const source = readFileSync(
-  "scripts/screenshot-size-staging-benchmark.mjs",
-  "utf8",
-).replace(/^import .*?;\n/gms, "");
+import { createBenchmarkRunner } from "../scripts/screenshot-size-benchmark-runner.mjs";
 
 async function recoverInitialPlan(foreign = false) {
   const marker = `screenshot-size-bench-${randomUUID()}`;
@@ -176,14 +171,9 @@ async function recoverInitialPlan(foreign = false) {
       cwd: () => process.cwd(),
       exitCode: 0,
     };
-    await runInNewContext(`(async () => { ${source} })()`, {
+    await createBenchmarkRunner({
       assert,
       randomUUID,
-      readFile,
-      writeFile,
-      mkdir,
-      open,
-      rename,
       path,
       performance,
       console: { log: () => {}, error: () => {} },
@@ -209,7 +199,7 @@ async function recoverInitialPlan(foreign = false) {
       fetch: () => {
         throw new Error("Hosted fetch forbidden in recovery test");
       },
-    });
+    }).run();
     return processStub.exitCode;
   }
   return { runRecovery, receiptPath, tables, auth, mutations };
