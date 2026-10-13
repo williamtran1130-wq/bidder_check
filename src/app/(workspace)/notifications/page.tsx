@@ -1,7 +1,8 @@
+import { Suspense } from "react";
 import { getWorkspaceData } from "@/lib/data";
-import { getNotificationPage } from "@/app/(workspace)/notification-actions";
+import { getNotificationPage } from "@/lib/notification-reads";
 import { Notifications } from "@/components/notifications";
-export default async function Page() {
+async function Content() {
   const data = await getWorkspaceData({ scope: "notifications" });
   const [inbox, messages] = await Promise.all([
     data.profile.role !== "client"
@@ -20,5 +21,13 @@ export default async function Page() {
       initialInboxPage={inbox}
       initialMessagesPage={messages}
     />
+  );
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={<p role="status">Loading notifications?</p>}>
+      <Content />
+    </Suspense>
   );
 }

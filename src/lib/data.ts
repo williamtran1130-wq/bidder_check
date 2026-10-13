@@ -177,7 +177,10 @@ export async function getWorkspaceData(
   const bidCounts = (bidCountsResult.data ?? {}) as Record<string, number>;
   const safeBidders: BidderRow[] = bidders;
   const safeResumes: ResumeRow[] = resumes;
-  if (profile.role !== "bidder") {
+  if (
+    profile.role !== "bidder" &&
+    ["full", "people", "profiles", "resumes", "bidder-detail"].includes(scope)
+  ) {
     const values = await getManagerFinancialValues(supabase, {
       bidderIds: bidders.map((item) => item.user_id),
       resumeIds: resumes.map((item) => item.id),
@@ -198,5 +201,70 @@ export async function getWorkspaceData(
     bids: [],
     bidCounts,
     invitations,
+  };
+}
+
+/** Dashboard filters need labels and membership, never assignment/contact/rule payloads. */
+export type DashboardData = Pick<WorkspaceData, "profile" | "workspaces"> & {
+  profiles: Pick<Row<"profiles">, "id" | "display_name">[];
+  bidders: Pick<BidderRow, "user_id" | "workspace_id" | "archived">[];
+  candidateProfiles: Pick<
+    Row<"candidate_profiles">,
+    "id" | "workspace_id" | "identifier" | "archived"
+  >[];
+};
+export async function getDashboardData(): Promise<DashboardData> {
+  const { supabase, profile, workspaces } = await getContext();
+  // Each reader retains its concrete projection type; never cast a partial row to a full DTO.
+  async function people() {
+    const rows: DashboardData["profiles"] = [];
+    for (let offset = 0; ; offset += 1000) {
+      const result = await supabase
+        .from("profiles")
+        .select("id,display_name")
+        .order("id")
+        .range(offset, offset + 999);
+      if (result.error) throw result.error;
+      rows.push(...result.data);
+      if (result.data.length < 1000) return rows;
+    }
+  }
+  async function bidders() {
+    const rows: DashboardData["bidders"] = [];
+    for (let offset = 0; ; offset += 1000) {
+      const result = await supabase
+        .from("bidders")
+        .select(SAFE_BIDDER_COLUMNS)
+        .order("user_id")
+        .range(offset, offset + 999);
+      if (result.error) throw result.error;
+      rows.push(...result.data);
+      if (result.data.length < 1000) return rows;
+    }
+  }
+  async function candidates() {
+    const rows: DashboardData["candidateProfiles"] = [];
+    for (let offset = 0; ; offset += 1000) {
+      const result = await supabase
+        .from("candidate_profiles")
+        .select("id,workspace_id,identifier,archived")
+        .order("id")
+        .range(offset, offset + 999);
+      if (result.error) throw result.error;
+      rows.push(...result.data);
+      if (result.data.length < 1000) return rows;
+    }
+  }
+  const [profiles, memberships, candidateProfiles] = await Promise.all([
+    people(),
+    bidders(),
+    candidates(),
+  ]);
+  return {
+    profile,
+    workspaces,
+    profiles,
+    bidders: memberships,
+    candidateProfiles,
   };
 }

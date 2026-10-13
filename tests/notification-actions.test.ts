@@ -1,3 +1,4 @@
+import "./server-only-mock";
 import { afterEach, expect, it, vi } from "vitest";
 const fake = vi.hoisted(() => ({
   rpc: vi.fn(),

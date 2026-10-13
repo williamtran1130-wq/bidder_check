@@ -1,5 +1,38 @@
+﻿import { Suspense } from "react";
 import { getWorkspaceData } from "@/lib/data";
 import { BidWorkspace } from "@/components/bids";
-export default async function Bids() {
-  return <BidWorkspace data={await getWorkspaceData({ scope: "bids" })} />;
+import { getBidRows } from "@/lib/read-services";
+import { bidReadKey, initialBidQuery } from "@/lib/read-keys";
+import { calendarToday } from "@/lib/calendar-period";
+async function Content({
+  searchParams,
+}: {
+  searchParams: Promise<{ review?: string }>;
+}) {
+  const review = (await searchParams).review === "pending";
+  const mode = review ? "all" : "today",
+    query = initialBidQuery(review),
+    day = calendarToday();
+  const [data, result] = await Promise.all([
+    getWorkspaceData({ scope: "bids" }),
+    getBidRows(mode, "", "", false, undefined, query),
+  ]);
+  return (
+    <BidWorkspace
+      data={data}
+      initial={{
+        key: bidReadKey(data, mode, "", "", false, undefined, query, day),
+        result,
+      }}
+    />
+  );
+}
+export default function Page(props: {
+  searchParams: Promise<{ review?: string }>;
+}) {
+  return (
+    <Suspense fallback={<p role="status">Loading bids…</p>}>
+      <Content {...props} />
+    </Suspense>
+  );
 }

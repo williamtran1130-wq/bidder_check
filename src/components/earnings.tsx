@@ -4,22 +4,28 @@ import { Wallet, CheckCheck, FileText } from "lucide-react";
 import { usd } from "@/lib/domain";
 import { PageHeading, EmptyState } from "./common";
 import { Button } from "./ui/button";
-import { getEarningsPerformance } from "@/app/(workspace)/actions";
+import { getEarningsPerformance } from "@/lib/read-client";
 import type { PeriodSelection } from "@/lib/calendar-period";
 import { PeriodSelector, useCalendarDay } from "./period-selector";
 import { useReport } from "./use-report";
+import { readKey, type ReadSeed } from "@/lib/read-state";
+import type { EarningsReport as SeedReport } from "@/lib/report-types";
+import { useReadScope } from "@/lib/read-scope";
 export function Earnings({
   bidderId,
+  initial,
   embedded = false,
 }: {
   bidderId?: string;
+  initial?: ReadSeed<SeedReport>;
   embedded?: boolean;
 }) {
+  const scope = useReadScope();
   const [period, setPeriod] = useState<PeriodSelection>({ preset: "this_week" });
   const [group, setGroup] = useState("bidder");
   const day = useCalendarDay();
   const request = useCallback(() => getEarningsPerformance({ period, bidder: bidderId, group: group === "bidder" ? "bidder" : "assignment" }), [period, bidderId, group]);
-  const { data: report, loading, error, refresh } = useReport(JSON.stringify([period, bidderId, group, day]), request);
+  const { data: report, loading, error, refresh } = useReport(readKey(scope, "earnings", { period, bidder: bidderId, group: group === "bidder" ? "bidder" : "assignment" }, day), request, initial);
   const total = report?.totals;
   const groups = report?.groups ?? [];
   return (

@@ -1,5 +1,11 @@
 "use client";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   notificationResource,
   discardNotificationScope,
@@ -25,13 +31,23 @@ export function useNotificationResource<T>(
   initial: NotificationResult<T> = {},
 ) {
   const resource = notificationResource(key, load, initial);
+  // A seed identifies this subscription; the store, not later SSR props,
+  // decides whether the snapshot needs a new generation of reconciliation.
+  const visit = useMemo(
+    () => ({
+      resource,
+      consumer: {},
+      seed: { data: initial.data, error: initial.error },
+    }),
+    [resource, initial.data, initial.error],
+  );
   const result = useSyncExternalStore(
     resource.subscribe,
     resource.snapshot,
     () => initial,
   );
   useEffect(() => {
-    void resource.refresh();
-  }, [resource]);
+    void resource.mount(visit.consumer, visit.seed);
+  }, [resource, visit]);
   return { ...result, retry: resource.refresh };
 }

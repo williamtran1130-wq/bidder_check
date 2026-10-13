@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { BidRow } from "@/lib/workspace-types";
-import { getFileUrl } from "@/app/(workspace)/actions";
+import { thumbnailUrl, invalidateThumbnail, useReadScope } from "@/lib/read-scope";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -42,6 +42,9 @@ export function ScreenshotCell({
   const [pasteError, setPasteError] = useState("");
   const [pasteBusy, setPasteBusy] = useState(false);
   const router = useRouter();
+  const scope = useReadScope();
+  const [urlFile, setUrlFile] = useState("");
+  const currentUrl = urlFile === `${scope}:${bid.evidence_file_id}` ? url : "";
   useEffect(() => {
     const observer = new IntersectionObserver(([entry]) =>
       setVisible(entry.isIntersecting),
@@ -52,24 +55,33 @@ export function ScreenshotCell({
   useEffect(() => {
     if (!visible || !bid.evidence_file_id) return;
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     async function load() {
-      const result = await getFileUrl(bid.evidence_file_id!);
+      const result = await thumbnailUrl(scope, bid.evidence_file_id!);
       if (cancelled) return;
+      setUrlFile(`${scope}:${bid.evidence_file_id}`);
       if (result.data) {
+        const renewIn = Date.parse(result.data.expiresAt) - Date.now() - 15_000;
+        // A malformed/already stale result must not create a zero-delay loop.
+        if (!Number.isFinite(renewIn) || renewIn <= 0) {
+          setUrl("");
+          setError("Preview expired. Retry to refresh.");
+          return;
+        }
         setUrl(result.data.url);
         setError("");
+        timer = setTimeout(() => void load(), renewIn);
       } else {
         setUrl("");
         setError(result.error ?? "Preview unavailable");
       }
     }
     void load();
-    const timer = setInterval(() => void load(), 45000);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      clearTimeout(timer);
     };
-  }, [visible, bid.evidence_file_id, retry]);
+  }, [visible, bid.evidence_file_id, retry, scope]);
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
       const target = ref.current;
@@ -94,6 +106,8 @@ export function ScreenshotCell({
       void uploadVerifiedFile("screenshot", bid.id, image, (phase, progress) => {
         setPasteProgress(`${phase} ${progress}%`);
       }).then(() => {
+        if (bid.evidence_file_id) invalidateThumbnail(scope, bid.evidence_file_id);
+        setUrl("");
         onUploaded?.();
         router.refresh();
       }).catch((reason: unknown) => {
@@ -106,7 +120,7 @@ export function ScreenshotCell({
     };
     window.addEventListener("paste", handlePaste, true);
     return () => window.removeEventListener("paste", handlePaste, true);
-  }, [bid.id, bid.deleted_at, bid.review_status, disabled, pasteBusy, router, onBusy, onUploaded]);
+  }, [bid.id, bid.evidence_file_id, bid.deleted_at, bid.review_status, scope, disabled, pasteBusy, router, onBusy, onUploaded]);
   return (
     <div
       ref={ref}
@@ -119,7 +133,7 @@ export function ScreenshotCell({
       {pasteError && <p className="text-[10px] leading-4 text-destructive" role="alert">{pasteError}</p>}
       {!uploadOpen && !bid.deleted_at && bid.review_status === "approved" && <p className="text-[9px] leading-3 text-muted-foreground">Focus this cell and paste an image</p>}
       <div className="flex items-center gap-1.5">
-      {url && (
+      {currentUrl && (
         <button
           ref={previewTrigger}
           className="block min-w-0 flex-1 overflow-hidden rounded-md border focus-visible:outline-2 focus-visible:outline-primary"
@@ -129,7 +143,7 @@ export function ScreenshotCell({
           {/* Private, expiring URLs must bypass the public Next image optimization cache. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={url}
+            src={currentUrl}
             alt={`Application proof for ${bid.company}`}
             className="h-9 w-full object-cover"
             loading="lazy"
@@ -143,7 +157,7 @@ export function ScreenshotCell({
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => setRetry((n) => n + 1)}
+          onClick={() => { if (bid.evidence_file_id) invalidateThumbnail(scope, bid.evidence_file_id); setRetry((n) => n + 1); }}
         >
           Retry preview
         </Button>
@@ -183,6 +197,8 @@ export function ScreenshotCell({
           }
           onUploaded={() => {
             setUploadOpen(false);
+            if (bid.evidence_file_id) invalidateThumbnail(scope, bid.evidence_file_id);
+            setUrl("");
             onUploaded?.();
             router.refresh();
           }}
@@ -200,7 +216,7 @@ export function ScreenshotCell({
           </DialogHeader>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={url}
+            src={currentUrl}
             alt={`Enlarged application proof for ${bid.company}`}
             className="max-h-[50dvh] w-full object-contain"
           />

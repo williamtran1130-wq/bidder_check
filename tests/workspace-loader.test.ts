@@ -114,3 +114,14 @@ it("paginates bidder-detail assignments with the selected bidder filter on every
   expect(data.resumes).toHaveLength(1001);
   expect(data.resumes.some((r) => r.id === "foreign")).toBe(false);
 });
+it('does not enrich unused manager assignment rates on bids, dashboard or notifications, retaining assignment details',async()=>{
+ state.role='client';state.records.bidders=[{user_id:'selected',workspace_id:'own',default_rate_cents:42}];
+ state.records.resumes=[{id:'resume',bidder_id:'selected',email:'assignment@test',phone:'555',instructions:'Apply carefully',file_id:'pdf',rate_override_cents:12}];
+ for(const scope of ['bids','dashboard','notifications'] as const){const data=await getWorkspaceData({scope});expect(data.bidders[0]).not.toHaveProperty('default_rate_cents');if(scope==='bids')expect(data.resumes[0]).toMatchObject({email:'assignment@test',phone:'555',instructions:'Apply carefully',file_id:'pdf'});}
+ expect(state.moneyCalls).toBe(0);
+});
+it('uses typed narrow dashboard filter projections and no manager enrichment',async()=>{
+ const api=await import('../src/lib/data');expect(api).toHaveProperty('getDashboardData');
+ state.role='client';state.records.profiles=[{id:'selected',display_name:'Bidder',email:'private@test',approval_reason:'private'}];state.records.bidders=[{user_id:'selected',workspace_id:'own',archived:false}];state.records.candidate_profiles=[{id:'candidate',workspace_id:'own',identifier:'ENG',archived:false,instructions:'private'}];
+ const data=await api.getDashboardData();expect(data.profiles[0]).toEqual({id:'selected',display_name:'Bidder'});expect(data.candidateProfiles[0]).not.toHaveProperty('instructions');expect(state.moneyCalls).toBe(0);
+});

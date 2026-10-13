@@ -1,4 +1,5 @@
 "use server";
+import * as reads from "@/lib/notification-reads";
 import { z } from "zod";
 import { unstable_rethrow } from "next/navigation";
 import { centralWallTimeToISO } from "@/lib/central-time";
@@ -131,42 +132,21 @@ export async function getNotificationPage(
 ): Promise<
   NotificationResult<NotificationPage<InboxNotification | NotificationMessage>>
 > {
-  return perform(
-    async () =>
-      (await rpc("notification_page", {
-        p_kind: z.enum(["inbox", "messages"]).parse(query.kind),
-        p_workspace: query.workspace_id
-          ? z.uuid().parse(query.workspace_id)
-          : null,
-        p_status: query.status === undefined ? null : z.string().parse(query.status),
-        p_cursor: query.cursor
-          ? z
-              .object({
-                created_at: z.iso.datetime({ offset: true }),
-                id: z.uuid(),
-              })
-              .parse(query.cursor)
-          : null,
-      })) as NotificationPage<InboxNotification | NotificationMessage>,
-  );
+ return reads.getNotificationPage(query);
 }
+
 export async function getNotificationById(
   id: string,
 ): Promise<NotificationResult<InboxNotification>> {
-  return perform(
-    async () =>
-      (await rpc("notification_by_id", {
-        p_id: z.uuid().parse(id),
-      })) as InboxNotification,
-  );
+ return reads.getNotificationById(id);
 }
+
 export async function getNotificationUnreadCount(): Promise<
   NotificationResult<number>
 > {
-  return perform(async () =>
-    Number(await rpc("notification_unread_count", {})),
-  );
+ return reads.getNotificationUnreadCount();
 }
+
 export async function markNotificationRead(
   id: string,
   read: boolean,
@@ -182,13 +162,9 @@ export async function markNotificationRead(
 export async function getNotificationDeviceEnabled(
   endpoint: string,
 ): Promise<NotificationResult<boolean>> {
-  return perform(
-    async () =>
-      (await rpc("notification_device_enabled", {
-        p_endpoint: z.url().parse(endpoint),
-      })) as boolean,
-  );
+ return reads.getNotificationDeviceEnabled(endpoint);
 }
+
 export async function saveNotificationDevice(
   subscription: PushSubscriptionInput,
 ): Promise<NotificationResult<string>> {

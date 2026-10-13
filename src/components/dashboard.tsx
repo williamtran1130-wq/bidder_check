@@ -3,20 +3,24 @@ import Link from "next/link";
 import { useCallback, useState } from "react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ArrowUpRight, BriefcaseBusiness, CalendarCheck2, CheckCheck, LoaderCircle, RefreshCw, Target, Wallet } from "lucide-react";
-import type { WorkspaceData } from "@/lib/data";
+import type { DashboardData } from "@/lib/data";
 import { usd } from "@/lib/domain";
 import { applicationRate, dashboardDateLabel } from "@/lib/dashboard-report";
 import { resolveCalendarPeriod, type PeriodSelection } from "@/lib/calendar-period";
 import { Comparison } from "./dashboard-comparison";
-import { getDashboardPerformance } from "@/app/(workspace)/actions";
+import { getDashboardPerformance } from "@/lib/read-client";
 import { PageHeading } from "./common";
 import { PeriodSelector, useCalendarDay } from "./period-selector";
 import { useReport } from "./use-report";
+import { readKey, type ReadSeed } from "@/lib/read-state";
+import type { DashboardReport as SeedReport } from "@/lib/report-types";
+import { useReadScope } from "@/lib/read-scope";
 import { Button } from "./ui/button";
 
 const chartStyle = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: 10, fontSize: 12 };
 const tick = { fontSize: 11, fill: "var(--muted)" };
-export function Dashboard({ data }: { data: WorkspaceData }) {
+export function Dashboard({ data, initial }: { data: DashboardData; initial?: ReadSeed<SeedReport> }) {
+  const scope = useReadScope();
   const [period, setPeriod] = useState<PeriodSelection>({ preset: "this_week" });
   const [workspace, setWorkspace] = useState("");
   const [bidder, setBidder] = useState("");
@@ -24,8 +28,8 @@ export function Dashboard({ data }: { data: WorkspaceData }) {
   const day = useCalendarDay();
   const isManager = data.profile.role !== "bidder";
   const request = useCallback(() => getDashboardPerformance({ period, workspace: workspace || undefined, bidder: bidder || undefined, profile: profile || undefined }), [period, workspace, bidder, profile]);
-  const queryKey = JSON.stringify([data.profile.id, period, workspace, bidder, profile, day]);
-  const { data: report, loading, error, refresh } = useReport(queryKey, request);
+  const queryKey = readKey(scope, "dashboard", { period, workspace: workspace || undefined, bidder: bidder || undefined, profile: profile || undefined }, day);
+  const { data: report, loading, error, refresh } = useReport(queryKey, request, initial);
   const range = resolveCalendarPeriod(period);
   const rate = report ? applicationRate(report.totals.found, report.totals.foundApplied) : null;
   const interviewRate = report && report.totals.trackedApplications ? report.totals.trackedInterviews / report.totals.trackedApplications * 100 : null;

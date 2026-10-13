@@ -1,19 +1,23 @@
 "use client";
 import { useCallback, useState } from "react";
 import { PageHeading, SelectField } from "./common";
-import { getInterviewPerformance } from "@/app/(workspace)/actions";
+import { getInterviewPerformance } from "@/lib/read-client";
 import type { PeriodSelection } from "@/lib/calendar-period";
 import type { GroupedReportQuery } from "@/lib/report-types";
 import { PeriodSelector, useCalendarDay } from "./period-selector";
 import { useReport } from "./use-report";
+import { readKey, type ReadSeed } from "@/lib/read-state";
+import type { InterviewReport as SeedReport } from "@/lib/report-types";
+import { useReadScope } from "@/lib/read-scope";
 import { Button } from "./ui/button";
 
-export function InterviewReport() {
+export function InterviewReport({ initial }: { initial?: ReadSeed<SeedReport> } = {}) {
+  const scope = useReadScope();
   const [period, setPeriod] = useState<PeriodSelection>({ preset: "all" });
   const [group, setGroup] = useState<GroupedReportQuery["group"]>("profile");
   const day = useCalendarDay();
   const request = useCallback(() => getInterviewPerformance({ period, group }), [period, group]);
-  const { data: report, loading, error, refresh } = useReport(JSON.stringify([period, group, day]), request);
+  const { data: report, loading, error, refresh } = useReport(readKey(scope, "interviews", { period, group }, day), request, initial);
   const totals = report?.totals;
   const rows = report?.groups ?? [];
   const conversion = totals?.applied ? `${(totals.interviews / totals.applied * 100).toFixed(1)}%` : "—";

@@ -11,6 +11,7 @@ export default defineConfig({
   server: { host: "127.0.0.1", port: 3001, fs: { allow: [here("../../")] } },
   resolve: {
     alias: [
+      { find: "@/lib/read-client", replacement: here("./read-client.ts") },
       { find: "@/lib/client", replacement: here("./client.ts") },
       { find: "@/app/(workspace)/notification-actions", replacement: here("./notification-actions.ts") },
       { find: "@/app/(workspace)/upload-context-actions", replacement: here("./upload-context-actions.ts") },

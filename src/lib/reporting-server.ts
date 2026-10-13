@@ -21,7 +21,7 @@ export async function readReport<T>(operation: ReportOperation, input: ReportQue
       p_profile: input.profile ? z.uuid().parse(input.profile) : null,
     };
     const grouping = "group" in input ? z.enum(["profile", "bidder", "assignment"]).parse(input.group) : undefined;
-    const { supabase, profile } = await getContext();
+    const { supabase, profile } = await getContext({actorOnly:true});
     if (operation === "earnings_performance_v2" && profile.role === "bidder")
       return { error: "This report is available to workspace managers.", code: "forbidden" };
     const { data, error } = await supabase.rpc(operation, {

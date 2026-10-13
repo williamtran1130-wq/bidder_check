@@ -42,6 +42,8 @@ export async function updateSession(request: NextRequest) {
 
   if (
     !user &&
+    // Only the authenticated read handlers own their JSON auth response.
+    !/^\/api\/read\/[^/]+$/.test(request.nextUrl.pathname) &&
     !request.nextUrl.pathname.startsWith("/login") &&
     !request.nextUrl.pathname.startsWith("/auth") &&
     // the OAuth consent route sends unauthenticated visitors to the login page

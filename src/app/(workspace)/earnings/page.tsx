@@ -1,8 +1,37 @@
+﻿import { Suspense } from "react";
 import { Earnings } from "@/components/earnings";
 import { getContext } from "@/lib/auth";
 import { redirect } from "next/navigation";
-export default async function Page() {
-  const { profile } = await getContext();
-  if (profile.role === "bidder") redirect("/dashboard");
-  return <Earnings />;
+import { readReport } from "@/lib/reporting-server";
+import type { EarningsReport } from "@/lib/report-types";
+import { actorReadScope } from "@/lib/read-keys";
+import { readKey } from "@/lib/read-state";
+import { calendarToday } from "@/lib/calendar-period";
+async function Content() {
+  const context = await getContext();
+  if (context.profile.role === "bidder") redirect("/dashboard");
+  const day = calendarToday(),
+    query = {
+      period: { preset: "this_week" as const },
+      group: "bidder" as const,
+    };
+  const result = await readReport<EarningsReport>(
+    "earnings_performance_v2",
+    query,
+  );
+  return (
+    <Earnings
+      initial={{
+        key: readKey(actorReadScope(context), "earnings", query, day),
+        result,
+      }}
+    />
+  );
+}
+export default function Page() {
+  return (
+    <Suspense fallback={<p role="status">Loading earnings…</p>}>
+      <Content />
+    </Suspense>
+  );
 }

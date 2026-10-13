@@ -1,14 +1,14 @@
 "use server";
+import * as reads from "@/lib/read-services";
 import { getContext } from "@/lib/auth";
 import { adminClient } from "@/lib/admin";
 import {
   normalizeJobUrl,
   moneyToCents,
   validateUpload,
-  chicagoDateRange,
 } from "@/lib/domain";
 import type { Database } from "@/lib/database.types";
-import { BID_LIST_RPC, type BidListLoadResult, type BidListQuery, type BidListResult } from "@/lib/bid-list";
+import { type BidListLoadResult, type BidListQuery } from "@/lib/bid-list";
 import { createHash } from "node:crypto";
 import { fromZonedTime } from "date-fns-tz";
 import { unstable_rethrow } from "next/navigation";
@@ -28,9 +28,7 @@ import type {
   PurgeStatus,
 } from "@/lib/bulk-types";
 import { canRetryPurge } from "@/lib/purge-status";
-import { isCalendarPeriod, resolveCalendarPeriod } from "@/lib/calendar-period";
 import { readReport } from "@/lib/reporting-server";
-import { getManagerFinancialValues } from "@/lib/financial-data";
 import { submitAccountOperation, resumeAccountOperation, accountRecoveryList, abandonAccountOperation } from "@/lib/account-operation-server";
 import type { AccountKind } from "@/lib/account-operation-types";
 import type { BidRow } from "@/lib/workspace-types";
@@ -205,36 +203,17 @@ export async function setClientMessageStatusAction(idValue: string, status: "act
   }));
 }
 export async function getInboxNotifications() {
-  return perform(async () => {
-    const { supabase, profile } = await getContext();
-    if (profile.role === "client") throw new Error("Access denied");
-    let query = supabase.from("inbox_notifications").select("*").order("created_at", { ascending: false }).limit(100);
-    query = profile.role === "admin" ? query.eq("kind", "client_signup") : query.eq("kind", "message");
-    const { data, error } = await query;
-    if (error) throw new Error(error.message);
-    return data;
-  }, false);
+  return reads.getInboxNotifications();
 }
+
 export async function getUnreadNotificationCount() {
-  return perform(async () => {
-    const { supabase, profile } = await getContext();
-    if (profile.role === "client") return 0;
-    let query = supabase.from("inbox_notifications").select("id", { count: "exact", head: true }).is("read_at", null).is("resolved_at", null);
-    query = profile.role === "admin" ? query.eq("kind", "client_signup") : query.eq("kind", "message");
-    const { count, error } = await query;
-    if (error) throw new Error(error.message);
-    return count ?? 0;
-  }, false);
+  return reads.getUnreadNotificationCount();
 }
+
 export async function getClientMessages() {
-  return perform(async () => {
-    const { supabase, profile } = await getContext();
-    if (profile.role === "bidder") throw new Error("Access denied");
-    const { data, error } = await supabase.from("client_messages").select("*").order("created_at", { ascending: false }).limit(200);
-    if (error) throw new Error(error.message);
-    return data;
-  }, false);
+  return reads.getClientMessages();
 }
+
 export async function markInboxNotificationAction(notification: string, read: boolean) {
   return perform(async () => rpc("mark_notification_read", {
     p_id: z.uuid().parse(notification),
@@ -551,35 +530,11 @@ export async function finalizeUpload(fileId: string) {
   });
 }
 export async function getFileUrl(fileId: string) {
-  return perform(async () => {
-    z.uuid().parse(fileId);
-    const { supabase } = await getContext();
-    const { data: file, error } = await supabase
-      .from("files")
-      .select("*")
-      .eq("id", fileId)
-      .eq("finalized", true)
-      .single();
-    if (error || !file) throw new Error("File is unavailable.");
-    const { data, error: storageError } = await supabase.storage
-      .from("private-files")
-      .createSignedUrl(file.storage_path, 60);
-    if (storageError) throw new Error(storageError.message);
-    return { url: data.signedUrl, name: file.filename, mime: file.mime };
-  }, false);
+  return reads.getFileUrl(fileId);
 }
+
 export async function getBidHistory(bidId: string) {
-  return perform(async () => {
-    z.uuid().parse(bidId);
-    const { supabase } = await getContext();
-    const { data, error } = await supabase
-      .from("bid_events")
-      .select("id,bid_id,actor_id,event,reason,file_id,created_at")
-      .eq("bid_id", bidId)
-      .order("created_at", { ascending: false });
-    if (error) throw new Error(error.message);
-    return data;
-  }, false);
+  return reads.getBidHistory(bidId);
 }
 
 export async function getBidRows(
@@ -590,98 +545,7 @@ export async function getBidRows(
   bidderId: string | undefined,
   query: BidListQuery,
 ): Promise<BidListLoadResult> {
-  // Reads deliberately do not invalidate the route (thumbnail reads must not loop).
-  const startedAt = performance.now();
-  let diagnostic: {
-    dateMode: string;
-    trash: boolean;
-    pageIndex: number;
-    pageSize: number;
-    filterCount: number;
-    sortId: string;
-  } | undefined;
-  try {
-    const { supabase, profile } = await getContext();
-    const bounds = chicagoDateRange(mode, from, to);
-    const filters = Object.fromEntries(query.columnFilters.map((filter) => {
-      if ((filter.id === "found_at" || filter.id === "applied_at") && filter.value && typeof filter.value === "object" && "preset" in filter.value) {
-        const value = filter.value as { preset: string; from?: string; to?: string; presence?: string };
-        if (!isCalendarPeriod(value.preset)) throw new Error("Invalid period");
-        return [filter.id, { ...resolveCalendarPeriod({ preset: value.preset, from: value.from, to: value.to }), presence: value.presence }];
-      }
-      return [filter.id, filter.value];
-    }));
-    diagnostic = {
-      dateMode: isCalendarPeriod(mode) ? mode : "other",
-      trash,
-      pageIndex: query.pageIndex,
-      pageSize: query.pageSize,
-      filterCount: query.columnFilters.length,
-      sortId: [
-        "found_at", "resume_id", "company", "role_name", "url", "bidder_id", "source",
-        "applied", "applied_at", "arrangement", "job_status", "review_status",
-        "interview_scheduled", "screenshot", "screenshot_size_bytes",
-      ].includes(query.sorting[0]?.id ?? "found_at")
-        ? query.sorting[0]?.id ?? "found_at"
-        : "other",
-    };
-    const { data, error } = await supabase.rpc(BID_LIST_RPC, {
-      p_query: {
-        search: z.string().max(500).parse(query.search),
-        status: z.enum(["all", "applied", "unapplied", "pending_review"]).parse(query.status),
-        arrangement: z.string().max(20).parse(query.arrangement),
-        resume: z.union([z.literal(""), z.literal("all"), z.uuid()]).parse(query.resume),
-        bidder: z.union([z.literal(""), z.literal("all"), z.uuid()]).parse(query.bidder),
-        source: z.string().max(200).parse(query.source),
-        job: z.string().max(20).parse(query.job),
-        columnFilters: filters,
-        sorting: query.sorting.slice(0, 1),
-        pageIndex: z.number().int().min(0).max(100000).parse(query.pageIndex),
-        pageSize: z.number().int().min(1).max(100).parse(query.pageSize),
-        rangeFrom: bounds.from ?? null,
-        rangeTo: bounds.to ?? null,
-        trash,
-        scopeBidderId: bidderId ? z.uuid().parse(bidderId) : null,
-      },
-    });
-    if (error) {
-      const timedOut = error.code === "57014";
-      console.info("Bid list query", {
-        ...diagnostic,
-        durationMs: Math.round(performance.now() - startedAt),
-        outcome: timedOut ? "statement_timeout" : "database_error",
-        errorCode: error.code ?? "unknown",
-      });
-      return {
-        error: timedOut
-          ? "This date range is taking too long to load. Your current results are still shown; please retry."
-          : "Could not load bids. Your current results are still shown; please retry.",
-        ...(timedOut ? { code: "statement_timeout" as const } : {}),
-      };
-    }
-    const result = data as unknown as BidListResult;
-    if (profile.role !== "bidder" && result.rows.length) {
-      const financial = await getManagerFinancialValues(supabase, { bidIds: result.rows.map((row) => row.id) });
-      result.rows = result.rows.map((row) => ({ ...row, rate_cents: financial.bids[row.id] ?? null }));
-    }
-    console.info("Bid list query", {
-      ...diagnostic,
-      durationMs: Math.round(performance.now() - startedAt),
-      outcome: "success",
-    });
-    return { data: result };
-  } catch (error) {
-    unstable_rethrow(error);
-    console.info("Bid list query", {
-      ...diagnostic,
-      durationMs: Math.round(performance.now() - startedAt),
-      outcome: "request_error",
-      errorCode: "unknown",
-    });
-    return {
-      error: "Could not load bids. Your current results are still shown; please retry.",
-    };
-  }
+  return reads.getBidRows(mode, from, to, trash, bidderId, query);
 }
 
 export async function updateBidCell(
@@ -901,8 +765,9 @@ export async function confirmBidPurge(operation: string, confirmation: string) {
   });
 }
 export async function getPurgeStatus(operation: string) {
-  return perform(async () => purgeStatus(z.uuid().parse(operation)), false);
+  return reads.getPurgeStatus(operation);
 }
+
 export async function retryPurgeCleanup(operation: string) {
   return perform(async (): Promise<PurgeResult> => {
     const op = z.uuid().parse(operation);
@@ -920,10 +785,7 @@ export async function retryPurgeCleanup(operation: string) {
   }, false);
 }
 export async function recentBidPurges() {
-  return perform(
-    async () => (await rpc("recent_bid_purges", {})) as PurgeStatus[],
-    false,
-  );
+  return reads.recentBidPurges();
 }
 
 export async function getDashboardPerformance(input: ReportQuery) {
