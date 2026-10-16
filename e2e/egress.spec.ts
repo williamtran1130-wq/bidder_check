@@ -259,7 +259,8 @@ test("active purge polls every ten seconds and completion expires across hide/sh
 test("a frozen hidden tab hides expired evidence before its delayed timers resume", async ({ page }) => {
   await setup(page);
   await expect(previews(page)).toHaveCount(2);
-  await page.clock.pauseAt(new Date("2026-10-16T12:00:01Z"));
+  // Leave startup headroom on slower CI runners, before the 45-second renewal.
+  await page.clock.pauseAt(new Date("2026-10-16T12:00:30Z"));
   await visible(page, "hidden");
   // Browser suspension advances wall time without executing the expiry timer.
   await page.clock.setSystemTime(new Date("2026-10-16T12:02:00Z"));
