@@ -28,6 +28,9 @@ their existing behavior. No schema migration is required.
   the worktree's shared dependency junction is outside Turbopack's filesystem root.
 - Independent review found no Critical/Important issues. Its suggested active-purge
   completion/visibility case was added and passed on desktop and mobile.
+- Final focused browser run: 26/26 desktop/mobile cases passed with zero retries.
+  Existing read, purge, screenshot-size, and notification compatibility run:
+  66/66 desktop/mobile cases passed with zero retries.
 - Browser coverage includes stable sources, fresh dialog access, visibility,
   offscreen/dialog behavior, failed renewal, explicit retry, image errors, actor
   replacement, unmount, revocation, expired/slow access, notification visibility,
