@@ -28,13 +28,21 @@ their existing behavior. No schema migration is required.
   the worktree's shared dependency junction is outside Turbopack's filesystem root.
 - Independent review found no Critical/Important issues. Its suggested active-purge
   completion/visibility case was added and passed on desktop and mobile.
-- Final focused browser run: 26/26 desktop/mobile cases passed with zero retries.
+- Final focused browser run: 28/28 desktop/mobile cases passed with zero retries.
   Existing read, purge, screenshot-size, and notification compatibility run:
   66/66 desktop/mobile cases passed with zero retries.
 - Browser coverage includes stable sources, fresh dialog access, visibility,
   offscreen/dialog behavior, failed renewal, explicit retry, image errors, actor
   replacement, unmount, revocation, expired/slow access, notification visibility,
   late purge responses, and the six-second cleanup-completion display.
+- A frozen-tab regression advances wall time while timers remain paused. Expiry
+  is checked again on visibility return before stale evidence can be displayed.
+  This case failed before the visibility guard and passed afterward, with the
+  full 764-test suite, 66 compatibility cases, lint/typecheck and build rerun.
+- Pre-guard revision `9478517` passed Linux CI, including its default production
+  build and all 346 browser cases. Windows passed on one unchanged rerun; its
+  first failure was the existing cleanup test comparing 300 with 300.001 seconds.
+  That first-attempt failure is retained; no worker code or assertion was changed.
 
 ## Organization baseline and monitoring
 

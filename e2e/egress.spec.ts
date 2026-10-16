@@ -255,3 +255,17 @@ test("active purge polls every ten seconds and completion expires across hide/sh
   await expect(page.getByTestId("purge-finished")).toHaveText("0");
   expect(reads).toBe(3);
 });
+
+test("a frozen hidden tab hides expired evidence before its delayed timers resume", async ({ page }) => {
+  await setup(page);
+  await expect(previews(page)).toHaveCount(2);
+  await page.clock.pauseAt(new Date("2026-10-16T12:00:01Z"));
+  await visible(page, "hidden");
+  // Browser suspension advances wall time without executing the expiry timer.
+  await page.clock.setSystemTime(new Date("2026-10-16T12:02:00Z"));
+  await visible(page, "visible");
+  const image = page.getByRole("img", { name: "Application proof for Evidence 1", exact: true, includeHidden: true });
+  await expect(image).toBeHidden();
+  await page.clock.runFor(100);
+  await expect(image).toBeVisible();
+});

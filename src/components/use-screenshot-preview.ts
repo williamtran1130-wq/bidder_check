@@ -57,7 +57,16 @@ export function useScreenshotPreview(scope: string, fileId: string | null, enabl
     if (!expiresAt) return;
     // Hide an expired preview even if its renewal is slow or the tab was hidden.
     const timer = setTimeout(() => expire(expiresAt), Math.max(0, expiresAt - Date.now()));
-    return () => clearTimeout(timer);
+    // A suspended browser may deliver visibilitychange before overdue timers.
+    const resumed = () => {
+      if (document.visibilityState === "visible" && Date.now() >= expiresAt)
+        expire(expiresAt);
+    };
+    document.addEventListener("visibilitychange", resumed);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", resumed);
+    };
   }, [expiresAt]);
 
   return {
