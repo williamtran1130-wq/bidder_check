@@ -32,8 +32,13 @@ export async function getFileUrls(
     Number(document.documentElement.dataset.fileBatchReads ?? 0) + 1,
   );
   document.documentElement.dataset.fileBatchIds = JSON.stringify(ids);
+  const token = document.documentElement.dataset.fileBatchReads;
+  if (document.documentElement.dataset.delayNextFiles === "true") {
+    document.documentElement.dataset.delayNextFiles = "false";
+    await new Promise<void>((resolve) => window.addEventListener("fixture-release-files", () => resolve(), { once: true }));
+  }
   if (
-    new URLSearchParams(location.search).has("read-fixes") &&
+    (new URLSearchParams(location.search).has("read-fixes") || new URLSearchParams(location.search).has("egress")) &&
     document.documentElement.dataset.thumbnailError === "true"
   )
     return { error: "Fixture preview unavailable" };
@@ -48,6 +53,9 @@ export async function getFileUrls(
                 name: "proof.png",
                 mime: "image/png",
                 ...result.data,
+                ...(new URLSearchParams(location.search).has("egress") ? {
+                  url: `https://images.example.test/${id}.png?token=${token}`,
+                } : {}),
                 expiresAt: new Date(Date.now() + 60000).toISOString(),
               },
             }

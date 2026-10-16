@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PurgeStatus } from "@/lib/bulk-types";
 import { recentBidPurges } from "@/lib/read-client";
+import { useDocumentVisible } from "@/lib/use-document-visible";
 
 const ACTIVE_POLL_MS = 10_000;
 const IDLE_POLL_MS = 30_000;
@@ -13,6 +14,7 @@ const COMPLETE_VISIBLE_MS = 6_000;
  * briefly as "complete" before disappearing.
  */
 export function usePurgeOperations(manager: boolean) {
+  const foreground = useDocumentVisible();
   const [operations, setOperations] = useState<PurgeStatus[]>([]),
     [finished, setFinished] = useState<PurgeStatus[]>([]),
     [pollError, setPollError] = useState(false),
@@ -65,14 +67,14 @@ export function usePurgeOperations(manager: boolean) {
   );
 
   useEffect(() => {
-    if (!manager) return;
+    if (!manager || !foreground) return;
     let cancelled = false,
       timer: ReturnType<typeof setTimeout>;
     async function load() {
       const token = ++sequence.current;
       try {
         const result = await recentBidPurges();
-        if (cancelled) return;
+        if (cancelled || document.visibilityState !== "visible") return;
         if (result.error || !result.data) setPollError(true);
         else if (token >= applied.current) {
           applied.current = token;
@@ -82,30 +84,35 @@ export function usePurgeOperations(manager: boolean) {
           commit(result.data);
         }
       } catch {
-        if (!cancelled) setPollError(true);
+        if (!cancelled && document.visibilityState === "visible") setPollError(true);
       }
-      if (!cancelled)
+      if (!cancelled && document.visibilityState === "visible")
         timer = setTimeout(
           () => void load(),
           current.current.length ? ACTIVE_POLL_MS : IDLE_POLL_MS,
         );
     }
     void load();
-    const pending = timers.current;
     return () => {
       cancelled = true;
       clearTimeout(timer);
+    };
+  }, [manager, foreground, commit]);
+
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
       pending.forEach(clearTimeout);
       pending.clear();
     };
-  }, [manager, commit]);
+  }, []);
 
   const active = operations.length > 0;
   useEffect(() => {
-    if (!active) return;
+    if (!active || !foreground) return;
     const timer = setInterval(() => setTick(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [active]);
+  }, [active, foreground]);
 
   return {
     operations,

@@ -2,7 +2,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { BidRow } from "@/lib/workspace-types";
-import { thumbnailUrl, invalidateThumbnail, useReadScope } from "@/lib/read-scope";
+import { invalidateThumbnail, useReadScope } from "@/lib/read-scope";
+import { useScreenshotPreview } from "./use-screenshot-preview";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -33,18 +34,18 @@ export function ScreenshotCell({
   const ref = useRef<HTMLDivElement>(null);
   const previewTrigger = useRef<HTMLButtonElement>(null);
   const [visible, setVisible] = useState(false);
-  const [url, setUrl] = useState("");
-  const [error, setError] = useState("");
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [open, setOpen] = useState(false);
-  const [retry, setRetry] = useState(0);
+  const [openFile, setOpenFile] = useState("");
   const [pasteProgress, setPasteProgress] = useState("");
   const [pasteError, setPasteError] = useState("");
   const [pasteBusy, setPasteBusy] = useState(false);
   const router = useRouter();
   const scope = useReadScope();
-  const [urlFile, setUrlFile] = useState("");
-  const currentUrl = urlFile === `${scope}:${bid.evidence_file_id}` ? url : "";
+  const fileKey = JSON.stringify([scope, bid.evidence_file_id]);
+  const open = openFile === fileKey;
+  const preview = useScreenshotPreview(scope, bid.evidence_file_id, visible || open);
+  const currentUrl = preview.url;
+  const error = preview.error;
   useEffect(() => {
     const observer = new IntersectionObserver(([entry]) =>
       setVisible(entry.isIntersecting),
@@ -52,36 +53,6 @@ export function ScreenshotCell({
     if (ref.current) observer.observe(ref.current);
     return () => observer.disconnect();
   }, []);
-  useEffect(() => {
-    if (!visible || !bid.evidence_file_id) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    async function load() {
-      const result = await thumbnailUrl(scope, bid.evidence_file_id!);
-      if (cancelled) return;
-      setUrlFile(`${scope}:${bid.evidence_file_id}`);
-      if (result.data) {
-        const renewIn = Date.parse(result.data.expiresAt) - Date.now() - 15_000;
-        // A malformed/already stale result must not create a zero-delay loop.
-        if (!Number.isFinite(renewIn) || renewIn <= 0) {
-          setUrl("");
-          setError("Preview expired. Retry to refresh.");
-          return;
-        }
-        setUrl(result.data.url);
-        setError("");
-        timer = setTimeout(() => void load(), renewIn);
-      } else {
-        setUrl("");
-        setError(result.error ?? "Preview unavailable");
-      }
-    }
-    void load();
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [visible, bid.evidence_file_id, retry, scope]);
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
       const target = ref.current;
@@ -107,7 +78,7 @@ export function ScreenshotCell({
         setPasteProgress(`${phase} ${progress}%`);
       }).then(() => {
         if (bid.evidence_file_id) invalidateThumbnail(scope, bid.evidence_file_id);
-        setUrl("");
+        setOpenFile("");
         onUploaded?.();
         router.refresh();
       }).catch((reason: unknown) => {
@@ -137,7 +108,8 @@ export function ScreenshotCell({
         <button
           ref={previewTrigger}
           className="block min-w-0 flex-1 overflow-hidden rounded-md border focus-visible:outline-2 focus-visible:outline-primary"
-          onClick={() => setOpen(true)}
+          onClick={() => setOpenFile(fileKey)}
+          style={{ visibility: preview.authorized ? undefined : "hidden" }}
           aria-label={`Preview screenshot for ${bid.company}`}
         >
           {/* Private, expiring URLs must bypass the public Next image optimization cache. */}
@@ -147,7 +119,7 @@ export function ScreenshotCell({
             alt={`Application proof for ${bid.company}`}
             className="h-9 w-full object-cover"
             loading="lazy"
-            onError={() => setError("Preview expired. Retry to refresh.")}
+            onError={preview.fail}
           />
         </button>
       )}
@@ -157,7 +129,7 @@ export function ScreenshotCell({
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => { if (bid.evidence_file_id) invalidateThumbnail(scope, bid.evidence_file_id); setRetry((n) => n + 1); }}
+          onClick={preview.retry}
         >
           Retry preview
         </Button>
@@ -198,13 +170,13 @@ export function ScreenshotCell({
           onUploaded={() => {
             setUploadOpen(false);
             if (bid.evidence_file_id) invalidateThumbnail(scope, bid.evidence_file_id);
-            setUrl("");
+            setOpenFile("");
             onUploaded?.();
             router.refresh();
           }}
         />
       )}
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open && !!currentUrl && !error} onOpenChange={(next) => setOpenFile(next ? fileKey : "")}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-4xl" onCloseAutoFocus={(event) => { event.preventDefault(); previewTrigger.current?.focus({ preventScroll: true }); }}>
           <DialogHeader>
             <DialogTitle>{bid.company} application proof</DialogTitle>
@@ -214,15 +186,25 @@ export function ScreenshotCell({
                 : "Historical proof; upload new proof to apply again"}
             </DialogDescription>
           </DialogHeader>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={currentUrl}
-            alt={`Enlarged application proof for ${bid.company}`}
-            className="max-h-[50dvh] w-full object-contain"
-          />
+          {open && bid.evidence_file_id && <EnlargedScreenshot key={fileKey} scope={scope} fileId={bid.evidence_file_id} company={bid.company} />}
           {open && (role === "client" || role === "admin") && bid.evidence_file_id && <UploadDetails key={bid.evidence_file_id} fileId={bid.evidence_file_id} role={role} />}
         </DialogContent>
       </Dialog>
     </div>
   );
+}
+
+function EnlargedScreenshot({ scope, fileId, company }: { scope: string; fileId: string; company: string }) {
+  // Mounted on open: the table's already-loaded source may have expired.
+  const preview = useScreenshotPreview(scope, fileId, true);
+  return <>
+    {preview.url && <img // eslint-disable-line @next/next/no-img-element
+      src={preview.url}
+      alt={`Enlarged application proof for ${company}`}
+      className="max-h-[50dvh] w-full object-contain"
+      style={{ visibility: preview.authorized ? undefined : "hidden" }}
+      onError={preview.fail}
+    />}
+    {preview.error && <Button variant="ghost" size="sm" onClick={preview.retry}>Retry enlarged preview</Button>}
+  </>;
 }
