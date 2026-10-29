@@ -39,6 +39,17 @@ beforeEach(() => {
     return q;
   });
 });
+it("serves compressed MIME and matching filename without changing authorization or expiry", async () => {
+  const { getFileUrls } = await import("@/lib/read-services");
+  const id = "00000000-0000-4000-8000-000000000001";
+  h.files = [{ id, kind: "screenshot", finalized_at: "2026-10-13T11:00:00Z",
+    storage_path: "authorized/optimized.webp", filename: "proof.PNG", mime: "image/png", stored_mime: "image/webp" }];
+  const result = await getFileUrls([id]);
+  expect(result.data?.[0]).toMatchObject({ data: { name: "proof.webp", mime: "image/webp", expiresAt: "2026-10-13T12:01:00.000Z" } });
+  expect(h.adminSign).toHaveBeenCalledExactlyOnceWith("authorized/optimized.webp", 60);
+  expect(h.sign).not.toHaveBeenCalled();
+  vi.useRealTimers();
+});
 it("server-signs only authorized unexpired screenshot paths and caps their remaining lifetime", async () => {
   const { getFileUrls } = await import("@/lib/read-services");
   const first = "00000000-0000-4000-8000-000000000001",

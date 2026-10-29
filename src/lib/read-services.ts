@@ -124,7 +124,7 @@ export function createReadServices(
       const { data: files, error } = valid.length
         ? await supabase
             .from("files")
-            .select("id,storage_path,filename,mime,kind,finalized_at")
+            .select("id,storage_path,filename,mime,stored_mime,kind,finalized_at")
             .in("id", valid)
             .eq("finalized", true)
         : { data: [], error: null };
@@ -153,8 +153,10 @@ export function createReadServices(
                     id: file.id,
                     data: {
                       url: signed.data.signedUrl,
-                      name: file.filename,
-                      mime: file.mime,
+                      name: file.stored_mime === "image/webp"
+                        ? `${file.filename.replace(/\.[^.]*$/, "") || "screenshot"}.webp`
+                        : file.filename,
+                      mime: file.stored_mime ?? file.mime,
                       expiresAt,
                     },
                   },

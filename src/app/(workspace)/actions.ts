@@ -17,6 +17,7 @@ import { editableBidField, workArrangement, jobStatus, importDate, importRows } 
 import { centralWallTimeToISO } from "@/lib/central-time";
 import { z } from "zod";
 import { validateScreenshotBytes } from "@/lib/image-validation";
+import { finalizeScreenshotUpload } from "@/lib/finalize-screenshot";
 import { headers } from "next/headers";
 import { captureUploadContext } from "@/lib/upload-context";
 import { runStorageCleanup } from "@/lib/storage-cleanup";
@@ -535,6 +536,12 @@ export async function finalizeUpload(fileId: string) {
     const uploadContext = file.kind === "screenshot"
       ? captureUploadContext(await headers(), process.env.VERCEL === "1")
       : captureUploadContext(new Headers(), false);
+    if (file.kind === "screenshot") {
+      await finalizeScreenshotUpload({
+        fileId: file.id, actorId: profile.id, sourceSha256: sha, bytes, context: uploadContext,
+      });
+      return file.id;
+    }
     const { error: finalError } = await adminClient().rpc(
       "finalize_verified_file_v2",
       {

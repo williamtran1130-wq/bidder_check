@@ -1,9 +1,10 @@
 import { existsSync } from "node:fs";
 import { beforeEach, expect, it, vi } from "vitest";
 import sharp from "sharp";
+import { createHash } from "node:crypto";
 const state = vi.hoisted(() => ({
   profile: { id: "40000000-0000-4000-8000-000000000001", role: "client", approval_status: "approved", archived: false },
-  rpc: vi.fn(), verified: vi.fn(), file: { id: "40000000-0000-4000-8000-000000000002", created_by: "40000000-0000-4000-8000-000000000001", kind: "screenshot", mime: "image/png", size_bytes: 0, storage_path: "fixture/proof", finalized: false },
+  rpc: vi.fn(), verified: vi.fn(), upload: vi.fn(), file: { id: "40000000-0000-4000-8000-000000000002", created_by: "40000000-0000-4000-8000-000000000001", kind: "screenshot", mime: "image/png", size_bytes: 0, storage_path: "fixture/proof", finalized: false },
   bytes: new Uint8Array(), headers: new Headers(), headerReads: 0, download: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
@@ -13,7 +14,7 @@ vi.mock("@/lib/auth", () => ({ getContext: async () => ({ profile: state.profile
   from: () => ({ select: () => ({ eq: () => ({ single: async () => ({ data: state.file }) }) }) }),
   storage: { from: () => ({ download: state.download }) },
 } }) }));
-vi.mock("@/lib/admin", () => ({ adminClient: () => ({ rpc: state.verified }) }));
+vi.mock("@/lib/admin", () => ({ adminClient: () => ({ rpc: state.verified, storage: { from: () => ({ upload: state.upload }) } }) }));
 vi.mock("@/lib/storage-cleanup", () => ({ runStorageCleanup: vi.fn() }));
 import { finalizeUpload } from "@/app/(workspace)/actions";
 const actions = existsSync("src/app/(workspace)/upload-context-actions.ts")
@@ -23,14 +24,37 @@ const fileId = "40000000-0000-4000-8000-000000000002", bidId = "40000000-0000-40
 beforeEach(async () => {
   state.file.finalized = false;
   vi.stubEnv("VERCEL", "1");
+  vi.stubEnv("SCREENSHOT_COMPRESSION_ENABLED", "false");
   state.profile = { id: "40000000-0000-4000-8000-000000000001", role: "client", approval_status: "approved", archived: false };
   state.file.created_by = state.profile.id;
   state.file.kind = "screenshot"; state.file.mime = "image/png"; state.headerReads = 0;
   state.bytes = new Uint8Array(await sharp({ create: { width: 2, height: 2, channels: 3, background: "#fff" } }).png().toBuffer());
   state.file.size_bytes = state.bytes.length;
   state.headers = new Headers({ "x-vercel-forwarded-for": "203.0.113.10", "x-vercel-ip-city": "Chicago", "x-vercel-ip-country-region": "IL", "x-vercel-ip-country": "US" });
-  state.rpc.mockReset(); state.verified.mockReset(); state.download.mockReset();
+  state.rpc.mockReset(); state.verified.mockReset(); state.download.mockReset(); state.upload.mockReset();
   state.download.mockImplementation(async () => ({ data: new Blob([state.bytes]) }));
+});
+it("compresses only after original validation while preserving original proof hash and upload context", async () => {
+  vi.stubEnv("SCREENSHOT_COMPRESSION_ENABLED", "true");
+  state.bytes = new Uint8Array(await sharp({ create: { width: 800, height: 600, channels: 3, background: "#fff" } }).png().toBuffer());
+  state.file.size_bytes = state.bytes.length;
+  state.verified.mockImplementation(async (name) => name === "reserve_screenshot_optimization"
+    ? { data: { attempt_id: "reserved", storage_path: "private/candidate.webp" }, error: null }
+    : { error: null });
+  state.upload.mockResolvedValue({ error: null });
+  expect(await finalizeUpload(fileId)).toEqual({ data: fileId });
+  expect(state.download).toHaveBeenCalledTimes(1);
+  const uploaded = state.upload.mock.calls[0][1] as Buffer;
+  expect(uploaded.length).toBeLessThan(state.bytes.length);
+  expect((await sharp(uploaded).metadata()).format).toBe("webp");
+  expect(state.verified).toHaveBeenLastCalledWith("finalize_optimized_screenshot", expect.objectContaining({
+    p_sha: createHash("sha256").update(state.bytes).digest("hex"),
+    p_stored_sha: createHash("sha256").update(uploaded).digest("hex"),
+    p_stored_size: uploaded.length, p_context: expect.objectContaining({ ip: "203.0.113.10" }),
+  }));
+  // Both source fields remain untouched for review and duplicate-size matching.
+  expect(state.file.mime).toBe("image/png");
+  expect(state.file.size_bytes).toBe(state.bytes.length);
 });
 it("retries a verified upload without downloading the private screenshot again", async () => {
   state.file.finalized = true;
