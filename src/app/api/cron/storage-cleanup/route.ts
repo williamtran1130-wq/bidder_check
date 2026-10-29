@@ -25,17 +25,25 @@ export async function GET(request: Request) {
       admin.rpc("process_candidate_retention", { p_limit: 1000 }),
     );
     if (retentionError)
-      throw new Error(`Retention pass failed: ${retentionError.message}`);
+      throw Object.assign(new Error("Retention pass failed"), {
+        code: retentionError.code,
+      });
     phase = "screenshot-retention";
     const { data: screenshots, error: screenshotError } = await run(() =>
       admin.rpc("process_screenshot_retention", { p_limit: 500 }),
     );
-    if (screenshotError) throw new Error("Screenshot expiry pending");
+    if (screenshotError)
+      throw Object.assign(new Error("Screenshot expiry pending"), {
+        code: screenshotError.code,
+      });
     phase = "legacy-cleanup";
     const { data: legacy, error: legacyError } = await run(() =>
       admin.rpc("process_legacy_file_cleanup", { p_limit: 200 }),
     );
-    if (legacyError) throw new Error("Legacy cleanup pending");
+    if (legacyError)
+      throw Object.assign(new Error("Legacy cleanup pending"), {
+        code: legacyError.code,
+      });
     // Drain backlogs inside the function limit; leases make overlapping calls safe.
     phase = "storage-cleanup";
     const storageCleanup = await runStorageCleanup(undefined, {
@@ -48,14 +56,32 @@ export async function GET(request: Request) {
       admin.rpc("retention_cleanup_status"),
     );
     if (statusError)
-      throw new Error(`Cleanup status unavailable: ${statusError.message}`);
+      throw Object.assign(new Error("Cleanup status unavailable"), {
+        code: statusError.code,
+      });
     return Response.json(
       { retention, screenshots, legacy, storageCleanup, cleanupStatus },
       { headers: { "Cache-Control": "no-store" } },
     );
-  } catch {
+  } catch (error) {
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? error.code
+        : undefined;
     console.error("[storage-cleanup] request failed", {
       phase,
+      sqlState:
+        typeof code === "string" && /^[A-Z0-9]{5}$/.test(code)
+          ? code
+          : undefined,
+      kind:
+        code === "57014" ||
+        (error instanceof Error &&
+          /^(AbortError|TimeoutError)$/.test(error.name))
+          ? "timeout"
+          : code
+            ? "database"
+            : "transport",
     });
     return Response.json(
       { error: "Cleanup pending; retry scheduled" },

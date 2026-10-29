@@ -7,9 +7,32 @@ vi.mock("@/lib/storage-cleanup", () => ({ runStorageCleanup: worker }));
 vi.mock("@/lib/admin", () => ({ adminClient: () => ({ rpc: adminRpc }) }));
 import { GET } from "@/app/api/cron/storage-cleanup/route";
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   worker.mockReset();
   adminRpc.mockReset();
+});
+it("records a sanitized SQLSTATE for a retention timeout without logging database details", async () => {
+  vi.stubEnv("CRON_SECRET", "a-secret");
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  adminRpc.mockResolvedValueOnce({
+    data: null,
+    error: {
+      code: "57014",
+      message: "private customer details must stay out of logs",
+    },
+  });
+  const response = await GET(
+    new Request("https://app/api/cron/storage-cleanup", {
+      headers: { authorization: "Bearer a-secret" },
+    }),
+  );
+  expect(response.status).toBe(503);
+  expect(log).toHaveBeenCalledWith(
+    "[storage-cleanup] request failed",
+    expect.objectContaining({ phase: "retention", sqlState: "57014" }),
+  );
+  expect(JSON.stringify(log.mock.calls)).not.toContain("private customer");
 });
 const mockRetention = () => {
   adminRpc
@@ -17,8 +40,8 @@ const mockRetention = () => {
       data: { deletedApplications: 0, storageTasksQueued: 0 },
       error: null,
     })
-    .mockResolvedValueOnce({data:{deletedFiles:0},error:null})
-    .mockResolvedValueOnce({data:{processed:0},error:null})
+    .mockResolvedValueOnce({ data: { deletedFiles: 0 }, error: null })
+    .mockResolvedValueOnce({ data: { processed: 0 }, error: null })
     .mockResolvedValueOnce({
       data: { pending: 0, verificationPending: 0 },
       error: null,

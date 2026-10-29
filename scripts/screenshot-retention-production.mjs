@@ -2,8 +2,13 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { execFile as execFileCallback } from "node:child_process";
+import { promisify } from "node:util";
 import { createClient } from "@supabase/supabase-js";
 import { chromium, expect } from "@playwright/test";
+import { objectIsAbsent } from "./storage-absence.mjs";
 
 const url = "https://aizorlyfggwbewetnwqm.supabase.co";
 const origin = "https://bidder-check.vercel.app";
@@ -26,6 +31,75 @@ const ok = ({ data, error }) => {
 };
 const actorClient = () =>
   createClient(url, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, options);
+const execFile = promisify(execFileCallback);
+async function attachExpiredSyntheticProof({
+  id,
+  workspace,
+  bidder,
+  bid,
+  profile,
+  path,
+  size,
+  sha,
+}) {
+  assert.equal(
+    readFileSync(
+      new URL("../supabase/.temp/project-ref", import.meta.url),
+      "utf8",
+    ).trim(),
+    "aizorlyfggwbewetnwqm",
+    "Production CLI link required",
+  );
+  for (const value of [id, workspace, bidder, bid, profile])
+    assert.match(value, /^[0-9a-f-]{36}$/);
+  assert.equal(path, `${workspace}/${bidder}/${id}`);
+  assert.match(sha, /^[0-9a-f]{64}$/);
+  assert.ok(Number.isInteger(size) && size > 0);
+  const dir = new URL(
+    "../.superpowers/sdd/screenshot-retention/",
+    import.meta.url,
+  );
+  await mkdir(dir, { recursive: true });
+  const sqlFile = new URL(`synthetic-expiry-${id}.sql`, dir);
+  // Upload the object first, then attach its aged metadata in one transaction so a concurrent
+  // minutely worker can never remove the file between insertion and pointer attachment.
+  await writeFile(
+    sqlFile,
+    `begin;
+select pg_advisory_xact_lock(hashtextextended('${profile}'::text,0));
+select 1 from public.bids where id='${bid}' and workspace_id='${workspace}' and bidder_id='${bidder}' for update;
+insert into public.files(id,workspace_id,bidder_id,kind,bid_id,filename,mime,size_bytes,storage_path,created_by,finalized,finalized_at,sha256,review_revision)
+select '${id}','${workspace}','${bidder}','screenshot',id,'expired.png','image/png',${size},'${path}','${bidder}',true,clock_timestamp()-interval '169 hours','${sha}',review_revision
+from public.bids where id='${bid}' and workspace_id='${workspace}' and bidder_id='${bidder}';
+update public.bids set evidence_file_id='${id}' where id='${bid}' and workspace_id='${workspace}' and bidder_id='${bidder}';
+commit;`,
+  );
+  try {
+    await execFile(
+      process.execPath,
+      [
+        fileURLToPath(
+          new URL("../node_modules/supabase/dist/supabase.js", import.meta.url),
+        ),
+        "db",
+        "query",
+        "--linked",
+        "--file",
+        fileURLToPath(sqlFile),
+        "--output",
+        "json",
+      ],
+      {
+        timeout: 60000,
+        windowsHide: true,
+        env: { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1" },
+      },
+    );
+  } catch {
+    throw new Error("Atomic synthetic expiry fixture could not be attached");
+  }
+}
+
 async function worker() {
   assert.ok(process.env.CRON_SECRET, "Worker credential required");
   const result = await fetch(`${origin}/api/cron/storage-cleanup`, {
@@ -132,6 +206,12 @@ async function smoke() {
         .from("private-files")
         .upload(file.storage_path, bytes, { contentType: file.mime }),
     );
+    assert.equal(
+      (await admin.storage.from("private-files").exists(file.storage_path))
+        .data,
+      true,
+      "Verification service must be able to HEAD the uploaded object",
+    );
     ok(
       await admin.rpc("finalize_verified_file_v2", {
         p_id: id,
@@ -155,13 +235,11 @@ async function smoke() {
       peer = await account("peer", "bidder");
     for (const user of [bidder, peer])
       ok(
-        await admin
-          .from("bidders")
-          .insert({
-            user_id: user.id,
-            workspace_id: workspace,
-            default_rate_cents: 125,
-          }),
+        await admin.from("bidders").insert({
+          user_id: user.id,
+          workspace_id: workspace,
+          default_rate_cents: 125,
+        }),
       );
     profile = ok(
       await manager.client.rpc("save_candidate_profile", {
@@ -268,8 +346,84 @@ async function smoke() {
     assert.equal(bidderDownloads, 0);
     checks.push("bidder real upload has no preview download");
     await bidderPage.close();
-    const currentProof = ok(await admin.from("bids").select("evidence_file_id").eq("id", bid).single()).evidence_file_id;
-    paths.push(ok(await admin.from("files").select("storage_path").eq("id", currentProof).single()).storage_path);
+    const currentProof = ok(
+      await admin
+        .from("bids")
+        .select("evidence_file_id")
+        .eq("id", bid)
+        .single(),
+    ).evidence_file_id;
+    paths.push(
+      ok(
+        await admin
+          .from("files")
+          .select("storage_path")
+          .eq("id", currentProof)
+          .single(),
+      ).storage_path,
+    );
+    // Independent HTTP RPCs exercise real Postgres locking, not the client's sequential action queue.
+    const raceBid = ok(
+      await manager.client.rpc("save_bid", {
+        p_id: null,
+        p_resume: resume,
+        p_company: "Retention race verification",
+        p_role: "Engineer",
+        p_url: `https://example.com/${prefix}/race`,
+        p_source: "Verification",
+        p_arrangement: "remote",
+        p_status: "open",
+      }),
+    );
+    const raceFileId = ok(
+      await bidder.client.rpc("prepare_file", {
+        p_kind: "screenshot",
+        p_target: raceBid,
+        p_name: "race.png",
+        p_mime: "image/png",
+        p_size: png.length,
+      }),
+    );
+    const raceFile = ok(
+      await admin
+        .from("files")
+        .select("storage_path")
+        .eq("id", raceFileId)
+        .single(),
+    );
+    paths.push(raceFile.storage_path);
+    ok(
+      await bidder.client.storage
+        .from("private-files")
+        .upload(raceFile.storage_path, png, { contentType: "image/png" }),
+    );
+    const [finalized, deleted] = await Promise.all([
+      admin.rpc("finalize_verified_file_v2", {
+        p_id: raceFileId,
+        p_sha: hash(png),
+        p_actor: bidder.id,
+        p_context: { source: "unavailable", status: "unavailable" },
+      }),
+      bidder.client.rpc("delete_bids", {
+        p_targets: [{ id: raceBid, version: 0 }],
+      }),
+    ]);
+    assert.ok(
+      !finalized.error || !deleted.error,
+      "One concurrent proof/deletion transaction must succeed",
+    );
+    const remainingRace = ok(
+      await admin.from("bids").select("id,version").eq("id", raceBid),
+    );
+    if (remainingRace.length)
+      ok(await bidder.client.rpc("delete_bids", { p_targets: remainingRace }));
+    assert.equal(
+      ok(await admin.from("files").select("id").eq("id", raceFileId)).length,
+      0,
+    );
+    checks.push(
+      "concurrent proof/deletion preserves version checks and leaves no file metadata",
+    );
     const before = ok(
       await admin
         .from("bids")
@@ -288,33 +442,20 @@ async function smoke() {
         path = `${workspace}/${bidder.id}/${id}`;
       paths.push(path);
       ok(
-        await admin
-          .from("files")
-          .insert({
-            id,
-            workspace_id: workspace,
-            bidder_id: bidder.id,
-            kind: "screenshot",
-            bid_id: bid,
-            filename: "expired.png",
-            mime: "image/png",
-            size_bytes: png.length,
-            storage_path: path,
-            created_by: bidder.id,
-            finalized: true,
-            finalized_at: new Date(Date.now() - 169 * 3600000).toISOString(),
-            sha256: hash(png),
-            review_revision: 1,
-          }),
-      );
-      ok(
         await admin.storage
           .from("private-files")
           .upload(path, png, { contentType: "image/png" }),
       );
-      ok(
-        await admin.from("bids").update({ evidence_file_id: id }).eq("id", bid),
-      );
+      await attachExpiredSyntheticProof({
+        id,
+        workspace,
+        bidder: bidder.id,
+        bid,
+        profile,
+        path,
+        size: png.length,
+        sha: hash(png),
+      });
       assert.ok(
         (
           await bidder.client.storage
@@ -377,13 +518,20 @@ async function smoke() {
     checks.push("profile deletion removes dependent library records");
     await worker();
     for (const path of paths) {
-      const exists = await admin.storage.from("private-files").exists(path);
-      if (exists.error) throw new Error("Storage absence check failed");
-      assert.equal(
-        exists.data,
-        false,
-        "Deleted synthetic object must be absent",
-      );
+      await expect
+        .poll(
+          async () =>
+            objectIsAbsent(
+              await admin.storage.from("private-files").exists(path),
+            ),
+          {
+            timeout: 45000,
+            intervals: [500, 1000, 2000, 5000],
+            message:
+              "Deleted synthetic object must have an explicit not-found response",
+          },
+        )
+        .toBe(true);
     }
     checks.push("physical object absence verified without image downloads");
     return {
@@ -394,9 +542,21 @@ async function smoke() {
   } finally {
     await browser?.close();
     if (workspace) {
-      const remaining = ok(await admin.from("files").select("storage_path").eq("workspace_id", workspace));
-      const pending = ok(await admin.from("storage_cleanup_tasks").select("storage_path").like("storage_path", `${workspace}/%`));
-      for (const file of [...remaining,...pending]) if (file.storage_path && !paths.includes(file.storage_path)) paths.push(file.storage_path);
+      const remaining = ok(
+        await admin
+          .from("files")
+          .select("storage_path")
+          .eq("workspace_id", workspace),
+      );
+      const pending = ok(
+        await admin
+          .from("storage_cleanup_tasks")
+          .select("storage_path")
+          .like("storage_path", `${workspace}/%`),
+      );
+      for (const file of [...remaining, ...pending])
+        if (file.storage_path && !paths.includes(file.storage_path))
+          paths.push(file.storage_path);
     }
     if (profile && manager)
       ok(

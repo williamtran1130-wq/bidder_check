@@ -176,6 +176,45 @@ it("prevents direct long-lived screenshot signing while allowing the uploader to
     ).rows,
   ).toHaveLength(1);
 });
+it("keeps expiry transactions small even when an older deployment requests a 500-file batch", async () => {
+  await service();
+  await db.exec("update public.file_retention_settings set enabled=true");
+  await db.query(
+    `insert into public.files(id,workspace_id,bidder_id,kind,bid_id,filename,mime,size_bytes,storage_path,created_by,finalized,finalized_at,sha256,review_revision)
+    select id,$1::uuid,$2::uuid,'screenshot',$3::uuid,'old.png','image/png',100,$1::text||'/'||$2::text||'/'||id::text,$4,true,clock_timestamp()-interval '169 hours',repeat('a',64),1
+    from (select gen_random_uuid() id from generate_series(1,130)) fixture`,
+    [workspace, bidder, bid, owner],
+  );
+  await db.query("select public.process_screenshot_retention(500)");
+  expect(
+    (await db.query("select id from public.files where bid_id=$1", [bid])).rows,
+  ).toHaveLength(30);
+});
+it("pauses automatic cleanup without reopening old archive writes or direct screenshot signing", async () => {
+  const file = await proof();
+  await service();
+  await db.exec(
+    "update public.file_retention_settings set enabled=true; update public.file_retention_settings set enabled=false",
+  );
+  const path = (
+    await db.query<{ storage_path: string }>(
+      "select storage_path from public.files where id=$1",
+      [file],
+    )
+  ).rows[0].storage_path;
+  await db.query(
+    "insert into storage.objects(bucket_id,name) values('private-files',$1)",
+    [path],
+  );
+  await actor();
+  expect(
+    (await db.query("select name from storage.objects where name=$1", [path]))
+      .rows,
+  ).toHaveLength(0);
+  await expect(
+    statement(() => db.query("select public.trash_bid($1,true)", [bid])),
+  ).rejects.toThrow(/refresh/i);
+});
 
 it("expires only the screenshot and preserves application state, earnings and activity", async () => {
   const file = await proof();
