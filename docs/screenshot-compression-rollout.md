@@ -43,9 +43,12 @@ hashes. Platform font rendering can affect regenerated examples.
 
 ## Production approval gates
 
-No production migration, deployment, activation, image backfill or cleanup was
-performed for this implementation. The production sequence, after explicit
-approval, is:
+The user approved production deployment on 2026-10-29. Steps 1–2 below are
+complete: migration `202610290003` is applied and release `cd2f534` is ready at
+https://bidder-check.vercel.app as deployment `dpl_CmPbyJxhQvscNRAzGGcT1K1YoN3x`.
+Compression was explicitly set to `false` at both build time and runtime.
+Readability approval and compression activation remain pending. No existing
+images were recompressed. The production sequence is:
 
 1. Review and apply forward migration
    `202610290003_screenshot_compression.sql`; do not rewrite earlier migrations.
@@ -94,6 +97,31 @@ migration applied. See [verification evidence](release-evidence/2026-10-29-compr
 Independent review found two race defects; both were reproduced with failing
 tests and fixed before the final suite: finalization winning before a second
 request reserves, and deletion accelerating an already scheduled second removal.
-PGlite verifies SQL/RLS and cleanup interleavings; separate simultaneous hosted
-PostgreSQL sessions were not used. Full hosted synthetic acceptance remains part
-of the approved production rollout, not this local implementation.
+PGlite verifies SQL/RLS and compression cleanup interleavings; separate simultaneous
+hosted compression transactions were not used. Compression-enabled acceptance
+remains part of activation after readability approval.
+
+## Production deployment acceptance, 2026-10-29
+
+The migration dry run contained only `202610290003_screenshot_compression.sql`.
+After application, all three retained columns exist and both new RPCs are callable
+only by the service role. The existing minutely cleanup scheduler remains active.
+The deployment upload manifest was reduced from 1,162 entries to 191 by excluding
+local worktrees and TypeScript build caches; credentials, audit documents and
+local verification artifacts were excluded.
+
+The existing production synthetic helper passed seven checks with compression
+disabled: explicit manager preview, real bidder upload without preview downloads,
+concurrent proof/deletion version handling, expiry preserving application state
+while denying access, assignment isolation, profile cascade deletion, and physical
+Storage absence. All three synthetic accounts and their files were removed.
+Final SQL verified zero synthetic profiles/auth accounts and zero worker failures
+in the preceding hour. Public login/manifest returned 200; unauthenticated cleanup
+returned 401. No compression activation or customer-data reset was performed.
+
+Final inventory at approximately 6:19 PM Central reported 461,495,384 object bytes,
+zero compressed screenshots/candidate reservations, zero orphan or missing
+finalized objects, zero finalized size mismatches and zero failed cleanup tasks.
+Two routine cleanup tasks remained pending during active usage. One parallel CLI
+inventory invocation stalled during login-role initialization; it was stopped
+and the serial retry returned the final inventory successfully.

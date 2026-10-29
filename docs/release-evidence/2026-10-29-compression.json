@@ -1,7 +1,7 @@
 {
   "date": "2026-10-29",
   "branch": "codex/compress-new-screenshots",
-  "scope": "Local implementation only; new screenshot uploads; no hosted changes",
+  "scope": "New screenshot uploads; deployed to production with compression disabled",
   "featureFlag": {
     "name": "SCREENSHOT_COMPRESSION_ENABLED",
     "default": false,
@@ -36,11 +36,55 @@
     "summary": "docs/screenshot-compression-samples/summary.json",
     "productionSavingsMeasured": false
   },
+  "productionRollout": {
+    "approvedByUser": "deploy till production",
+    "implementationCommit": "b500c148ab164af6babc7e3ce08b6141f96d0854",
+    "deploymentCommit": "cd2f534c9cb94c774f035e79db264c8df7b510c6",
+    "migration": "202610290003",
+    "migrationApplied": true,
+    "deploymentId": "dpl_CmPbyJxhQvscNRAzGGcT1K1YoN3x",
+    "productionUrl": "https://bidder-check.vercel.app",
+    "readyState": "READY",
+    "buildCompressionFlag": "false",
+    "runtimeCompressionFlag": "false",
+    "flagVerification": "Explicit deploy overrides accepted; both variable names confirmed in deployment metadata",
+    "hostedAcceptanceChecksPassed": 7,
+    "syntheticAccountsCreatedAndRemoved": 3,
+    "syntheticProfilesRemaining": 0,
+    "syntheticAuthAccountsRemaining": 0,
+    "workerFailuresLastHour": 0,
+    "cleanupSchedulerActive": true,
+    "retentionEnabled": true,
+    "newRpcsServiceOnly": true,
+    "publicHealthChecksPassed": 3,
+    "deploymentManifestEntries": 191,
+    "deploymentManifestBytes": 1408841,
+    "postMigrationInventory": {
+      "checkedAt": "2026-10-29T23:13:35.744939Z",
+      "storageObjectBytes": 461792854,
+      "compressedScreenshotFiles": 0,
+      "candidateReservations": 0,
+      "orphanStorageObjects": 0,
+      "missingFinalizedObjects": 0,
+      "finalizedObjectSizeMismatches": 0
+    },
+    "finalInventory": {
+      "checkedAt": "2026-10-29T23:19:26.586974Z",
+      "storageObjectBytes": 461495384,
+      "compressedScreenshotFiles": 0,
+      "candidateReservations": 0,
+      "orphanStorageObjects": 0,
+      "missingFinalizedObjects": 0,
+      "finalizedObjectSizeMismatches": 0,
+      "pendingStorageTasks": 2,
+      "failedStorageTasks": 0
+    }
+  },
   "notes": [
     "Database tests execute real SQL/RLS in PGlite. Cleanup/activation interleavings and asynchronous application concurrency are covered; separate simultaneous PostgreSQL connections were not exercised.",
     "First complete test runs overlapped newly added regression tests and correctly failed; the final stable suite passed all 837 tests.",
     "All browser assertions initially passed but Windows web-server teardown stalled. An independently managed local preview server and direct Playwright invocation produced a clean exit 0 with all 38 tests passing.",
-    "No production migrations, deployments, activation, existing-image recompression or customer image downloads were performed.",
-    "Changes remain uncommitted on the feature branch for review. Existing unrelated audit files were preserved."
+    "Initial local implementation made no hosted changes. The subsequent user-approved production migration/deployment passed hosted synthetic acceptance with compression disabled; readability/activation approval remains pending.",
+    "Implementation and deployment packaging are committed on the feature branch. No push or merge was performed; unrelated audit files were preserved."
   ]
 }
