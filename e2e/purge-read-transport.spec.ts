@@ -50,7 +50,7 @@ for (const role of ["client", "admin"]) {
     await expect(page.getByRole("alert")).toHaveCount(0);
     await page.clock.fastForward(30_100);
     await expect.poll(() => transport.reads.length).toBe(2);
-    await expect(page.getByRole("alert")).toHaveText(/Screenshot cleanup status could not be refreshed/);
+    await expect(page.getByRole("alert")).toHaveText(/File cleanup status could not be refreshed/);
     await page.clock.fastForward(30_100);
     await expect.poll(() => transport.reads.length).toBe(3);
     await expect(page.getByRole("alert")).toHaveCount(0);
@@ -78,7 +78,7 @@ test("active cleanup GET polling retains status through failure and shows comple
   await expect(notice).toContainText("Screenshots removed");
   await page.clock.fastForward(10_100);
   await expect.poll(() => transport.reads.length).toBe(2);
-  await expect(page.getByRole("alert")).toHaveText(/Screenshot cleanup status could not be refreshed/);
+  await expect(page.getByRole("alert")).toHaveText(/File cleanup status could not be refreshed/);
   await expect(notice).toContainText("Screenshots removed");
   await page.clock.fastForward(10_100);
   await expect.poll(() => transport.reads.length).toBe(3);

@@ -26,6 +26,16 @@ export async function GET(request: Request) {
     );
     if (retentionError)
       throw new Error(`Retention pass failed: ${retentionError.message}`);
+    phase = "screenshot-retention";
+    const { data: screenshots, error: screenshotError } = await run(() =>
+      admin.rpc("process_screenshot_retention", { p_limit: 500 }),
+    );
+    if (screenshotError) throw new Error("Screenshot expiry pending");
+    phase = "legacy-cleanup";
+    const { data: legacy, error: legacyError } = await run(() =>
+      admin.rpc("process_legacy_file_cleanup", { p_limit: 200 }),
+    );
+    if (legacyError) throw new Error("Legacy cleanup pending");
     // Drain backlogs inside the function limit; leases make overlapping calls safe.
     phase = "storage-cleanup";
     const storageCleanup = await runStorageCleanup(undefined, {
@@ -40,7 +50,7 @@ export async function GET(request: Request) {
     if (statusError)
       throw new Error(`Cleanup status unavailable: ${statusError.message}`);
     return Response.json(
-      { retention, storageCleanup, cleanupStatus },
+      { retention, screenshots, legacy, storageCleanup, cleanupStatus },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch {

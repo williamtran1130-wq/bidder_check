@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { useNotificationResource } from "@/lib/use-notifications";
 import { refreshNotificationScope } from "@/lib/notification-store";
 import { ReadScope } from "@/lib/read-scope";
-import { ScreenshotCell } from "@/components/screenshot-cell";
+import { ScreenshotCell } from "./screenshot-preview-probe";
 import { fixture } from "./sample-data";
 import type { NotificationResult } from "@/lib/notification-types";
 function Notices({

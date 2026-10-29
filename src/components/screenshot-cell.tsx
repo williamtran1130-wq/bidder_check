@@ -15,6 +15,7 @@ import {
 import { FileUpload, uploadVerifiedFile } from "./file-upload";
 import { pastedImage } from "@/lib/clipboard-image";
 import { LoaderCircle } from "lucide-react";
+import { SCREENSHOT_RETENTION_MS, screenshotStatus } from "@/lib/screenshot-retention";
 import { ScreenshotSizeBadge } from "./screenshot-size-badge";
 import { UploadDetails } from "./upload-details";
 
@@ -33,7 +34,7 @@ export function ScreenshotCell({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const previewTrigger = useRef<HTMLButtonElement>(null);
-  const [visible, setVisible] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const [uploadOpen, setUploadOpen] = useState(false);
   const [openFile, setOpenFile] = useState("");
   const [pasteProgress, setPasteProgress] = useState("");
@@ -43,16 +44,14 @@ export function ScreenshotCell({
   const scope = useReadScope();
   const fileKey = JSON.stringify([scope, bid.evidence_file_id]);
   const open = openFile === fileKey;
-  const preview = useScreenshotPreview(scope, bid.evidence_file_id, visible || open);
-  const currentUrl = preview.url;
-  const error = preview.error;
+  const status = screenshotStatus(bid, now);
+  const manager = role === "client" || role === "admin";
   useEffect(() => {
-    const observer = new IntersectionObserver(([entry]) =>
-      setVisible(entry.isIntersecting),
-    );
-    if (ref.current) observer.observe(ref.current);
-    return () => observer.disconnect();
-  }, []);
+    const expiry = Date.parse(bid.screenshot_uploaded_at ?? "") + SCREENSHOT_RETENTION_MS;
+    if (!Number.isFinite(expiry) || expiry <= Date.now()) return;
+    const timer = setTimeout(() => setNow(Date.now()), expiry - Date.now());
+    return () => clearTimeout(timer);
+  }, [bid.screenshot_uploaded_at]);
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
       const target = ref.current;
@@ -103,37 +102,11 @@ export function ScreenshotCell({
       {pasteBusy && <span className="inline-flex items-center gap-1 text-[10px] text-primary" role="status"><LoaderCircle size={12} className="animate-spin" />{pasteProgress || "Uploading screenshot"}</span>}
       {pasteError && <p className="text-[10px] leading-4 text-destructive" role="alert">{pasteError}</p>}
       {!uploadOpen && !bid.deleted_at && bid.review_status === "approved" && <p className="text-[9px] leading-3 text-muted-foreground">Focus this cell and paste an image</p>}
-      <div className="flex items-center gap-1.5">
-      {currentUrl && (
-        <button
-          ref={previewTrigger}
-          className="block min-w-0 flex-1 overflow-hidden rounded-md border focus-visible:outline-2 focus-visible:outline-primary"
-          onClick={() => setOpenFile(fileKey)}
-          style={{ visibility: preview.authorized ? undefined : "hidden" }}
-          aria-label={`Preview screenshot for ${bid.company}`}
-        >
-          {/* Private, expiring URLs must bypass the public Next image optimization cache. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={currentUrl}
-            alt={`Application proof for ${bid.company}`}
-            className="h-9 w-full object-cover"
-            loading="lazy"
-            onError={preview.fail}
-          />
-        </button>
-      )}
+      <div className="flex flex-wrap items-center gap-1.5">
+      <span className="text-xs" role="status">{status === "expired" ? "Uploaded — expired" : status === "uploaded" ? "Uploaded" : "Not uploaded"}</span>
+      {manager && status === "uploaded" && <Button ref={previewTrigger} variant="ghost" size="sm" onClick={() => setOpenFile(fileKey)} aria-label={`Open screenshot for ${bid.company}`}>Open screenshot</Button>}
       <ScreenshotSizeBadge bid={bid} role={role} />
       </div>
-      {error && (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={preview.retry}
-        >
-          Retry preview
-        </Button>
-      )}
       {!bid.deleted_at && bid.review_status !== "approved" && (
         <p className="text-[10px] leading-4 text-muted-foreground">
           {bid.review_status === "pending" ? "Waiting for client review before proof upload." : "Correct this bid and resubmit it for review."}
@@ -176,17 +149,17 @@ export function ScreenshotCell({
           }}
         />
       )}
-      <Dialog open={open && !!currentUrl && !error} onOpenChange={(next) => setOpenFile(next ? fileKey : "")}>
+      <Dialog open={manager && open && status === "uploaded"} onOpenChange={(next) => setOpenFile(next ? fileKey : "")}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-4xl" onCloseAutoFocus={(event) => { event.preventDefault(); previewTrigger.current?.focus({ preventScroll: true }); }}>
           <DialogHeader>
             <DialogTitle>{bid.company} application proof</DialogTitle>
             <DialogDescription>
               {bid.applied
                 ? "Current application screenshot"
-                : "Historical proof; upload new proof to apply again"}
+                : "Current uploaded screenshot"}
             </DialogDescription>
           </DialogHeader>
-          {open && bid.evidence_file_id && <EnlargedScreenshot key={fileKey} scope={scope} fileId={bid.evidence_file_id} company={bid.company} />}
+          {manager && open && status === "uploaded" && bid.evidence_file_id && <EnlargedScreenshot key={fileKey} scope={scope} fileId={bid.evidence_file_id} company={bid.company} />}
           {open && (role === "client" || role === "admin") && bid.evidence_file_id && <UploadDetails key={bid.evidence_file_id} fileId={bid.evidence_file_id} role={role} />}
         </DialogContent>
       </Dialog>

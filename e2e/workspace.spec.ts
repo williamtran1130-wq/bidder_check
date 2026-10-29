@@ -403,17 +403,18 @@ test("keyboard focus initializes grid navigation without a mouse", async ({
 test("removing the last page clamps pagination and selection", async ({
   page,
 }) => {
+  page.on("dialog",dialog=>dialog.accept());
   await page.goto("http://127.0.0.1:3001/bids");
   await page.getByLabel("Found period").selectOption("all");
   await page.getByRole("button", { name: "Next page", exact: true }).click();
   await expect(page.getByText("11\u201312 of 12 bids")).toBeVisible();
   await page
-    .getByRole("button", { name: "Move to trash", exact: true })
+    .getByRole("button", { name: "Delete permanently", exact: true })
     .last()
     .click();
   await expect(page.getByText("11\u201311 of 11 bids")).toBeVisible();
   await page
-    .getByRole("button", { name: "Move to trash", exact: true })
+    .getByRole("button", { name: "Delete permanently", exact: true })
     .last()
     .click();
   await expect(page.getByText("1\u201310 of 10 bids")).toBeVisible();

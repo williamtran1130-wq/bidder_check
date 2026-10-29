@@ -1947,7 +1947,7 @@ it("aggregates CT reporting before retention and queues screenshot cleanup", asy
   expect(history.find((row) => row.metric === "earning")?.tracked_count).toBe(1);
   expect((await db.query("select id from public.files where id=$1", [proof])).rows).toHaveLength(0);
   expect((await db.query("select id from public.files where resume_id=$1", [assignmentId])).rows).toHaveLength(1);
-  expect((await db.query("select id from public.storage_cleanup_tasks where operation_id is null and storage_path is not null")).rows).toHaveLength(1);
+  expect((await db.query("select id from public.storage_cleanup_tasks where operation_id is null and storage_path like $1", [`%/${proof}`])).rows).toHaveLength(1);
 });
 it("subtracts retention as CT calendar months across month-end and daylight saving", async () => {
   const monthEnd = (

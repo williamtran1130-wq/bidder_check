@@ -29,7 +29,7 @@ function Harness() {
     <p data-testid="purge-finished">{purges.finished.length}</p>
     <div style={{ marginTop: offscreen ? 10000 : 0, display: "grid", gridTemplateColumns: "repeat(5, 180px)" }}>
       <ReadScope scope={scope}>{mounted && Array.from({ length: count }, (_, i) =>
-        <ScreenshotCell key={i} role="bidder" bid={{ ...fixture.bids[0], company: `Evidence ${i + 1}`, evidence_file_id: `egress-${version}-${i}` }} />
+        <ScreenshotCell key={i} role={new URLSearchParams(location.search).get("role") ?? "bidder"} bid={{ ...fixture.bids[0], company: `Evidence ${i + 1}`, evidence_file_id: `egress-${version}-${i}` }} />
       )}</ReadScope>
     </div>
   </>;

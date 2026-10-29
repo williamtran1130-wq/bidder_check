@@ -10,7 +10,7 @@ async function open(page: Page, flags = "") {
 }
 async function previewScreenshot(page: Page, mobile: boolean) {
   await page.getByLabel(/^Screenshot paste target for Linear\./).scrollIntoViewIfNeeded();
-  const trigger = page.getByRole("button", { name: "Preview screenshot for Linear", exact: true });
+  const trigger = page.getByRole("button", { name: "Open screenshot for Linear", exact: true });
   await trigger.scrollIntoViewIfNeeded();
   if (mobile) await trigger.tap(); else { await trigger.focus(); await page.keyboard.press("Enter"); }
   return trigger;
@@ -50,7 +50,7 @@ test("distinguishes historical not-recorded, new unavailable metadata, and retry
   await page.getByRole("button", { name: "Retry upload details" }).click();
   await expect(page.getByRole("region", { name: "Upload details", exact: true })).toContainText("Chicago, IL, US");
 });
-test("keeps screenshot fields free of the collection notice and private data out of bidder previews", async ({ page }, info) => {
+test("keeps screenshot fields free of the collection notice and bidder screenshots status-only", async ({ page }) => {
   await open(page, "role=bidder");
   const notice = page.getByText("Screenshot uploads record your IP address and approximate IP location for client/admin review. VPNs and proxies may affect the location.", { exact: true });
   await expect(notice).toHaveCount(0);
@@ -58,27 +58,17 @@ test("keeps screenshot fields free of the collection notice and private data out
   await screenshot.getByRole("button", { name: "Replace screenshot", exact: true }).click();
   await expect(screenshot.getByLabel("Upload or paste an application screenshot", { exact: true })).toBeVisible();
   await expect(notice).toHaveCount(0);
-  await previewScreenshot(page, info.project.name === "mobile");
+  await expect(page.getByRole("button", {name: "Open screenshot for Linear", exact:true})).toHaveCount(0);
+  await expect(page.getByRole("img", {name:/application proof/i})).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Upload details", exact: true })).toHaveCount(0);
   await expect(page.locator("html")).toHaveAttribute("data-upload-context-reads", "0");
   await expect(page.locator("html")).toHaveAttribute("data-upload-history-reads", "0");
 });
-test("lazy manager history preserves unavailable screenshots, manager attribution and cursor pages", async ({ page }, info) => {
-  await open(page, "upload-context-pages");
-  const row = page.getByRole("row").filter({ has: page.getByRole("gridcell", { name: "Linear", exact: true }) });
-  const trigger = row.getByRole("button", { name: /^View .+ at Linear$/ });
-  await trigger.scrollIntoViewIfNeeded();
-  if (info.project.name === "mobile") await trigger.tap(); else { await trigger.focus(); await page.keyboard.press("Enter"); }
-  const history = page.getByRole("region", { name: "Upload history", exact: true });
-  await expect(history).toContainText("Screenshot unavailable");
-  await expect(history).toContainText("Casey Manager (client)");
-  await expect(history).toContainText("São Paulo, SP, BR");
-  await expect(history.getByRole("listitem")).toHaveCount(2);
-  await expect(page.locator("html")).toHaveAttribute("data-upload-history-reads", "1");
-  await history.getByRole("button", { name: "Load more uploads", exact: true }).click();
-  await expect(history.getByRole("listitem")).toHaveCount(3);
-  await expect(page.locator("html")).toHaveAttribute("data-upload-history-reads", "2");
-  await expect(history.getByRole("button", { name: "Load more uploads", exact: true })).toHaveCount(0);
-  const overflow = await history.evaluate((region) => region.scrollWidth > region.clientWidth);
-  expect(overflow).toBe(false);
+test("details retain activity history without retaining upload-history views",async({page})=>{
+ await open(page,"upload-context-pages");
+ const row=page.getByRole('row').filter({has:page.getByRole('gridcell',{name:'Linear',exact:true})});
+ await row.getByRole('button',{name:/^View .+ at Linear$/}).click();
+ await expect(page.getByRole('region',{name:'Upload history',exact:true})).toHaveCount(0);
+ await expect(page.getByText('Activity history',{exact:true})).toBeVisible();
+ expect(await page.locator('html').getAttribute('data-upload-history-reads') ?? '0').toBe('0');
 });

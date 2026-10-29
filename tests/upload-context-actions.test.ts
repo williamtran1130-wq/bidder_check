@@ -3,7 +3,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import sharp from "sharp";
 const state = vi.hoisted(() => ({
   profile: { id: "40000000-0000-4000-8000-000000000001", role: "client", approval_status: "approved", archived: false },
-  rpc: vi.fn(), verified: vi.fn(), file: { id: "40000000-0000-4000-8000-000000000002", created_by: "40000000-0000-4000-8000-000000000001", kind: "screenshot", mime: "image/png", size_bytes: 0, storage_path: "fixture/proof" },
+  rpc: vi.fn(), verified: vi.fn(), file: { id: "40000000-0000-4000-8000-000000000002", created_by: "40000000-0000-4000-8000-000000000001", kind: "screenshot", mime: "image/png", size_bytes: 0, storage_path: "fixture/proof", finalized: false },
   bytes: new Uint8Array(), headers: new Headers(), headerReads: 0, download: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
@@ -21,6 +21,7 @@ const actions = existsSync("src/app/(workspace)/upload-context-actions.ts")
   : { getScreenshotUploadContext: async () => ({ error: "Unavailable" }), getScreenshotUploadHistory: async () => ({ error: "Unavailable" }) };
 const fileId = "40000000-0000-4000-8000-000000000002", bidId = "40000000-0000-4000-8000-000000000003";
 beforeEach(async () => {
+  state.file.finalized = false;
   vi.stubEnv("VERCEL", "1");
   state.profile = { id: "40000000-0000-4000-8000-000000000001", role: "client", approval_status: "approved", archived: false };
   state.file.created_by = state.profile.id;
@@ -30,6 +31,12 @@ beforeEach(async () => {
   state.headers = new Headers({ "x-vercel-forwarded-for": "203.0.113.10", "x-vercel-ip-city": "Chicago", "x-vercel-ip-country-region": "IL", "x-vercel-ip-country": "US" });
   state.rpc.mockReset(); state.verified.mockReset(); state.download.mockReset();
   state.download.mockImplementation(async () => ({ data: new Blob([state.bytes]) }));
+});
+it("retries a verified upload without downloading the private screenshot again", async () => {
+  state.file.finalized = true;
+  expect(await finalizeUpload(fileId)).toEqual({data:fileId});
+  expect(state.download).not.toHaveBeenCalled();
+  expect(state.verified).not.toHaveBeenCalled();
 });
 it("captures request metadata at authenticated finalization through the versioned atomic service boundary", async () => {
   state.verified.mockImplementation(async (name, args) => name === "finalize_verified_file_v2" && args.p_actor === state.profile.id && args.p_context.ip === "203.0.113.10" && args.p_context.city === "Chicago"

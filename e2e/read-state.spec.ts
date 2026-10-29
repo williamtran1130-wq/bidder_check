@@ -30,7 +30,7 @@ test("matching seed avoids hydration query; stale generation cannot replace muta
     path: ".superpowers/sdd/2026-10-13-feature-preserving-improvements/task7-report-state.png",
   });
 });
-test("visible thumbnails coalesce and sign only requested current files", async ({
+test("closed screenshots sign nothing and opening signs only the requested current file", async ({
   page,
 }) => {
   await page.route("https://images.example.test/proof.png", (route) =>
@@ -50,8 +50,11 @@ test("visible thumbnails coalesce and sign only requested current files", async 
     )
     .scrollIntoViewIfNeeded();
   await expect(
-    page.getByRole("button", { name: /Preview screenshot for/ }).first(),
+    page.getByRole("button", { name: /Open screenshot for/ }).first(),
   ).toBeVisible();
+  expect(Number(await page.locator("html").getAttribute("data-file-batch-reads"))).toBe(0);
+  await page.getByRole("button",{name:/Open screenshot for/}).first().click();
+  await expect(page.getByRole("img",{name:/Enlarged application proof/})).toBeVisible();
   const batches = await page
     .locator("html")
     .getAttribute("data-file-batch-reads");
@@ -59,7 +62,7 @@ test("visible thumbnails coalesce and sign only requested current files", async 
     (await page.locator("html").getAttribute("data-file-batch-ids")) ?? "[]",
   );
   expect(Number(batches)).toBeLessThanOrEqual(2);
-  expect(ids.length).toBeGreaterThan(1);
+  expect(ids.length).toBe(1);
   expect(ids.every((id: string) => id.startsWith("screenshot-"))).toBe(true);
   await page.screenshot({
     path: ".superpowers/sdd/2026-10-13-feature-preserving-improvements/task7-thumbnail-batch.png",

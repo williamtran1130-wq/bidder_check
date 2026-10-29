@@ -26,6 +26,7 @@ const request = (signal?: AbortSignal) =>
 it("bounds the former seventy-four-second retention/removal/completion chain at fifty seconds from entry", async () => {
   let lateCompletion = false;
   fake.rpc.mockImplementation(async (name: string) => {
+    if (name === "process_screenshot_retention" || name === "process_legacy_file_cleanup") return {data:{},error:null};
     await new Promise((resolve) => setTimeout(resolve, 14800));
     if (name === "process_candidate_retention")
       return { data: { deletedApplications: 1 }, error: null };
@@ -53,6 +54,8 @@ it("bounds the former seventy-four-second retention/removal/completion chain at 
   });
   expect(fake.rpc.mock.calls.map(([name]) => name)).toEqual([
     "process_candidate_retention",
+    "process_screenshot_retention",
+    "process_legacy_file_cleanup",
     "claim_storage_cleanup",
     "finish_storage_cleanup_batch",
   ]);

@@ -1,3 +1,5 @@
+// Historical projection comparisons exclude the new retention timestamp; its contract is tested separately.
+const legacyProjection = (value: unknown) => JSON.parse(JSON.stringify(value,(key,item) => key === 'screenshot_uploaded_at' ? undefined : item));
 import { PGlite } from "@electric-sql/pglite";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -183,6 +185,8 @@ beforeAll(async () => {
       id,
       `${name}@scope.test`,
     ]);
+  // This read-projection fixture intentionally creates corrupt/unverified pointers as the database owner.
+  await db.exec("alter table public.bids disable trigger snapshot_screenshot; alter table public.bids disable trigger cleanup_replaced_screenshot; alter table public.files disable trigger stamp_verified_file");
   await db.exec("update public.profiles set approval_status='approved'");
   await db.query("update public.profiles set role='admin' where id=$1", [
     actors.admin,
@@ -378,7 +382,7 @@ it.each([
     );
     expect(before.foreign.files).toEqual(foreignNames);
     await newPolicy();
-    expect(await visibility()).toEqual(before);
+    expect(legacyProjection(await visibility())).toEqual(legacyProjection(before));
   },
 );
 
@@ -391,7 +395,7 @@ it("keeps file visibility when profiles/resumes are archived and attachment meta
   expect(before.owner.files).toEqual(localNames);
   expect(before.bidder.files).toEqual(firstNames);
   await newPolicy();
-  expect(await visibility()).toEqual(before);
+  expect(legacyProjection(await visibility())).toEqual(legacyProjection(before));
 });
 
 it("revokes access on the next statement without caching permissions beyond the query", async () => {
@@ -557,7 +561,7 @@ it("counts varied sizes once in the shared evidence snapshot and preserves exact
   ]);
   await newPolicy();
   await asUser(actors.owner);
-  expect(await read()).toEqual(before);
+  expect(legacyProjection(await read())).toEqual(legacyProjection(before));
   const afterPlan = await listingPlan();
   console.info(
     `varied evidence 2,400/700 sizes: old ${beforePlan["Execution Time"]}ms, new ${afterPlan["Execution Time"]}ms`,

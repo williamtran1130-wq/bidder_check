@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 process.env.EGRESS_PREVIEW_ORIGIN = "http://127.0.0.1:3116";
 export default defineConfig({
   testDir: "../../e2e",
-  testMatch: "egress.spec.ts",
+  testMatch: ["egress.spec.ts", "screenshot-retention.spec.ts"],
   outputDir: "../../test-results/egress-browser",
   workers: 2,
   retries: 0,

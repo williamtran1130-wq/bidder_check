@@ -37,6 +37,23 @@ export type { DashboardReport, EarningsReport, InterviewReport } from "@/lib/rep
 
 type Result<T = undefined> = { data?: T; error?: string };
 export type BidRestoreIssue = { bidId: string; field: string; code: string; message: string };
+export type DeletionResult = { deletedCount: number; status: PurgeStatus; outcome: CleanupOutcome };
+async function finishDeletion(result: unknown): Promise<DeletionResult> {
+  const deletion = result as { deletedCount: number; operationId: string };
+  const outcome = await cleanupPass(deletion.operationId);
+  return { deletedCount: deletion.deletedCount, outcome, status: await purgeStatus(deletion.operationId) };
+}
+export async function deleteBids(targets: BidTarget[]) {
+  return perform(async () => finishDeletion(await rpc("delete_bids", {
+    p_targets: z.array(z.object({ id: z.uuid(), version: z.number().int().nonnegative() })).min(1).max(500).parse(targets),
+  })));
+}
+export async function deleteResumeAssignment(id: string) {
+  return perform(async () => finishDeletion(await rpc("delete_resume_assignment", { p_id: z.uuid().parse(id) })));
+}
+export async function deleteCandidateProfile(id: string) {
+  return perform(async () => finishDeletion(await rpc("delete_candidate_profile", { p_profile: z.uuid().parse(id) })));
+}
 async function perform<T>(
   fn: () => Promise<T>,
   mutate = true,
@@ -499,6 +516,8 @@ export async function finalizeUpload(fileId: string) {
     if (error || !file) throw new Error("File not found.");
     if (file.created_by !== profile.id)
       throw new Error("Only the uploader can finalize this file.");
+    // A verified immutable file is already committed. Lost-response retries need no second download.
+    if (file.finalized) return file.id;
     // Download with the caller's JWT so storage RLS checks current access again.
     const { data: blob, error: downloadError } = await supabase.storage
       .from("private-files")

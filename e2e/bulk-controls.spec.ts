@@ -10,15 +10,6 @@ test("checkbox selection spans pages, remains separate from cells and resets on 
   await page.getByRole("checkbox", { name: "Select current page" }).check();
   await expect(page.getByText("12 selected", { exact: true })).toBeVisible();
   await page
-    .getByRole("button", { name: "Move selected to trash", exact: true })
-    .click();
-  await expect(page.getByText("0 selected", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Trash", exact: true }).click();
-  await expect(
-    page.getByRole("checkbox", { name: "Select current page" }),
-  ).toBeVisible();
-  await page.getByRole("checkbox", { name: "Select current page" }).check();
-  await page
     .getByRole("button", { name: "Delete selected permanently", exact: true })
     .click();
   await expect(

@@ -49,6 +49,8 @@ beforeAll(async () => {
     "insert into auth.users(id,email) values($1,'owner@query-plan.test'),($2,'bidder@query-plan.test')",
     [owner, bidder],
   );
+  // This read-projection fixture intentionally creates corrupt/unverified pointers as the database owner.
+  await db.exec("alter table public.bids disable trigger snapshot_screenshot; alter table public.bids disable trigger cleanup_replaced_screenshot; alter table public.files disable trigger stamp_verified_file");
   await db.exec("update public.profiles set approval_status='approved'");
   await db.query("update public.profiles set role='bidder' where id=$1", [
     bidder,

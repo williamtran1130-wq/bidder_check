@@ -1,12 +1,12 @@
 "use client";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Archive, MapPin, Plus, RotateCcw } from "lucide-react";
+import { Trash2, MapPin, Plus } from "lucide-react";
 import { toast } from "sonner";
 import type { WorkspaceData } from "@/lib/data";
 import type { Row } from "@/lib/database.types";
 import {
-  archiveCandidateProfile,
+  deleteCandidateProfile,
   previewCandidateRetention,
   saveCandidateProfile,
   saveCandidateProfileRules,
@@ -299,7 +299,6 @@ function ProfileRulesDialog({
 
 export function CandidateProfileLibrary({ data }: { data: WorkspaceData }) {
   const [selected, setSelected] = useState<string>();
-  const [showArchived, setShowArchived] = useState(false);
   const [pending, start] = useTransition();
   const router = useRouter();
   const managers = data.profile.role !== "bidder";
@@ -308,7 +307,7 @@ export function CandidateProfileLibrary({ data }: { data: WorkspaceData }) {
       (w) => w.id === candidate.workspace_id,
     );
     return (
-      (showArchived || !candidate.archived) &&
+      !candidate.archived &&
       (data.profile.role === "admin" || workspace?.owner_id === data.profile.id)
     );
   });
@@ -322,16 +321,6 @@ export function CandidateProfileLibrary({ data }: { data: WorkspaceData }) {
       >
         {managers && <CandidateProfileDialog data={data} />}
       </PageHeading>
-      <div className="mb-6 flex justify-end">
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={showArchived}
-            onChange={(event) => setShowArchived(event.target.checked)}
-          />
-          Include archived
-        </label>
-      </div>
       {!list.length ? (
         <section className="panel">
           <EmptyState
@@ -463,29 +452,20 @@ export function CandidateProfileLibrary({ data }: { data: WorkspaceData }) {
                       disabled={pending}
                       onClick={() =>
                         start(async () => {
-                          const result = await archiveCandidateProfile(
-                            active.id,
-                            !active.archived,
-                          );
+                          const assignments = data.resumes.filter((r) => r.profile_id === active.id);
+                          const count = assignments.reduce((total,r) => total + (data.bidCounts[r.id] ?? 0),0);
+                          if (!window.confirm(`Permanently delete this candidate profile, all ${assignments.length} assignments, ${count} associated bids, their history and files? This cannot be undone.`)) return;
+                          const result = await deleteCandidateProfile(active.id);
                           if (result.error) toast.error(result.error);
                           else {
-                            toast.success(
-                              active.archived
-                                ? "Profile restored"
-                                : "Profile archived",
-                            );
+                            toast.success(result.data?.status.pendingFiles ? "Profile deleted. File cleanup pending; retry is automatic." : "Profile permanently deleted");
                             setSelected(undefined);
                             router.refresh();
                           }
                         })
                       }
                     >
-                      {active.archived ? (
-                        <RotateCcw size={15} />
-                      ) : (
-                        <Archive size={15} />
-                      )}
-                      {active.archived ? "Restore profile" : "Archive profile"}
+                      <Trash2 size={15} /> Delete profile permanently
                     </Button>
                   </div>
                 )}

@@ -3,7 +3,13 @@ import { existsSync } from "node:fs";
 const h = vi.hoisted(() => ({
   from: vi.fn(),
   sign: vi.fn(),
+  adminSign: vi.fn(),
   files: [] as unknown[],
+}));
+vi.mock("@/lib/admin", () => ({
+  adminClient: () => ({
+    storage: { from: () => ({ createSignedUrl: h.adminSign }) },
+  }),
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({
@@ -16,6 +22,9 @@ vi.mock("@/lib/auth", () => ({
   }),
 }));
 beforeEach(() => {
+  h.adminSign
+    .mockReset()
+    .mockResolvedValue({ data: { signedUrl: "server-signed" }, error: null });
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-13T12:00:00Z"));
   h.sign
@@ -29,6 +38,37 @@ beforeEach(() => {
     };
     return q;
   });
+});
+it("server-signs only authorized unexpired screenshot paths and caps their remaining lifetime", async () => {
+  const { getFileUrls } = await import("@/lib/read-services");
+  const first = "00000000-0000-4000-8000-000000000001",
+    expired = "00000000-0000-4000-8000-000000000002";
+  h.files = [
+    {
+      id: first,
+      kind: "screenshot",
+      finalized_at: "2026-10-06T12:00:30Z",
+      storage_path: "allowed/proof",
+      filename: "proof.png",
+      mime: "image/png",
+    },
+    {
+      id: expired,
+      kind: "screenshot",
+      finalized_at: "2026-10-06T12:00:00Z",
+      storage_path: "expired/proof",
+      filename: "old.png",
+      mime: "image/png",
+    },
+  ];
+  const result = await getFileUrls([first, expired]);
+  expect(result.data?.[0]).toMatchObject({
+    data: { url: "server-signed", expiresAt: "2026-10-13T12:00:30.000Z" },
+  });
+  expect(result.data?.[1]).toMatchObject({ error: "Screenshot has expired." });
+  expect(h.adminSign).toHaveBeenCalledExactlyOnceWith("allowed/proof", 30);
+  expect(h.sign).not.toHaveBeenCalled();
+  vi.useRealTimers();
 });
 it("batch returns individual invalid/missing outcomes and signs only RLS-visible file paths for sixty seconds", async () => {
   expect(existsSync("src/lib/read-services.ts")).toBe(true);

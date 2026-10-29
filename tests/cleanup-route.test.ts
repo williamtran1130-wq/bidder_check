@@ -17,6 +17,8 @@ const mockRetention = () => {
       data: { deletedApplications: 0, storageTasksQueued: 0 },
       error: null,
     })
+    .mockResolvedValueOnce({data:{deletedFiles:0},error:null})
+    .mockResolvedValueOnce({data:{processed:0},error:null})
     .mockResolvedValueOnce({
       data: { pending: 0, verificationPending: 0 },
       error: null,

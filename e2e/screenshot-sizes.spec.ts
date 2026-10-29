@@ -150,17 +150,13 @@ test("active edits defer group refresh and conflict cancellation loads the curre
   await expect(badge(page, "102,400", 1)).toBeVisible();
 });
 
-test("trash and restore recalculate matching counts and presence filtering and sorting remain available", async ({ page }) => {
+test("permanent deletion recalculates matching counts and presence filtering and sorting remain available", async ({ page }) => {
+  page.on("dialog",dialog=>dialog.accept());
   await open(page);
   await expect(badge(page, "102,400", 2)).toBeVisible();
-  await row(page, "Linear").getByRole("button", { name: "Move to trash", exact: true }).click();
+  await row(page, "Linear").getByRole("button", { name: "Delete permanently", exact: true }).click();
   await page.getByRole("button", { name: "Next page", exact: true }).click();
   await expect(badge(page, "102,400", 1)).toBeVisible();
-  await page.getByRole("button", { name: "Trash", exact: true }).click();
-  await expect(badge(page, "102,400", 1)).toBeVisible();
-  await row(page, "Linear").getByRole("button", { name: "Restore", exact: true }).click();
-  await page.getByRole("button", { name: "Back to active bids", exact: true }).click();
-  await expect(badge(page, "102,400", 2)).toBeVisible();
   await page.getByRole("button", { name: "Filter Screenshot", exact: true }).click();
   await page.getByLabel("Screenshot filter").selectOption("No screenshot");
   await page.keyboard.press("Escape");
@@ -170,7 +166,7 @@ test("trash and restore recalculate matching counts and presence filtering and s
   await page.getByLabel("Screenshot filter").selectOption("");
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Screenshot", exact: true }).click();
-  await expect(page.locator('[data-field="company"]').first()).toHaveText("Linear");
+  await expect(page.locator('[data-field="company"]').first()).toHaveText("Notion");
   await page.getByRole("button", { name: "Screenshot", exact: true }).click();
   await expect(page.locator('[data-field="company"]').first()).toHaveText("Figma");
 });

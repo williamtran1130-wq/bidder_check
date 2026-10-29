@@ -157,7 +157,7 @@ it("retains cleanup-time arrangements when merging legacy counts and reconciles 
     const remote = bids.find((b) => b.company === "Remote")!.id;
     const file = (
       await db.query<{ id: string }>(
-        "insert into public.files(workspace_id,bidder_id,kind,bid_id,filename,mime,size_bytes,storage_path,created_by,review_revision) values($1,$2,'screenshot',$3,'proof.png','image/png',100,'retention/proof.png',$2,1) returning id",
+        "insert into public.files(workspace_id,bidder_id,kind,bid_id,filename,mime,size_bytes,storage_path,created_by,review_revision,finalized,sha256) values($1,$2,'screenshot',$3,'proof.png','image/png',100,'retention/proof.png',$2,1,true,repeat('a',64)) returning id",
         [w, bidder, remote],
       )
     ).rows[0].id;

@@ -83,11 +83,11 @@ it("serializes simultaneous retry calls and keeps the first successful context",
   ]); else await finalize(file);
   await asUser(); expect((await history()).items).toHaveLength(1); expect(await current(file)).toMatchObject({ ip: "203.0.113.10" });
 });
-it("attributes manager uploads to the manager and stores a separate replacement record", async () => {
+it("attributes manager uploads to the manager and removes the superseded replacement record", async () => {
   const first = await prepare(); await finalize(first);
   const replacement = await prepare(owner); await finalize(replacement, owner, { ...context, ip: "198.51.100.2" }, "b".repeat(64)); await asUser();
   expect(await current(replacement)).toMatchObject({ uploaderId: owner, uploaderRole: "client", bidderId: bidder, ip: "198.51.100.2" });
-  expect((await history()).items).toHaveLength(2);
+  expect((await history()).items).toHaveLength(1);
   await expect(statement(() => current(first))).rejects.toThrow(/Access denied|current screenshot/i);
 });
 it("does not backfill old finalized evidence and distinguishes newly unavailable metadata", async () => {
@@ -101,7 +101,7 @@ it("keeps context through trash and file metadata deletion and cascades when the
   expect((await history()).items).toHaveLength(1);
   await db.exec("reset role"); await db.query("update public.bids set applied=false,evidence_file_id=null where id=$1", [bid]);
   await db.query("update public.bid_events set file_id=null where file_id=$1", [file]); await db.query("delete from public.files where id=$1", [file]); await asUser();
-  expect((await history()).items[0]).toMatchObject({ originalFileId: file, fileAvailable: false, filename: null, ip: "203.0.113.10" });
+  expect((await history()).items).toHaveLength(0);
   await db.exec("reset role"); await db.query("delete from public.bid_events where bid_id=$1", [bid]); await db.query("delete from public.bids where id=$1", [bid]);
   expect((await db.query("select id from public.screenshot_upload_contexts where bid_id=$1", [bid])).rows).toEqual([]);
 });

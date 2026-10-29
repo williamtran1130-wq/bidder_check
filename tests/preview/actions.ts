@@ -818,3 +818,11 @@ export async function submitManagedAccountOperation(
     ? (await import("./account-actions")).submit(request, kind, fields)
     : unavailable();
 }
+
+export const deleteCandidateProfile = unavailable, deleteResumeAssignment = unavailable;
+export async function deleteBids(targets: {id:string;version:number}[]) {
+ const {fixture}=await import('./sample-data');const ids=new Set(targets.map(t=>t.id));
+ if(new URLSearchParams(location.search).has('deletion-conflict')) return {error:'A selected bid changed. Refresh and select it again'};
+ fixture.bids=fixture.bids.filter(b=>!ids.has(b.id));
+ return {data:{deletedCount:targets.length,outcome:'processed' as const,status:{id:'fixture-delete',scope:'Selected bids',deletedCount:targets.length,pendingFiles:0,awaitingRemovalFiles:0,verifyingFiles:0,processingFiles:0,failedFiles:0,nextAttemptAt:null,serverTime:new Date().toISOString()}}};
+}

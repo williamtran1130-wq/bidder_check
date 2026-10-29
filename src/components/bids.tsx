@@ -29,7 +29,7 @@ import type { Row } from "@/lib/database.types";
 import { usd, BID_TIMEZONE } from "@/lib/domain";
 import {
   saveBid,
-  trashBid,
+  deleteBids,
   reconcileBidTargets,
   unapplyBid,
   reviewBidAction,
@@ -86,7 +86,6 @@ import {
   filterResumeOptions,
 } from "@/lib/resume-options";
 import { ResumeSelector } from "./resume-selector";
-import { UploadHistory } from "./upload-details";
 type Bid = BidRow;
 async function bidAction<T>(
   run: () => Promise<T>,
@@ -418,7 +417,6 @@ function BidWorkspaceContent({
     setArrangement("all");
     setSource("all");
     setJob("all");
-    setTrash(false);
     setBidder(result.bidder);
     setResume(result.resume);
     setDateMode("custom");
@@ -466,7 +464,7 @@ function BidWorkspaceContent({
   const [pending, start] = useTransition();
   const router = useRouter();
   const [dateMode, setDateMode] = useState<CalendarPeriod>("today");
-  const [trash, setTrash] = useState(false);
+  const trash = false;
   const [today, setToday] = useState(() =>
     formatInTimeZone(new Date(), BID_TIMEZONE, "yyyy-MM-dd"),
   );
@@ -534,8 +532,7 @@ function BidWorkspaceContent({
     ) {
       setStatus("pending_review");
       setDateMode("all");
-      setTrash(false);
-    }
+      }
   }, []);
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
@@ -713,10 +710,11 @@ function BidWorkspaceContent({
     });
   }
   async function toggleTrash(b: Bid) {
-    const result = await bidAction(() => trashBid(b.id, !b.deleted_at));
+    if (!window.confirm("Permanently delete this bid, its activity history and screenshots? This cannot be undone.")) return;
+    const result = await bidAction(() => deleteBids([{id:b.id,version:b.version}]));
     if (result.error) toast.error(result.error);
     else {
-      toast.success(b.deleted_at ? "Bid restored" : "Bid moved to trash");
+      toast.success(result.data?.status.pendingFiles ? "Bid deleted. File cleanup pending; retry is automatic." : "Bid permanently deleted");
       setSelected(undefined);
       refreshSnapshot();
       router.refresh();
@@ -1281,7 +1279,7 @@ function BidWorkspaceContent({
             disabled={pending || isEditing}
             onClick={() => start(() => toggleTrash(row.original))}
           >
-            {row.original.deleted_at ? "Restore" : "Move to trash"}
+            Delete permanently
           </Button>
           <Button
             variant="ghost"
@@ -1451,15 +1449,7 @@ function BidWorkspaceContent({
                 setTo(selection.to ?? "");
               }}
             />
-            <Button
-              size="sm"
-              className="ml-auto"
-              variant={trash ? "secondary" : "outline"}
-              aria-pressed={trash}
-              onClick={() => setTrash(!trash)}
-            >
-              {trash ? "Back to active bids" : "Trash"}
-            </Button>
+
           </div>
           {loadError && (
             <p role="alert" className="px-5 pt-3 text-sm text-destructive">
@@ -1973,13 +1963,6 @@ function BidWorkspaceContent({
                       </Button>
                     </div>
                   )}
-                {canReview && (
-                  <UploadHistory
-                    key={`${data.profile.id}:${active.id}`}
-                    bidId={active.id}
-                    role={data.profile.role}
-                  />
-                )}
                 <div className="border-t pt-5">
                   <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold">
                     <Clock size={15} /> Activity history

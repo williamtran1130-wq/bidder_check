@@ -1,4 +1,6 @@
 import "server-only";
+import { fileUrlLifetime } from "./screenshot-retention";
+import { adminClient } from "./admin";
 import { getContext, type getActor } from "./auth";
 import { AuthorizationError } from "./authorization-error";
 import { z } from "zod";
@@ -122,7 +124,7 @@ export function createReadServices(
       const { data: files, error } = valid.length
         ? await supabase
             .from("files")
-            .select("id,storage_path,filename,mime")
+            .select("id,storage_path,filename,mime,kind,finalized_at")
             .in("id", valid)
             .eq("finalized", true)
         : { data: [], error: null };
@@ -131,10 +133,18 @@ export function createReadServices(
       await Promise.all(
         (files ?? []).map(async (file) => {
           try {
-            const expiresAt = new Date(Date.now() + 60_000).toISOString();
-            const signed = await supabase.storage
+              const lifetime = fileUrlLifetime(file);
+              if (!lifetime) {
+                outcomes.set(file.id, { id: file.id, error: "Screenshot has expired." });
+                return;
+              }
+              const expiresAt = new Date(Date.now() + lifetime * 1000).toISOString();
+              // Caller-scoped metadata above authorizes the exact immutable path. Only the server
+              // may sign finalized screenshots, so direct clients cannot request a longer TTL.
+              const signer = file.kind === "screenshot" ? adminClient() : supabase;
+              const signed = await signer.storage
               .from("private-files")
-              .createSignedUrl(file.storage_path, 60);
+              .createSignedUrl(file.storage_path, lifetime);
             outcomes.set(
               file.id,
               signed.error

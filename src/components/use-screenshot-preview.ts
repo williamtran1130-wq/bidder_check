@@ -29,8 +29,8 @@ export function useScreenshotPreview(scope: string, fileId: string | null, enabl
       const result = await thumbnailUrl(scope, fileId!);
       if (cancelled || document.visibilityState !== "visible") return;
       const expiresAt = Date.parse(result.data?.expiresAt ?? "");
-      const renewIn = expiresAt - Date.now() - 15_000;
-      if (!result.data || !Number.isFinite(renewIn) || renewIn <= 0) {
+      const remaining = expiresAt - Date.now();
+      if (!result.data || !Number.isFinite(remaining) || remaining <= 0) {
         setPreview({ key, url: "", expiresAt: 0, error: result.error ?? "Preview expired. Retry to refresh." });
         return;
       }
@@ -43,7 +43,7 @@ export function useScreenshotPreview(scope: string, fileId: string | null, enabl
         expiresAt,
         error: "",
       }));
-      timer = setTimeout(() => void load(), renewIn);
+      timer = setTimeout(() => void load(), remaining > 15_000 ? remaining - 15_000 : Math.max(100, remaining / 2));
     }
     void load();
     return () => {
