@@ -3,6 +3,8 @@ node_modules/
 .next/
 .env*
 .superpowers/
+.worktrees/
+*.tsbuildinfo
 test-results/
 playwright-report/
 coverage/
