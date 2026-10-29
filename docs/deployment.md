@@ -1,6 +1,13 @@
 # Deployment handoff
 
-## Latest release — reliable reporting and private bidder workflows, 2026-10-12
+## Current release: screenshot retention and permanent deletion, 2026-10-29
+
+Production-only release: `d016b74`, deployment `dpl_13rhqKPFTBCXynKrtvsu9UA66yCf`, ready at https://bidder-check.vercel.app. Migrations `202610290001` and `202610290002` are applied. Seven-day screenshot retention and permanent bid/candidate-library deletion replace the older preview/archive/trash behavior described in historical sections below. Account deactivation and monthly application reporting retention remain.
+
+See the [current rollout and verification record](screenshot-retention-deletion-rollout.md) for activation, bounded worker recovery, final cleanup counts and production smoke results. Existing staging references below are historical, not a prerequisite for this release.
+
+
+## Previous release — reliable reporting and private bidder workflows, 2026-10-12
 
 Implementation commit `3b4f1e4` was initially promoted to production as
 `dpl_55zg66qBd5tnkXKmoW2AwKqCaHuX` at https://bidder-check.vercel.app.

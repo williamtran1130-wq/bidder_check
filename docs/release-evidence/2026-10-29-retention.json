@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-29",
+  "productionUrl": "https://bidder-check.vercel.app",
+  "implementationCommit": "bbaf1eb",
+  "workerFixCommit": "d016b74",
+  "deploymentId": "dpl_13rhqKPFTBCXynKrtvsu9UA66yCf",
+  "migrations": ["202610290001", "202610290002"],
+  "verification": {
+    "unitDatabaseFiles": 84,
+    "unitDatabaseTestsPassed": 787,
+    "browserTestsPassed": 338,
+    "productionSmokeChecksPassed": 7,
+    "syntheticProfilesRemaining": 0,
+    "lint": "passed",
+    "generatedTypes": "passed",
+    "productionBuild": "passed",
+    "fixedDeploymentCleanupErrors": 0
+  },
+  "beforeActivation": {
+    "screenshotFiles": 10896,
+    "declaredScreenshotBytes": 1240956394,
+    "storageObjects": 10821,
+    "trashedBids": 2076,
+    "archivedCandidateProfiles": 2,
+    "archivedAssignments": 4
+  },
+  "afterCleanup": {
+    "screenshotFiles": 3561,
+    "declaredScreenshotBytes": 416858739,
+    "storageObjects": 3577,
+    "orphanStorageObjects": 0,
+    "expiredScreenshots": 0,
+    "trashedBids": 0,
+    "archivedCandidateProfiles": 0,
+    "archivedAssignments": 0,
+    "supersededFiles": 0,
+    "pendingReleaseBacklog": 0,
+    "failedTasks": 0,
+    "completedTaskRows": 0,
+    "completedEmptyOperationRows": 0,
+    "newerRoutineVerificationTasks": 1,
+    "cleanupEnabled": true,
+    "applicationCutoverLatched": true
+  },
+  "notes": [
+    "Snapshots were collected during active production use; declared file bytes are not a billing measurement.",
+    "An initial overlapping 500-file pass timed out in screenshot retention; cleanup was paused and fixed forward with batch100, nonblocking shared/row locks and stable expiry bounds.",
+    "A scoped operator helper error was corrected; the failed smoke's three synthetic accounts and files were recovered and removed.",
+    "No staging or customer-data reset was used."
+  ]
+}

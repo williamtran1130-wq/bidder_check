@@ -1,5 +1,8 @@
 # Bidder Check implementation ledger
 
+Current authority: the user-approved 2026-10-29 screenshot-retention/permanent-deletion plan. The entries below are historical; the [current rollout](screenshot-retention-deletion-rollout.md) supersedes their recoverable trash, library archive, automatic-preview and staging-first rules.
+
+
 Authority: the user-approved implementation plan in this conversation, 2026-09-28.
 
 ## Sequence
