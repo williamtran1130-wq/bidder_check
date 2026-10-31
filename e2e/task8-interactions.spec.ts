@@ -179,6 +179,9 @@ test("cell selection follows row identity when server order changes", async ({
 }) => {
   await page.goto("/bids");
   await page.getByLabel("Found period", { exact: true }).selectOption("all");
+  // Wait for the selected query, rather than interacting with the initial
+  // snapshot while its first request can still be in flight.
+  await expect(page.getByText(/\d+–\d+ of \d+ bids$/, { exact: true })).toBeVisible();
   const company = page
     .locator('[data-field="company"]')
     .filter({ hasText: "Notion" });

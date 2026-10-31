@@ -6,7 +6,12 @@ let db: PGlite;
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`create role anon; create role authenticated; create role service_role bypassrls;
-    create schema auth; create schema storage; create schema net; create schema vault;
+    create schema auth; create schema storage; create schema net; create schema vault; create schema cron;
+    create table cron.job(jobid bigint,jobname text);
+    insert into cron.job values(1,'bidder-check-notifications'),(2,'bidder-check-storage-cleanup'),(3,'other-job');
+    create function cron.unschedule(bigint) returns boolean language sql as $$ delete from cron.job where jobid=$1 returning true $$;
+    create table vault.secrets(name text);
+    insert into vault.secrets values('notification_worker_url'),('notification_worker_secret'),('notification_worker_bypass'),('storage_cleanup_secret');
     create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb default '{}',raw_app_meta_data jsonb default '{}',email_confirmed_at timestamptz);
     create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
     create function auth.role() returns text language sql stable as $$ select nullif(current_setting('request.jwt.claim.role',true),'') $$;
@@ -19,13 +24,19 @@ beforeAll(async () => {
     create function net.http_get(url text,headers jsonb,timeout_milliseconds integer) returns bigint language sql as $$ insert into public.scheduler_http_calls values('GET',url,headers,null,timeout_milliseconds) returning 23::bigint $$;`);
   for (const file of readdirSync("supabase/migrations")
     .filter((name) => name.endsWith(".sql"))
-    .sort())
+    .sort()) {
+    if (file === "202610310003_retire_notifications.sql") {
+      await db.exec(`insert into auth.users(id,email) values('00000000-0000-4000-8000-000000000099','retirement@test.invalid');
+        insert into public.client_messages(workspace_id,created_by,title,body,recipient_mode,schedule_kind,scheduled_at)
+          select id,owner_id,'Retired schedule','Retired content','all','once',now() from public.workspaces;
+        insert into public.message_occurrences(message_id,scheduled_for) select id,now() from public.client_messages;
+        insert into public.inbox_notifications(occurrence_id,user_id,title,body) select id,'00000000-0000-4000-8000-000000000099','Retired notice','Retired content' from public.message_occurrences;
+        insert into public.push_subscriptions(user_id,endpoint,p256dh,auth_secret) values('00000000-0000-4000-8000-000000000099','https://push.test.invalid/retired','key','secret');
+        insert into public.push_attempts(notification_id,subscription_id) select n.id,s.id from public.inbox_notifications n cross join public.push_subscriptions s;`);
+    }
     await db.exec(readFileSync(`supabase/migrations/${file}`, "utf8"));
-  for (const file of [
-    "notifications-function.sql",
-    "storage-cleanup-function.sql",
-  ])
-    await db.exec(readFileSync(`supabase/scheduler/${file}`, "utf8"));
+  }
+  await db.exec(readFileSync("supabase/scheduler/storage-cleanup-function.sql", "utf8"));
 });
 afterAll(async () => {
   await db?.close();
@@ -35,55 +46,24 @@ beforeEach(async () => {
     "reset role; delete from public.scheduler_http_calls; delete from vault.decrypted_secrets; delete from public.storage_cleanup_tasks",
   );
 });
-const invoke = () =>
-  db.query<{ request: number }>(
-    "select public.invoke_notification_worker() request",
-  );
 const calls = async () =>
   (await db.query("select * from public.scheduler_http_calls")).rows;
 
-it.each(["url", "secret"])(
-  "fails closed before calling notifications when scheduler %s is missing",
-  async (missing) => {
-    const available = missing === "url" ? "secret" : "url";
-    await db.query(
-      "insert into vault.decrypted_secrets values($1,'configured')",
-      [`notification_worker_${available}`],
-    );
-    await expect(invoke()).rejects.toThrow(/not configured/i);
-    expect(await calls()).toEqual([]);
-  },
-);
-it.each([false, true])(
-  "dispatches notifications with the configured endpoint, authentication and optional bypass=%s",
-  async (bypass) => {
-    await db.exec(
-      "insert into vault.decrypted_secrets values('notification_worker_url','https://scheduler.test/api/cron/notifications'),('notification_worker_secret','private-test-secret')",
-    );
-    if (bypass)
-      await db.exec(
-        "insert into vault.decrypted_secrets values('notification_worker_bypass','preview-bypass')",
-      );
-    expect((await invoke()).rows).toEqual([{ request: 17 }]);
-    expect(await calls()).toEqual([
-      {
-        method: "POST",
-        url: "https://scheduler.test/api/cron/notifications",
-        headers: {
-          authorization: "Bearer private-test-secret",
-          ...(bypass ? { "x-vercel-protection-bypass": "preview-bypass" } : {}),
-        },
-        body: {},
-        timeout: 55000,
-      },
-    ]);
-  },
-);
+it("retires the notification scheduler and tables while preserving storage cleanup", async () => {
+  const result = await db.query("select to_regprocedure('public.invoke_notification_worker()') retired, to_regclass('public.inbox_notifications') inbox, to_regclass('public.storage_cleanup_tasks') cleanup");
+  expect(result.rows).toEqual([{ retired: null, inbox: null, cleanup: 'storage_cleanup_tasks' }]);
+  expect((await db.query("select jobname from cron.job order by jobid")).rows).toEqual([{ jobname: "bidder-check-storage-cleanup" }, { jobname: "other-job" }]);
+  expect((await db.query("select name from vault.secrets")).rows).toEqual([{ name: "storage_cleanup_secret" }]);
+  expect((await db.query("select approval_status from public.profiles where email='retirement@test.invalid'")).rows).toEqual([{ approval_status: "pending" }]);
+  for (const table of ["client_messages", "message_occurrences", "inbox_notifications", "push_subscriptions", "push_attempts"]) {
+    expect((await db.query("select to_regclass($1) retired", [`public.${table}`])).rows).toEqual([{ retired: null }]);
+  }
+});
 it.each(["anon", "authenticated"])(
-  "denies %s execution of both scheduler entry points",
+  "denies %s execution of the storage scheduler entry point",
   async (role) => {
     await db.exec(`set role ${role}`);
-    for (const fn of ["invoke_notification_worker", "invoke_storage_cleanup"])
+    for (const fn of ["invoke_storage_cleanup"])
       await expect(db.query(`select public.${fn}()`)).rejects.toThrow(
         /permission denied/i,
       );

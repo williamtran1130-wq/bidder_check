@@ -1,20 +1,18 @@
 import { Suspense } from "react";
 import { PageLoading } from "@/components/page-loading";
-import { getNotificationUnreadCount } from "@/lib/notification-reads";
 import { getContext } from "@/lib/auth";
+import { readCollectionStatus } from "@/lib/report-bundle-server";
 import { Shell } from "@/components/shell";
 export const dynamic = "force-dynamic";
 async function Content({ children }: { children: React.ReactNode }) {
   const { profile, workspaces } = await getContext();
+  const initialCollection = await readCollectionStatus(workspaces[0]?.id);
   return (
     <Shell
       profile={profile}
-      initialUnread={
-        profile.role === "client"
-          ? undefined
-          : await getNotificationUnreadCount()
-      }
-      notificationWorkspaces={workspaces}
+      workspaces={workspaces}
+      initialCollection={initialCollection}
+      collectionReceivedAt={initialCollection.receivedAt}
       workspace={
         profile.role === "admin"
           ? "Platform overview"

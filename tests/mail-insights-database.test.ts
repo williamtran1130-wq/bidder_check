@@ -22,7 +22,7 @@ async function upload(payload: unknown) {
   return (await db.query<{result: Record<string, unknown>}>("select public.ingest_mail_insights($1::jsonb) result", [JSON.stringify(payload)])).rows[0].result;
 }
 async function report() {
-  return (await db.query<{result: {mailboxes: {email: string}[]; assignments: {email: string}[]; bid_rows: {found: number}[];status:string}}>("select public.mail_insights_report($1::date,$1::date,null,null,null,null) result", [today])).rows[0].result;
+  return (await db.query<{result: {mailboxes: {email: string; rows: unknown[]}[]; assignments: {email: string}[]; bid_rows: {found: number}[];status:string}}>("select public.mail_insights_report($1::date,$1::date,null,null,null,null) result", [today])).rows[0].result;
 }
 beforeAll(async () => {
   db = new PGlite();
@@ -102,10 +102,12 @@ it("uses read-time retention and preserves ingestion hashes when pruning rows",a
   await asUser(client);
   const payload=snapshot(2); await upload(payload);
   await db.exec("reset role");
-  await db.query("update public.mail_insights_state set mailboxes='[]'::jsonb where client_id=$1",[client]);
+  await db.query("update private.mail_daily set day='2020-01-01' where client_id=$1",[client]);
+  await db.exec("set role service_role");
+  await db.query("select public.prune_mail_insights(100)");
   await asUser(client);
   expect(await upload(payload)).toMatchObject({unchanged:true,revision:2});
-  expect((await report()).mailboxes).toHaveLength(0);
+  expect((await report()).mailboxes.every(m => !m.rows.length)).toBe(true);
 });
 it("filters original bid reporting by current assignment email without widening bidder scope",async()=>{
   await asUser(bidder);
@@ -121,7 +123,8 @@ it("acknowledges an identical expired retry without restoring pruned data or adv
   // accepted payload hash while a retention pass has removed all old cube rows.
   await db.exec("reset role");
   await db.query("update public.mail_insights_state set last_revision=3,original_hash=encode(sha256(convert_to(($2::jsonb)::text,'UTF8')),'hex'),mailboxes='[]'::jsonb where client_id=$1",[client,JSON.stringify(payload)]);
+  await db.query("delete from private.mail_daily where client_id=$1",[client]);
   await asUser(client);
   expect(await upload(payload)).toMatchObject({unchanged:true,revision:3});
-  expect((await report()).mailboxes).toHaveLength(0);
+  expect((await report()).mailboxes.every(m => !m.rows.length)).toBe(true);
 });

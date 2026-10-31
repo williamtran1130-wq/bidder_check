@@ -4,12 +4,7 @@ import { ScreenshotCell } from "@/components/screenshot-cell";
 import { usePurgeOperations } from "@/components/use-purge-operations";
 import { ReadScope } from "@/lib/read-scope";
 import { fixture } from "./sample-data";
-import { useNotificationResource } from "@/lib/use-notifications";
 
-async function unread() {
-  document.documentElement.dataset.egressUnread = String(Number(document.documentElement.dataset.egressUnread ?? 0) + 1);
-  return { data: 1 };
-}
 
 function Harness() {
   const [scope, setScope] = useState("egress-actor-a");
@@ -17,7 +12,6 @@ function Harness() {
   const [mounted, setMounted] = useState(true);
   const [offscreen, setOffscreen] = useState(false);
   const purges = usePurgeOperations(true);
-  useNotificationResource("egress:unread", unread, { data: 0 });
   const count = Number(new URLSearchParams(location.search).get("count") ?? 2);
   return <>
     <button onClick={() => setScope("egress-actor-b")}>Change actor</button>

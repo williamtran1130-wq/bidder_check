@@ -1,22 +1,11 @@
-export type UploadContextCursor = { uploadedAt: string; id: string };
-export type UploadContext = {
-  id: string;
-  bidId: string;
-  originalFileId: string;
-  bidderId: string;
-  uploaderId: string;
-  uploaderRole: "admin" | "client" | "bidder";
-  uploaderName: string | null;
-  uploadedAt: string;
+/** Latest successful screenshot application location, captured only on the server. */
+export type ApplicationLocation = {
   ip: string | null;
   city: string | null;
   region: string | null;
   country: string | null;
+  uploadedAt: string;
   source: "vercel" | "unavailable";
   status: "available" | "unavailable";
-  fileAvailable: boolean;
-  filename: string | null;
 };
-export type UploadHistoryPage = { items: UploadContext[]; nextCursor: UploadContextCursor | null };
-export type CapturedUploadContext = Pick<UploadContext, "ip" | "city" | "region" | "country" | "source" | "status">;
-export type UploadContextOutcome = { id: string; data?: UploadContext | null; error?: string };
+export type CapturedUploadContext = Omit<ApplicationLocation, "uploadedAt">;

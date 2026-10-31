@@ -69,7 +69,7 @@ export function createReportReader(
         errorCode = "invalid_response";
         throw new Error("Incomplete report response");
       }
-      console.info("Report query", {
+      if (process.env.NODE_ENV !== "production" || performance.now() - started >= 500 || Math.random() < 0.01) console.info("Report query", {
         operation,
         period,
         filterShape,

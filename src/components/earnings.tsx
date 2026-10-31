@@ -1,18 +1,17 @@
 "use client";
 import { PageLoading } from "./page-loading";
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Wallet, CheckCheck, FileText } from "lucide-react";
 import { usd } from "@/lib/domain";
 import { PageHeading, EmptyState } from "./common";
 import { Button } from "./ui/button";
-import { getEarningsPerformance } from "@/lib/read-client";
 import type { PeriodSelection } from "@/lib/calendar-period";
-import { PeriodSelector, useCalendarDay } from "./period-selector";
-import { useReport } from "./use-report";
-import { readKey, type ReadSeed } from "@/lib/read-state";
+import { PeriodSelector } from "./period-selector";
+import { useReportBundle } from "./use-report-bundle";
+import type { ReportBundle } from "@/lib/report-bundle";
+import { type ReadSeed } from "@/lib/read-state";
 import type { EarningsReport as SeedReport } from "@/lib/report-types";
-import { useReadScope } from "@/lib/read-scope";
-import { useMailReport, type MailReportContext } from "./use-mail-report";
+import { type MailReportContext } from "./use-mail-report";
 import { mergeMailGroups, projectMailMetrics } from "@/lib/mail-metrics";
 import { MailCount, MailReportNotice, ReportWorkspaceSelector } from "./mail-report-common";
 export function Earnings({
@@ -22,19 +21,16 @@ export function Earnings({
   mailContext = {},
 }: {
   bidderId?: string;
-  initial?: ReadSeed<SeedReport>;
+  initial?: ReadSeed<ReportBundle<SeedReport>>;
   embedded?: boolean;
   mailContext?: MailReportContext;
 }) {
-  const scope = useReadScope();
   const [period, setPeriod] = useState<PeriodSelection>({ preset: "this_week" });
   const [group, setGroup] = useState("bidder");
   const [workspace, setWorkspace] = useState(mailContext.workspaceId ?? "");
-  const day = useCalendarDay();
   const query = useMemo(() => ({ period, bidder: bidderId, group: group === "bidder" ? "bidder" as const : "assignment" as const, ...(workspace ? { workspace } : {}) }), [period, bidderId, group, workspace]);
-  const request = useCallback(() => getEarningsPerformance(query), [query]);
-  const { data: report, loading, error, refresh } = useReport(readKey(scope, "earnings", query, day), request, initial);
-  const mail = useMailReport(query, mailContext.role === "admin");
+  const bundle = useReportBundle("earnings", query, initial);
+  const { report, loading, error, refresh, mail } = bundle;
   const metrics = projectMailMetrics(mail.error ? undefined : mail.data, query.group);
   const total = report?.totals;
   const groups = mergeMailGroups(report?.groups ?? [], metrics.groups, row => ({ id: row.id, label: row.label, sub: "Assigned mailbox activity", count: 0, cents: 0, applied: 0, interviews: 0 }));
@@ -62,7 +58,7 @@ export function Earnings({
         </div>
         {mailContext.role === "admin" && !mailContext.workspaceId && <ReportWorkspaceSelector value={workspace} onChange={setWorkspace} workspaces={mailContext.workspaces ?? []} />}
         <PeriodSelector label="First applied period" value={period} onChange={setPeriod} />
-        <Button size="sm" variant="outline" onClick={() => { refresh(); mail.refresh(); }} disabled={loading || mail.loading}>Refresh reports</Button>
+        <Button size="sm" variant="outline" onClick={refresh} disabled={loading || mail.loading}>Refresh reports</Button>
       </div>
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
@@ -130,7 +126,7 @@ export function Earnings({
                     <td className="p-3 text-right text-sm">
                       {g.count}
                     </td>
-                    <td className="p-3 text-right text-sm"><MailCount metric={metrics.groups.get(g.id)?.metric} />{metrics.groups.get(g.id)?.metric.shared && <span className="block text-[11px] text-muted-foreground">Shared mailbox</span>}</td>
+                    <td className="p-3 text-right text-sm"><MailCount metric={metrics.groups.get(g.id)?.metric} /></td>
                     <td className="py-4 text-right text-sm font-semibold">
                       {usd(g.cents)}
                     </td>

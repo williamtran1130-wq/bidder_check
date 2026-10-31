@@ -118,7 +118,7 @@ export function createBenchmarkRunner(dependencies = {}) {
     });
   }
   async function defaultAccount(planned, role, sponsor) {
-    // Managed provisioning suppresses public signup alerts/pushes to real admins.
+    // Managed provisioning creates approved synthetic accounts.
     // The bootstrap sponsor is referenced only by the isolated provision row.
     receipt.phase = `provision:${planned.label}`;
     await save();
@@ -534,8 +534,6 @@ export function createBenchmarkRunner(dependencies = {}) {
     await remove("client_provisions", "id", users);
     await remove("account_events", "account_id", users);
     await remove("account_events", "actor_id", users);
-    await remove("inbox_notifications", "client_id", users);
-    await remove("inbox_notifications", "user_id", users);
     await remove("workspaces", "id", ws);
     ok(
       await service
@@ -579,9 +577,6 @@ export function createBenchmarkRunner(dependencies = {}) {
     counts.account_events =
       (await count("account_events", "account_id", users)) +
       (await count("account_events", "actor_id", users));
-    counts.inbox_notifications =
-      (await count("inbox_notifications", "client_id", users)) +
-      (await count("inbox_notifications", "user_id", users));
     counts.authUsers = 0;
     for (const id of users) {
       const response = await service.auth.admin.getUserById(id);
@@ -781,20 +776,6 @@ export function createBenchmarkRunner(dependencies = {}) {
         actors.owner.id,
       );
     }
-    const alerts = await service
-      .from("inbox_notifications")
-      .select("id", { count: "exact", head: true })
-      .in(
-        "client_id",
-        receipt.accounts.map((a) => a.id),
-      );
-    ok(alerts);
-    assert.equal(
-      alerts.count,
-      0,
-      "Synthetic provisioning must not create signup alerts or pushes",
-    );
-    receipt.signupNotificationCount = alerts.count;
     const today = formatInTimeZone(new Date(), "America/Chicago", "yyyy-MM-dd");
     fixtureData = fixture(actors, marker, today);
     receipt.fixtureFiles = fixtureData.files.length;

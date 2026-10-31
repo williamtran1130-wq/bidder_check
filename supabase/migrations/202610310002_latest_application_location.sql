@@ -1,0 +1,530 @@
+-- One durable server-captured location per bid. Screenshot cleanup never owns this record.
+create table public.bid_application_locations (
+ bid_id uuid primary key references public.bids(id) on delete cascade,
+ workspace_id uuid not null,
+ bidder_id uuid not null,
+ original_file_id uuid not null,
+ uploader_id uuid not null,
+ uploader_role text not null check(uploader_role in ('admin','client','bidder')),
+ uploaded_at timestamptz not null,
+ ip inet,
+ city text check(char_length(city)<=120 and city !~ '[[:cntrl:]]'),
+ region text check(region ~ '^[A-Z0-9]{1,3}$'),
+ country text check(country ~ '^[A-Z]{2}$'),
+ source text not null check(source in ('vercel','unavailable')),
+ status text not null check(status in ('available','unavailable')),
+ check((source='vercel' and status='available' and ip is not null)
+  or (source='unavailable' and status='unavailable' and ip is null and city is null and region is null and country is null))
+);
+
+alter table public.bid_application_locations enable row level security;
+revoke all on public.bid_application_locations from public,anon,authenticated,service_role;
+grant select on public.bid_application_locations to service_role;
+create index bid_application_location_country on public.bid_application_locations(country,bid_id);
+create trigger cutover_write_guard before insert or update or delete on public.bid_application_locations
+ for each row execute function public.guard_application_library_cutover_write();
+
+-- Preserve the newest available context deterministically before removing history.
+insert into public.bid_application_locations(bid_id,workspace_id,bidder_id,original_file_id,uploader_id,uploader_role,uploaded_at,ip,city,region,country,source,status)
+select distinct on (bid_id) bid_id,workspace_id,bidder_id,original_file_id,uploader_id,uploader_role,uploaded_at,ip,city,region,country,source,status
+from public.screenshot_upload_contexts order by bid_id,uploaded_at desc,id desc;
+
+create or replace function public.finalize_verified_file_v2(p_id uuid,p_sha text,p_actor uuid,p_context jsonb)
+ returns void language plpgsql security definer set search_path='' as $$
+declare initial public.files; f public.files; b public.bids; actor public.profiles;
+ verified_ip inet; city text; region text; country text; source text='unavailable'; status text='unavailable'; successful_at timestamptz;
+begin
+ if coalesce(auth.role(),'')<>'service_role' then raise exception 'Service role required'; end if;
+ if p_actor is null or p_sha is null or p_sha !~ '^[a-f0-9]{64}$' then raise exception 'Invalid verified upload'; end if;
+ perform set_config('request.jwt.claim.sub',p_actor::text,true);
+ select * into initial from public.files where id=p_id;
+ if initial.id is null or initial.created_by<>p_actor or not public.can_read(initial.workspace_id,initial.bidder_id) then raise exception 'Access denied'; end if;
+ if initial.kind<>'screenshot' then perform public.finalize_verified_file(p_id,p_sha,p_actor); return; end if;
+ -- Match the existing bid-before-file lock order and re-read both identities.
+ select * into b from public.bids where id=initial.bid_id for update;
+ select * into f from public.files where id=p_id for update;
+ select * into actor from public.profiles where id=p_actor and not archived for share;
+ if b.id is null or f.id is null or actor.id is null or f.created_by<>actor.id
+  or f.bid_id<>b.id or f.workspace_id<>b.workspace_id or f.bidder_id<>b.bidder_id
+  or not public.can_read(b.workspace_id,b.bidder_id) then raise exception 'Access denied'; end if;
+ if actor.role in ('admin','client') and actor.approval_status<>'approved' then raise exception 'Access denied'; end if;
+ -- A lost-response retry never backfills an old finalized file or changes IP.
+ if f.finalized then perform public.finalize_verified_file(p_id,p_sha,p_actor); return; end if;
+ if jsonb_typeof(p_context)='object' and p_context->>'source'='vercel' and p_context->>'status'='available'
+  and coalesce(p_context->>'ip','') ~ '^[0-9A-Fa-f:.]+$' and char_length(p_context->>'ip')<=45
+  and ((p_context->>'ip') like '%:%' or (p_context->>'ip') ~ '^(0|[1-9][0-9]{0,2})([.](0|[1-9][0-9]{0,2})){3}$') then
+  begin
+   verified_ip=(p_context->>'ip')::inet;
+   if masklen(verified_ip)<>(case family(verified_ip) when 4 then 32 else 128 end) then verified_ip=null; end if;
+  exception when invalid_text_representation then verified_ip=null;
+  end;
+  if verified_ip is not null then
+   source='vercel'; status='available';
+   city=nullif(trim(p_context->>'city'),'');
+   if char_length(city)>120 or city ~ '[[:cntrl:]]' then city=null; end if;
+   region=case when p_context->>'region' ~ '^[A-Z0-9]{1,3}$' then p_context->>'region' end;
+   country=case when p_context->>'country' ~ '^[A-Z]{2}$' then p_context->>'country' end;
+  end if;
+ end if;
+ perform public.finalize_verified_file(p_id,p_sha,p_actor);
+ -- Retain the verified file timestamp used by screenshot retention.
+ select finalized_at into successful_at from public.files where id=f.id;
+ insert into public.bid_application_locations(bid_id,workspace_id,bidder_id,original_file_id,uploader_id,uploader_role,uploaded_at,ip,city,region,country,source,status)
+ values(b.id,b.workspace_id,b.bidder_id,f.id,actor.id,actor.role,successful_at,verified_ip,city,region,country,source,status)
+ on conflict (bid_id) do update set original_file_id=excluded.original_file_id,
+ uploader_id=excluded.uploader_id,uploader_role=excluded.uploader_role,uploaded_at=excluded.uploaded_at,
+ ip=excluded.ip,city=excluded.city,region=excluded.region,country=excluded.country,source=excluded.source,status=excluded.status;
+end $$;
+
+
+-- The list remains an invoker over RLS bids/files. This private projection is
+-- separately scoped with the same active actor rule; no direct table grants.
+create function private.application_locations() returns table(bid_id uuid,country text,location jsonb)
+language sql stable security definer set search_path='' as $$
+ select c.bid_id,c.country,jsonb_build_object('ip',host(c.ip),'city',c.city,'region',c.region,
+  'country',c.country,'uploadedAt',c.uploaded_at,'source',c.source,'status',c.status)
+ from public.bid_application_locations c where public.can_read(c.workspace_id,c.bidder_id);
+$$;
+revoke all on function private.application_locations() from public,anon,authenticated,service_role;
+grant execute on function private.application_locations() to authenticated,service_role;
+
+-- Existing expiry snapshots are already in files.finalized_at and
+-- bids.screenshot_uploaded_at. Detaching/pruning files must keep bid location.
+drop function public.manager_screenshot_upload_context(uuid);
+drop function public.manager_screenshot_upload_history(uuid,timestamptz,uuid);
+drop trigger screenshot_upload_context_immutable on public.screenshot_upload_contexts;
+drop function public.guard_screenshot_upload_context_immutable();
+do $migration$
+declare f record; definition text;
+begin
+ for f in select p.oid from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+  where n.nspname in ('public','private') and p.prokind='f'
+   and p.prosrc like '%screenshot_upload_contexts%'
+ loop
+  definition=pg_get_functiondef(f.oid);
+  definition=regexp_replace(definition,'delete from public[.]screenshot_upload_contexts[^;]*;','','gi');
+  definition=replace(definition,'or exists(select 1 from public.screenshot_upload_contexts c where not exists(select 1 from public.files f where f.id=c.original_file_id))','');
+  if definition like '%screenshot_upload_contexts%' then raise exception 'Unadapted upload history dependency'; end if;
+  execute definition;
+ end loop;
+end $migration$;
+drop table public.screenshot_upload_contexts;
+
+create or replace function public.list_bids_v2(p_query jsonb) returns jsonb
+language plpgsql stable security invoker set search_path='' set plan_cache_mode=force_custom_plan as $$
+declare
+  page_index integer=greatest(0,least(100000,coalesce((p_query->>'pageIndex')::integer,0)));
+  page_size integer=greatest(1,least(100,coalesce((p_query->>'pageSize')::integer,10)));
+  sort_id text=coalesce(p_query->'sorting'->0->>'id','found_at');
+  sort_desc boolean=coalesce((p_query->'sorting'->0->>'desc')::boolean,true);
+  columns jsonb=coalesce(p_query->'columnFilters','{}'::jsonb);
+  bidder_filter text=coalesce(p_query->'columnFilters'->>'bidder_id','');
+  resume_filter text=coalesce(p_query->'columnFilters'->>'resume_id','');
+  bidder_matches uuid[];
+  resume_matches uuid[];
+  can_view_sizes boolean;
+  result jsonb;
+begin
+  select exists(select 1 from public.profiles p where p.id=auth.uid()
+    and p.role in ('admin','client') and not p.archived and p.approval_status='approved')
+    into can_view_sizes;
+
+  if (sort_id='screenshot_size_bytes' and not can_view_sizes) or sort_id not in ('found_at','resume_id','company','role_name','url','bidder_id','source','applied','applied_at','arrangement','job_status','review_status','interview_scheduled','screenshot','screenshot_size_bytes') then sort_id='found_at'; end if;
+
+  -- Treat private review modes as All before the legacy presence predicate.
+  if columns->>'screenshot'='Repeated sizes only' and not can_view_sizes then
+    columns=jsonb_set(columns,'{screenshot}','""'::jsonb);
+  end if;
+
+  -- Resolve display-name filters once against the small account/library tables;
+  -- the application-history scan then compares UUIDs without per-row joins.
+  if bidder_filter<>'' then
+    select coalesce(array_agg(p.id),'{}'::uuid[]) into bidder_matches
+    from public.profiles p
+    where position(lower(bidder_filter) in lower(p.id::text||' '||coalesce(p.display_name,'')))>0;
+  end if;
+  if resume_filter<>'' then
+    select coalesce(array_agg(r.id),'{}'::uuid[]) into resume_matches
+    from public.resumes r
+    join public.candidate_profiles cp on cp.id=r.profile_id
+    where position(lower(resume_filter) in lower(coalesce(cp.identifier,'')||' '||coalesce(cp.candidate_name,'')||' '||coalesce(r.email,'')))>0;
+  end if;
+
+  -- Paired 25k local plans show that rereading selective text/date predicates
+  -- for page/count/population costs more than the retained one-snapshot path.
+  -- Broad manager pages had inconclusive gains; use the ordinary path only
+  -- for bidder projection, pending review, or an explicitly scoped bidder.
+  -- Choose once by query shape; never execute a failed query then retry it.
+  if sort_id<>'screenshot_size_bytes' and coalesce(columns->>'screenshot','')<>'Repeated sizes only'
+    and (not can_view_sizes or p_query->>'status'='pending_review' or nullif(p_query->>'scopeBidderId','') is not null)
+    and coalesce(p_query->>'search','')=''
+    and coalesce(columns->>'company','')='' and coalesce(columns->>'role_name','')=''
+    and coalesce(columns->>'url','')='' and coalesce(columns->>'source','')=''
+    and bidder_filter='' and resume_filter=''
+    and not (columns ? 'found_at') and not (columns ? 'applied_at')
+    and nullif(p_query->>'rangeFrom','') is null and nullif(p_query->>'rangeTo','') is null then
+  with application_locations as materialized (select * from private.application_locations()),
+  country_population as not materialized (
+    select b.id,b.workspace_id,b.found_at,
+      case when sort_id='resume_id' then b.resume_id end as resume_id,
+      case when sort_id='company' then b.company end as company,
+      case when sort_id='role_name' then b.role_name end as role_name,
+      case when sort_id='url' then b.url end as url,b.bidder_id,
+      case when sort_id='source' then b.source end as source,
+      b.applied,case when sort_id='applied_at' then b.applied_at end as applied_at,
+      case when sort_id='arrangement' then b.arrangement end as arrangement,
+      case when sort_id='job_status' then b.job_status end as job_status,b.review_status,
+      case when sort_id='interview_scheduled' then b.interview_scheduled end as interview_scheduled,
+      b.evidence_file_id
+    from public.bids b
+    where ((coalesce((p_query->>'trash')::boolean,false) and b.deleted_at is not null) or
+           (not coalesce((p_query->>'trash')::boolean,false) and b.deleted_at is null))
+      and (nullif(p_query->>'scopeBidderId','') is null or b.bidder_id=(p_query->>'scopeBidderId')::uuid)
+      and (nullif(p_query->>'bidder','') is null or p_query->>'bidder'='all' or b.bidder_id=(p_query->>'bidder')::uuid)
+      and (nullif(p_query->>'resume','') is null or p_query->>'resume'='all' or b.resume_id=(p_query->>'resume')::uuid)
+      and (nullif(p_query->>'source','') is null or p_query->>'source'='all' or b.source=p_query->>'source')
+      and (nullif(p_query->>'arrangement','') is null or p_query->>'arrangement'='all' or b.arrangement=p_query->>'arrangement')
+      and (nullif(p_query->>'job','') is null or p_query->>'job'='all' or b.job_status=p_query->>'job')
+      and (nullif(p_query->>'rangeFrom','') is null or b.found_at >= (p_query->>'rangeFrom')::timestamptz)
+      and (nullif(p_query->>'rangeTo','') is null or b.found_at < (p_query->>'rangeTo')::timestamptz)
+      and (coalesce(p_query->>'search','')='' or position(lower(p_query->>'search') in lower(b.company||' '||b.role_name||' '||b.url))>0)
+      and (coalesce(columns->>'company','')='' or position(lower(columns->>'company') in lower(b.company))>0)
+      and (coalesce(columns->>'role_name','')='' or position(lower(columns->>'role_name') in lower(b.role_name))>0)
+      and (coalesce(columns->>'url','')='' or position(lower(columns->>'url') in lower(b.url))>0)
+      and (coalesce(columns->>'source','')='' or position(lower(columns->>'source') in lower(b.source))>0)
+      and (bidder_filter='' or b.bidder_id=any(bidder_matches))
+      and (resume_filter='' or b.resume_id=any(resume_matches))
+      and (coalesce(columns->>'applied','')='' or b.applied=(columns->>'applied'='Applied'))
+      and (coalesce(columns->>'review_status','')='' or b.review_status=columns->>'review_status')
+      and (coalesce(columns->>'interview_scheduled','')='' or b.interview_scheduled=(columns->>'interview_scheduled'='Scheduled'))
+      and (coalesce(columns->>'arrangement','')='' or b.arrangement=columns->>'arrangement')
+      and (coalesce(columns->>'job_status','')='' or b.job_status=columns->>'job_status')
+      and (coalesce(columns->>'screenshot','') in ('','Repeated sizes only') or (b.evidence_file_id is not null)=(columns->>'screenshot'='Has screenshot'))
+      and (not (columns ? 'found_at') or (
+        coalesce(columns->'found_at'->>'presence','all')<>'empty' and
+        (nullif(columns->'found_at'->>'from','') is null or (b.found_at >= case when (columns->'found_at'->>'from')::date between '0001-01-01'::date and '9999-12-31'::date then ((columns->'found_at'->>'from')::date::timestamp at time zone 'America/Chicago') else '-infinity'::timestamptz end and ((columns->'found_at'->>'from')::date between '0001-01-01'::date and '9999-12-31'::date or (b.found_at at time zone 'America/Chicago')::date >= (columns->'found_at'->>'from')::date))) and
+        (nullif(columns->'found_at'->>'to','') is null or (b.found_at <= case when (columns->'found_at'->>'to')::date between '0001-01-01'::date and '9999-12-31'::date then ((((columns->'found_at'->>'to')::date+1)::timestamp at time zone 'America/Chicago')-interval '1 microsecond') else 'infinity'::timestamptz end and ((columns->'found_at'->>'to')::date between '0001-01-01'::date and '9999-12-31'::date or (b.found_at at time zone 'America/Chicago')::date <= (columns->'found_at'->>'to')::date)))))
+      and (not (columns ? 'applied_at') or (
+        (coalesce(columns->'applied_at'->>'presence','all')<>'empty' or b.applied_at is null) and
+        (coalesce(columns->'applied_at'->>'presence','all')<>'has' or b.applied_at is not null) and
+        (nullif(columns->'applied_at'->>'from','') is null or (b.applied_at >= case when (columns->'applied_at'->>'from')::date between '0001-01-01'::date and '9999-12-31'::date then ((columns->'applied_at'->>'from')::date::timestamp at time zone 'America/Chicago') else '-infinity'::timestamptz end and ((columns->'applied_at'->>'from')::date between '0001-01-01'::date and '9999-12-31'::date or (b.applied_at at time zone 'America/Chicago')::date >= (columns->'applied_at'->>'from')::date))) and
+        (nullif(columns->'applied_at'->>'to','') is null or (b.applied_at <= case when (columns->'applied_at'->>'to')::date between '0001-01-01'::date and '9999-12-31'::date then ((((columns->'applied_at'->>'to')::date+1)::timestamp at time zone 'America/Chicago')-interval '1 microsecond') else 'infinity'::timestamptz end and ((columns->'applied_at'->>'to')::date between '0001-01-01'::date and '9999-12-31'::date or (b.applied_at at time zone 'America/Chicago')::date <= (columns->'applied_at'->>'to')::date))))
+      )
+
+  ), filtered as not materialized (
+    select b.* from country_population b left join application_locations c on c.bid_id=b.id
+    where coalesce(p_query->>'ipCountry','all')='all'
+     or (p_query->>'ipCountry'='unknown' and c.country is null)
+     or (p_query->>'ipCountry'='non-US' and c.country is not null and c.country<>'US')
+     or c.country=p_query->>'ipCountry'
+  ), status_counts as (
+    select count(*) filter(where (coalesce(p_query->>'status','all')='all' or (p_query->>'status'='pending_review' and f.review_status='pending') or (p_query->>'status'='applied' and f.applied) or (p_query->>'status'='unapplied' and not f.applied)))::integer total_count,
+      count(*)::integer all_count,count(*) filter(where f.applied)::integer applied_count,
+      count(*) filter(where not f.applied)::integer unapplied_count,
+      count(*) filter(where f.review_status='pending')::integer pending_count
+    from filtered f
+  ), page as materialized (
+    select f.* from filtered f where (coalesce(p_query->>'status','all')='all' or (p_query->>'status'='pending_review' and f.review_status='pending') or (p_query->>'status'='applied' and f.applied) or (p_query->>'status'='unapplied' and not f.applied))
+    order by
+      case when sort_id='found_at' and not sort_desc then f.found_at end asc,
+      case when sort_id='found_at' and sort_desc then f.found_at end desc,
+      case when sort_id='resume_id' and not sort_desc then f.resume_id::text end asc,
+      case when sort_id='resume_id' and sort_desc then f.resume_id::text end desc,
+      case when sort_id='company' and not sort_desc then f.company end asc,
+      case when sort_id='company' and sort_desc then f.company end desc,
+      case when sort_id='role_name' and not sort_desc then f.role_name end asc,
+      case when sort_id='role_name' and sort_desc then f.role_name end desc,
+      case when sort_id='url' and not sort_desc then f.url end asc,
+      case when sort_id='url' and sort_desc then f.url end desc,
+      case when sort_id='bidder_id' and not sort_desc then f.bidder_id::text end asc,
+      case when sort_id='bidder_id' and sort_desc then f.bidder_id::text end desc,
+      case when sort_id='source' and not sort_desc then f.source end asc,
+      case when sort_id='source' and sort_desc then f.source end desc,
+      case when sort_id='applied' and not sort_desc then f.applied end asc,
+      case when sort_id='applied' and sort_desc then f.applied end desc,
+      case when sort_id='applied_at' and not sort_desc then f.applied_at end asc nulls last,
+      case when sort_id='applied_at' and sort_desc then f.applied_at end desc nulls last,
+      case when sort_id='arrangement' and not sort_desc then f.arrangement end asc,
+      case when sort_id='arrangement' and sort_desc then f.arrangement end desc,
+      case when sort_id='job_status' and not sort_desc then f.job_status end asc,
+      case when sort_id='job_status' and sort_desc then f.job_status end desc,
+      case when sort_id='review_status' and not sort_desc then f.review_status end asc,
+      case when sort_id='review_status' and sort_desc then f.review_status end desc,
+      case when sort_id='interview_scheduled' and not sort_desc then f.interview_scheduled end asc,
+      case when sort_id='interview_scheduled' and sort_desc then f.interview_scheduled end desc,
+      case when sort_id='screenshot' and not sort_desc then (f.evidence_file_id is not null) end asc,
+      case when sort_id='screenshot' and sort_desc then (f.evidence_file_id is not null) end desc,
+      f.found_at desc,f.id asc
+    limit page_size offset page_index*page_size
+  ), page_evidence as materialized (
+    select f.id,file.size_bytes,row_number() over(order by
+      case when sort_id='found_at' and not sort_desc then f.found_at end asc,
+      case when sort_id='found_at' and sort_desc then f.found_at end desc,
+      case when sort_id='resume_id' and not sort_desc then f.resume_id::text end asc,
+      case when sort_id='resume_id' and sort_desc then f.resume_id::text end desc,
+      case when sort_id='company' and not sort_desc then f.company end asc,
+      case when sort_id='company' and sort_desc then f.company end desc,
+      case when sort_id='role_name' and not sort_desc then f.role_name end asc,
+      case when sort_id='role_name' and sort_desc then f.role_name end desc,
+      case when sort_id='url' and not sort_desc then f.url end asc,
+      case when sort_id='url' and sort_desc then f.url end desc,
+      case when sort_id='bidder_id' and not sort_desc then f.bidder_id::text end asc,
+      case when sort_id='bidder_id' and sort_desc then f.bidder_id::text end desc,
+      case when sort_id='source' and not sort_desc then f.source end asc,
+      case when sort_id='source' and sort_desc then f.source end desc,
+      case when sort_id='applied' and not sort_desc then f.applied end asc,
+      case when sort_id='applied' and sort_desc then f.applied end desc,
+      case when sort_id='applied_at' and not sort_desc then f.applied_at end asc nulls last,
+      case when sort_id='applied_at' and sort_desc then f.applied_at end desc nulls last,
+      case when sort_id='arrangement' and not sort_desc then f.arrangement end asc,
+      case when sort_id='arrangement' and sort_desc then f.arrangement end desc,
+      case when sort_id='job_status' and not sort_desc then f.job_status end asc,
+      case when sort_id='job_status' and sort_desc then f.job_status end desc,
+      case when sort_id='review_status' and not sort_desc then f.review_status end asc,
+      case when sort_id='review_status' and sort_desc then f.review_status end desc,
+      case when sort_id='interview_scheduled' and not sort_desc then f.interview_scheduled end asc,
+      case when sort_id='interview_scheduled' and sort_desc then f.interview_scheduled end desc,
+      case when sort_id='screenshot' and not sort_desc then (f.evidence_file_id is not null) end asc,
+      case when sort_id='screenshot' and sort_desc then (f.evidence_file_id is not null) end desc,
+      f.found_at desc,f.id asc) row_number
+    from page f left join public.files file on can_view_sizes and file.id=f.evidence_file_id
+      and file.bid_id=f.id and file.workspace_id=f.workspace_id and file.bidder_id=f.bidder_id
+      and file.kind='screenshot' and file.finalized
+  ), page_sizes as materialized (
+    select distinct size_bytes from page_evidence where size_bytes is not null
+  ), evidence_groups as materialized (
+    select file.size_bytes,count(*)::integer match_count
+    from filtered f join public.files file on can_view_sizes and file.id=f.evidence_file_id
+      and file.bid_id=f.id and file.workspace_id=f.workspace_id and file.bidder_id=f.bidder_id
+      and file.kind='screenshot' and file.finalized
+    join page_sizes sizes on sizes.size_bytes=file.size_bytes
+    where (coalesce(p_query->>'status','all')='all' or (p_query->>'status'='pending_review' and f.review_status='pending') or (p_query->>'status'='applied' and f.applied) or (p_query->>'status'='unapplied' and not f.applied)) group by file.size_bytes
+  ), country_options as (
+    select coalesce(jsonb_agg(country order by country),'[]'::jsonb) values from (
+      select distinct c.country from country_population b
+      join application_locations c on c.bid_id=b.id
+      where c.country is not null and
+       (coalesce(p_query->>'status','all')='all' or
+        (p_query->>'status'='applied' and b.applied) or
+        (p_query->>'status'='unapplied' and not b.applied) or
+        (p_query->>'status'='pending_review' and b.review_status='pending'))
+       and (coalesce(columns->>'screenshot','')<>'Repeated sizes only' or exists (
+        select 1 from public.files f join country_population other on true
+        join public.files ofile on ofile.id=other.evidence_file_id and ofile.bid_id=other.id
+         and ofile.workspace_id=other.workspace_id and ofile.bidder_id=other.bidder_id
+         and ofile.kind='screenshot' and ofile.finalized and ofile.size_bytes=f.size_bytes
+        where f.id=b.evidence_file_id and f.bid_id=b.id and f.workspace_id=b.workspace_id
+         and f.bidder_id=b.bidder_id and f.kind='screenshot' and f.finalized and
+         (coalesce(p_query->>'status','all')='all' or
+          (p_query->>'status'='applied' and other.applied) or
+          (p_query->>'status'='unapplied' and not other.applied) or
+          (p_query->>'status'='pending_review' and other.review_status='pending'))
+        group by f.size_bytes having count(*)>=2))
+    ) countries
+  ), sources as (
+    select coalesce(jsonb_agg(source order by source),'[]'::jsonb) as values
+    from (select distinct b.source from public.bids b
+      where b.source<>'' and (nullif(p_query->>'scopeBidderId','') is null or b.bidder_id=(p_query->>'scopeBidderId')::uuid)) q
+  )
+
+  select jsonb_build_object(
+    'rows',coalesce((select jsonb_agg(to_jsonb(b) || jsonb_build_object('applicationLocation',location.location) || case when can_view_sizes then jsonb_build_object('screenshot_size_bytes',page.size_bytes,'screenshot_size_match_count',coalesce(groups.match_count,0)) else '{}'::jsonb end order by page.row_number)
+      from page_evidence page join (select b.id,b.workspace_id,b.bidder_id,b.resume_id,b.company,b.role_name,b.url,b.normalized_url,b.source,b.arrangement,b.job_status,b.applied,b.found_at,b.applied_at,b.first_applied_at,b.evidence_file_id,b.rejected_hashes,b.version,b.created_at,b.deleted_at,b.deleted_by,b.review_status,b.review_revision,b.reviewed_by,b.reviewed_at,b.review_reason,b.interview_scheduled,b.interview_at,b.interview_notes,b.interview_updated_by,b.interview_updated_at,b.interview_tracking,b.application_method,b.screenshot_uploaded_at from public.bids b) b on b.id=page.id left join application_locations location on location.bid_id=b.id left join evidence_groups groups on groups.size_bytes=page.size_bytes), '[]'::jsonb),
+    'total',(select total_count from status_counts),'sources',(select values from sources),
+    'countryOptions',(select values from country_options),'statusCounts',(select jsonb_build_object('all',all_count,'applied',applied_count,'unapplied',unapplied_count,'pending_review',pending_count) from status_counts)
+  ) into result;
+  return result;
+  end if;
+
+  with application_locations as materialized (select * from private.application_locations()),
+  country_population as not materialized (
+    select b.id,b.workspace_id,b.found_at,
+      case when sort_id='resume_id' then b.resume_id end as resume_id,
+      case when sort_id='company' then b.company end as company,
+      case when sort_id='role_name' then b.role_name end as role_name,
+      case when sort_id='url' then b.url end as url,b.bidder_id,
+      case when sort_id='source' then b.source end as source,
+      b.applied,case when sort_id='applied_at' then b.applied_at end as applied_at,
+      case when sort_id='arrangement' then b.arrangement end as arrangement,
+      case when sort_id='job_status' then b.job_status end as job_status,b.review_status,
+      case when sort_id='interview_scheduled' then b.interview_scheduled end as interview_scheduled,
+      b.evidence_file_id
+    from public.bids b
+    where ((coalesce((p_query->>'trash')::boolean,false) and b.deleted_at is not null) or
+           (not coalesce((p_query->>'trash')::boolean,false) and b.deleted_at is null))
+      and (nullif(p_query->>'scopeBidderId','') is null or b.bidder_id=(p_query->>'scopeBidderId')::uuid)
+      and (nullif(p_query->>'bidder','') is null or p_query->>'bidder'='all' or b.bidder_id=(p_query->>'bidder')::uuid)
+      and (nullif(p_query->>'resume','') is null or p_query->>'resume'='all' or b.resume_id=(p_query->>'resume')::uuid)
+      and (nullif(p_query->>'source','') is null or p_query->>'source'='all' or b.source=p_query->>'source')
+      and (nullif(p_query->>'arrangement','') is null or p_query->>'arrangement'='all' or b.arrangement=p_query->>'arrangement')
+      and (nullif(p_query->>'job','') is null or p_query->>'job'='all' or b.job_status=p_query->>'job')
+      and (nullif(p_query->>'rangeFrom','') is null or b.found_at >= (p_query->>'rangeFrom')::timestamptz)
+      and (nullif(p_query->>'rangeTo','') is null or b.found_at < (p_query->>'rangeTo')::timestamptz)
+      and (coalesce(p_query->>'search','')='' or position(lower(p_query->>'search') in lower(b.company||' '||b.role_name||' '||b.url))>0)
+      and (coalesce(columns->>'company','')='' or position(lower(columns->>'company') in lower(b.company))>0)
+      and (coalesce(columns->>'role_name','')='' or position(lower(columns->>'role_name') in lower(b.role_name))>0)
+      and (coalesce(columns->>'url','')='' or position(lower(columns->>'url') in lower(b.url))>0)
+      and (coalesce(columns->>'source','')='' or position(lower(columns->>'source') in lower(b.source))>0)
+      and (bidder_filter='' or b.bidder_id=any(bidder_matches))
+      and (resume_filter='' or b.resume_id=any(resume_matches))
+      and (coalesce(columns->>'applied','')='' or b.applied=(columns->>'applied'='Applied'))
+      and (coalesce(columns->>'review_status','')='' or b.review_status=columns->>'review_status')
+      and (coalesce(columns->>'interview_scheduled','')='' or b.interview_scheduled=(columns->>'interview_scheduled'='Scheduled'))
+      and (coalesce(columns->>'arrangement','')='' or b.arrangement=columns->>'arrangement')
+      and (coalesce(columns->>'job_status','')='' or b.job_status=columns->>'job_status')
+      and (coalesce(columns->>'screenshot','') in ('','Repeated sizes only') or (b.evidence_file_id is not null)=(columns->>'screenshot'='Has screenshot'))
+      and (not (columns ? 'found_at') or (
+        coalesce(columns->'found_at'->>'presence','all')<>'empty' and
+        (nullif(columns->'found_at'->>'from','') is null or (b.found_at >= case when (columns->'found_at'->>'from')::date between '0001-01-01'::date and '9999-12-31'::date then ((columns->'found_at'->>'from')::date::timestamp at time zone 'America/Chicago') else '-infinity'::timestamptz end and ((columns->'found_at'->>'from')::date between '0001-01-01'::date and '9999-12-31'::date or (b.found_at at time zone 'America/Chicago')::date >= (columns->'found_at'->>'from')::date))) and
+        (nullif(columns->'found_at'->>'to','') is null or (b.found_at <= case when (columns->'found_at'->>'to')::date between '0001-01-01'::date and '9999-12-31'::date then ((((columns->'found_at'->>'to')::date+1)::timestamp at time zone 'America/Chicago')-interval '1 microsecond') else 'infinity'::timestamptz end and ((columns->'found_at'->>'to')::date between '0001-01-01'::date and '9999-12-31'::date or (b.found_at at time zone 'America/Chicago')::date <= (columns->'found_at'->>'to')::date)))))
+      and (not (columns ? 'applied_at') or (
+        (coalesce(columns->'applied_at'->>'presence','all')<>'empty' or b.applied_at is null) and
+        (coalesce(columns->'applied_at'->>'presence','all')<>'has' or b.applied_at is not null) and
+        (nullif(columns->'applied_at'->>'from','') is null or (b.applied_at >= case when (columns->'applied_at'->>'from')::date between '0001-01-01'::date and '9999-12-31'::date then ((columns->'applied_at'->>'from')::date::timestamp at time zone 'America/Chicago') else '-infinity'::timestamptz end and ((columns->'applied_at'->>'from')::date between '0001-01-01'::date and '9999-12-31'::date or (b.applied_at at time zone 'America/Chicago')::date >= (columns->'applied_at'->>'from')::date))) and
+        (nullif(columns->'applied_at'->>'to','') is null or (b.applied_at <= case when (columns->'applied_at'->>'to')::date between '0001-01-01'::date and '9999-12-31'::date then ((((columns->'applied_at'->>'to')::date+1)::timestamp at time zone 'America/Chicago')-interval '1 microsecond') else 'infinity'::timestamptz end and ((columns->'applied_at'->>'to')::date between '0001-01-01'::date and '9999-12-31'::date or (b.applied_at at time zone 'America/Chicago')::date <= (columns->'applied_at'->>'to')::date))))
+      )
+  ), filtered as not materialized (
+    select b.* from country_population b left join application_locations c on c.bid_id=b.id
+    where coalesce(p_query->>'ipCountry','all')='all'
+     or (p_query->>'ipCountry'='unknown' and c.country is null)
+     or (p_query->>'ipCountry'='non-US' and c.country is not null and c.country<>'US')
+     or c.country=p_query->>'ipCountry'
+  ), current_evidence_sizes as materialized (
+    -- Row-preserving join avoids the correlated identity predicates reducing
+    -- an INNER JOIN estimate to one. Ordinary metadata remains status-narrow.
+    -- Identity fields used only to validate the file need not be materialized.
+    -- Preserve only active sort values, byte size and status flags.
+    select f.id,f.found_at,f.resume_id,f.company,f.role_name,f.url,
+      case when sort_id='bidder_id' then f.bidder_id end as bidder_id,
+      f.source,f.applied,f.applied_at,f.arrangement,f.job_status,f.review_status,f.interview_scheduled,
+      case when sort_id='screenshot' then f.evidence_file_id end as evidence_file_id,file.size_bytes
+    from filtered f
+    left join public.files file on can_view_sizes and file.id=f.evidence_file_id
+      and file.bid_id=f.id and file.workspace_id=f.workspace_id and file.bidder_id=f.bidder_id
+      and file.kind='screenshot' and file.finalized and (
+        coalesce(columns->>'screenshot','')='Repeated sizes only' or
+        coalesce(p_query->>'status','all')='all' or
+        (p_query->>'status'='pending_review' and f.review_status='pending') or
+        (p_query->>'status'='applied' and f.applied) or
+        (p_query->>'status'='unapplied' and not f.applied))
+  ), evidence_groups as materialized (
+    -- Invalid/missing current attachments have null metadata and never form a
+    -- repeated-size group. Ordinary file metadata is already status-narrow.
+    select f.size_bytes,count(*)::integer all_count,
+      count(*) filter(where f.applied)::integer applied_count,
+      count(*) filter(where not f.applied)::integer unapplied_count,
+      count(*) filter(where f.review_status='pending')::integer pending_count
+    from current_evidence_sizes f where f.size_bytes is not null
+    group by f.size_bytes
+  ), status_filtered as not materialized (
+    select f.*,coalesce(case coalesce(p_query->>'status','all')
+      when 'applied' then groups.applied_count
+      when 'unapplied' then groups.unapplied_count
+      when 'pending_review' then groups.pending_count
+      else groups.all_count end,0) as match_count
+    from current_evidence_sizes f
+    left join evidence_groups groups on groups.size_bytes=f.size_bytes
+    where (coalesce(p_query->>'status','all')='all' or
+      (p_query->>'status'='pending_review' and f.review_status='pending') or
+      (p_query->>'status'='applied' and f.applied) or
+      (p_query->>'status'='unapplied' and not f.applied))
+      and (coalesce(columns->>'screenshot','')<>'Repeated sizes only' or coalesce(case coalesce(p_query->>'status','all')
+      when 'applied' then groups.applied_count
+      when 'unapplied' then groups.unapplied_count
+      when 'pending_review' then groups.pending_count
+      else groups.all_count end,0)>=2)
+  ), status_counts as (
+    -- All may differ from Applied+Unapplied: each status requires its own pair.
+    select count(*) filter(where
+      (coalesce(p_query->>'status','all')='all' or
+        (p_query->>'status'='pending_review' and f.review_status='pending') or
+        (p_query->>'status'='applied' and f.applied) or
+        (p_query->>'status'='unapplied' and not f.applied))
+      and (coalesce(columns->>'screenshot','')<>'Repeated sizes only' or coalesce(case coalesce(p_query->>'status','all')
+      when 'applied' then groups.applied_count
+      when 'unapplied' then groups.unapplied_count
+      when 'pending_review' then groups.pending_count
+      else groups.all_count end,0)>=2))::integer total_count,
+      count(*) filter(where coalesce(columns->>'screenshot','')<>'Repeated sizes only' or groups.all_count>=2)::integer all_count,
+      count(*) filter(where f.applied and (coalesce(columns->>'screenshot','')<>'Repeated sizes only' or groups.applied_count>=2))::integer applied_count,
+      count(*) filter(where not f.applied and (coalesce(columns->>'screenshot','')<>'Repeated sizes only' or groups.unapplied_count>=2))::integer unapplied_count,
+      count(*) filter(where f.review_status='pending' and (coalesce(columns->>'screenshot','')<>'Repeated sizes only' or groups.pending_count>=2))::integer pending_count
+    from current_evidence_sizes f
+    left join evidence_groups groups on coalesce(columns->>'screenshot','')='Repeated sizes only' and groups.size_bytes=f.size_bytes
+  ), sorted as (
+    select f.id,f.size_bytes,f.match_count,row_number() over(order by
+      case when sort_id='found_at' and not sort_desc then f.found_at end asc,
+      case when sort_id='found_at' and sort_desc then f.found_at end desc,
+      case when sort_id='resume_id' and not sort_desc then f.resume_id::text end asc,
+      case when sort_id='resume_id' and sort_desc then f.resume_id::text end desc,
+      case when sort_id='company' and not sort_desc then f.company end asc,
+      case when sort_id='company' and sort_desc then f.company end desc,
+      case when sort_id='role_name' and not sort_desc then f.role_name end asc,
+      case when sort_id='role_name' and sort_desc then f.role_name end desc,
+      case when sort_id='url' and not sort_desc then f.url end asc,
+      case when sort_id='url' and sort_desc then f.url end desc,
+      case when sort_id='bidder_id' and not sort_desc then f.bidder_id::text end asc,
+      case when sort_id='bidder_id' and sort_desc then f.bidder_id::text end desc,
+      case when sort_id='source' and not sort_desc then f.source end asc,
+      case when sort_id='source' and sort_desc then f.source end desc,
+      case when sort_id='applied' and not sort_desc then f.applied end asc,
+      case when sort_id='applied' and sort_desc then f.applied end desc,
+      case when sort_id='applied_at' and not sort_desc then f.applied_at end asc nulls last,
+      case when sort_id='applied_at' and sort_desc then f.applied_at end desc nulls last,
+      case when sort_id='arrangement' and not sort_desc then f.arrangement end asc,
+      case when sort_id='arrangement' and sort_desc then f.arrangement end desc,
+      case when sort_id='job_status' and not sort_desc then f.job_status end asc,
+      case when sort_id='job_status' and sort_desc then f.job_status end desc,
+      case when sort_id='review_status' and not sort_desc then f.review_status end asc,
+      case when sort_id='review_status' and sort_desc then f.review_status end desc,
+      case when sort_id='interview_scheduled' and not sort_desc then f.interview_scheduled end asc,
+      case when sort_id='interview_scheduled' and sort_desc then f.interview_scheduled end desc,
+      case when sort_id='screenshot' and not sort_desc then (f.evidence_file_id is not null) end asc,
+      case when sort_id='screenshot' and sort_desc then (f.evidence_file_id is not null) end desc,
+      case when sort_id='screenshot_size_bytes' and not sort_desc then
+        f.size_bytes end asc nulls last,
+      case when sort_id='screenshot_size_bytes' and sort_desc then
+        f.size_bytes end desc nulls last,
+      f.found_at desc,f.id asc) as row_number
+    from status_filtered f
+  ), page as (
+    select id,size_bytes,match_count,row_number from sorted
+    where row_number>page_index*page_size and row_number<=page_index*page_size+page_size
+  ), country_options as (
+    select coalesce(jsonb_agg(country order by country),'[]'::jsonb) values from (
+      select distinct c.country from country_population b
+      join application_locations c on c.bid_id=b.id
+      where c.country is not null and
+       (coalesce(p_query->>'status','all')='all' or
+        (p_query->>'status'='applied' and b.applied) or
+        (p_query->>'status'='unapplied' and not b.applied) or
+        (p_query->>'status'='pending_review' and b.review_status='pending'))
+       and (coalesce(columns->>'screenshot','')<>'Repeated sizes only' or exists (
+        select 1 from public.files f join country_population other on true
+        join public.files ofile on ofile.id=other.evidence_file_id and ofile.bid_id=other.id
+         and ofile.workspace_id=other.workspace_id and ofile.bidder_id=other.bidder_id
+         and ofile.kind='screenshot' and ofile.finalized and ofile.size_bytes=f.size_bytes
+        where f.id=b.evidence_file_id and f.bid_id=b.id and f.workspace_id=b.workspace_id
+         and f.bidder_id=b.bidder_id and f.kind='screenshot' and f.finalized and
+         (coalesce(p_query->>'status','all')='all' or
+          (p_query->>'status'='applied' and other.applied) or
+          (p_query->>'status'='unapplied' and not other.applied) or
+          (p_query->>'status'='pending_review' and other.review_status='pending'))
+        group by f.size_bytes having count(*)>=2))
+    ) countries
+  ), sources as (
+    select coalesce(jsonb_agg(source order by source),'[]'::jsonb) as values
+    from (select distinct b.source from public.bids b
+      where b.source<>'' and (nullif(p_query->>'scopeBidderId','') is null or b.bidder_id=(p_query->>'scopeBidderId')::uuid)) q
+  )
+  select jsonb_build_object(
+    'rows',coalesce((select jsonb_agg(to_jsonb(b) || jsonb_build_object('applicationLocation',location.location) || case when can_view_sizes then jsonb_build_object('screenshot_size_bytes',page.size_bytes,'screenshot_size_match_count',page.match_count) else '{}'::jsonb end order by page.row_number) from page join (select b.id,b.workspace_id,b.bidder_id,b.resume_id,b.company,b.role_name,b.url,b.normalized_url,b.source,b.arrangement,b.job_status,b.applied,b.found_at,b.applied_at,b.first_applied_at,b.evidence_file_id,b.rejected_hashes,b.version,b.created_at,b.deleted_at,b.deleted_by,b.review_status,b.review_revision,b.reviewed_by,b.reviewed_at,b.review_reason,b.interview_scheduled,b.interview_at,b.interview_notes,b.interview_updated_by,b.interview_updated_at,b.interview_tracking,b.application_method,b.screenshot_uploaded_at from public.bids b) b on b.id=page.id left join application_locations location on location.bid_id=b.id), '[]'::jsonb),
+    'total',(select total_count from status_counts),
+    'sources',(select values from sources),
+    'countryOptions',(select values from country_options),'statusCounts',(select jsonb_build_object('all',all_count,'applied',applied_count,'unapplied',unapplied_count,'pending_review',pending_count) from status_counts)
+  ) into result;
+  return result;
+end $$;
+
+revoke all on function public.list_bids_v2(jsonb) from public, anon;
+grant execute on function public.list_bids_v2(jsonb) to authenticated;

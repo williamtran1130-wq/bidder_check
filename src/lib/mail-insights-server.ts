@@ -6,7 +6,7 @@ import { isCalendarDate } from "./calendar-period";
 import type { Database } from "./database.types";
 
 export class MailApiError extends Error {
-  constructor(public status: number, message: string) { super(message); }
+  constructor(public status: number, message: string, public destination?: string) { super(message); }
 }
 export const mailJson = (data: unknown, status = 200) => Response.json(data, {
   status, headers: { "Cache-Control": "private, no-store", Vary: "Cookie, Authorization" },
@@ -37,18 +37,25 @@ export async function mailReadActor(request: Request) {
   try { return await getActor(); }
   catch (error) {
     if (error && typeof error === "object" && "destination" in error)
-      throw new MailApiError(error.destination === "/auth/login" ? 401 : 403, "Your access changed. Please sign in again.");
+      throw new MailApiError(error.destination === "/auth/login" ? 401 : 403, "Your access changed. Please sign in again.", String(error.destination));
     throw error;
   }
 }
 export function mailFailure(error: unknown) {
-  if (error instanceof MailApiError) return mailJson({ error: error.message }, error.status);
+  if (error instanceof MailApiError) return mailJson({ error: error.message, ...(error.destination ? { destination: error.destination } : {}) }, error.status);
   if (error instanceof z.ZodError || error instanceof SyntaxError) return mailJson({ error: "Invalid metrics request." }, 400);
   return mailJson({ error: "Email metrics are temporarily unavailable. Please retry." }, 503);
 }
 const timestamp = z.string().max(80).datetime({ offset: true }).refine(value => /(?:Z|\+00:00)$/.test(value));
 const date = z.string().refine(isCalendarDate);
-export const snapshotSchema = z.object({
+const mailboxSchema = z.object({
+  email: z.email().max(320).refine(value => value === value.trim().toLowerCase()), account_label: z.string().max(200),
+  collected_at: timestamp.nullable(), coverage_start: date.nullable(),
+  rows: z.array(z.object({ date, category: z.enum(["application_ack", "interview_invite", "assessment", "offer", "info_request", "recruiter_outreach", "rejection", "job_alert", "other", "unclassified"]),
+    handled: z.boolean(), action_required: z.boolean(), retryable: z.boolean(), count: z.number().int().min(0).max(1000000000),
+  }).strict()).max(50000),
+}).strict();
+const snapshotV1 = z.object({
   schema_version: z.literal(1), client_id: z.uuid(), revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   generated_at: timestamp, timezone: z.literal("America/Chicago"),
   mailboxes: z.array(z.object({
@@ -59,6 +66,16 @@ export const snapshotSchema = z.object({
     }).strict()).max(50000),
   }).strict()).max(500),
 }).strict();
+const snapshotV2Base = {
+  schema_version: z.literal(2), client_id: z.uuid(), revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  generated_at: timestamp, timezone: z.literal("America/Chicago"),
+  removed_mailboxes: z.array(z.email().max(320).refine(value => value === value.trim().toLowerCase())).max(500),
+};
+export const snapshotSchema = z.union([
+  snapshotV1,
+  z.object({ ...snapshotV2Base, mode: z.literal("full"), mailboxes: z.array(mailboxSchema).max(500) }).strict(),
+  z.object({ ...snapshotV2Base, mode: z.literal("delta"), base_revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), mailboxes: z.array(mailboxSchema.partial({ rows: true })).max(500) }).strict(),
+]);
 export async function readBoundedSnapshot(request: Request) {
   const limit = 2 * 1024 * 1024;
   if (Number(request.headers.get("content-length")) > limit) throw new MailApiError(413, "Metrics snapshot exceeds 2 MiB.");

@@ -249,11 +249,11 @@ it("expires only the screenshot and preserves application state, earnings and ac
   expect(
     (
       await db.query(
-        "select id from public.screenshot_upload_contexts where original_file_id=$1",
+        "select bid_id from public.bid_application_locations where original_file_id=$1",
         [file],
       )
     ).rows,
-  ).toHaveLength(0);
+  ).toHaveLength(1);
   expect(
     (
       await db.query(
@@ -301,7 +301,7 @@ it("rejects the same proof after expiry and manager correction", async () => {
   ]);
   await expect(statement(() => proof())).rejects.toThrow(/new proof|rejected/i);
 });
-it("removes superseded proof metadata and upload contexts immediately", async () => {
+it("removes superseded proof metadata and updates the one latest location", async () => {
   const first = await proof();
   const second = await proof("b".repeat(64));
   expect(
@@ -310,7 +310,7 @@ it("removes superseded proof metadata and upload contexts immediately", async ()
   expect(
     (
       await db.query(
-        "select original_file_id from public.screenshot_upload_contexts where bid_id=$1",
+        "select original_file_id from public.bid_application_locations where bid_id=$1",
         [bid],
       )
     ).rows,

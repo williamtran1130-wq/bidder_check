@@ -1,10 +1,10 @@
 import type { WorkspaceData } from "./data";
 import type { BidListQuery } from "./bid-list";
-import { notificationScope } from "./notification-scope";
+import { workspaceActorScope } from "./actor-scope";
 import { readKey } from "./read-state";
 export const actorReadScope = (
   data: Pick<WorkspaceData, "profile" | "workspaces">,
-) => notificationScope(data.profile, data.workspaces);
+) => workspaceActorScope(data.profile, data.workspaces);
 export function bidReadKey(
   data: Pick<WorkspaceData, "profile" | "workspaces">,
   mode: string,
@@ -18,7 +18,14 @@ export function bidReadKey(
   return readKey(
     actorReadScope(data),
     "bids",
-    [mode, from, to, trash, bidderId ?? null, query],
+    [
+      mode,
+      from,
+      to,
+      trash,
+      bidderId ?? null,
+      { ...query, ipCountry: query.ipCountry ?? "all" },
+    ],
     day,
   );
 }
@@ -33,6 +40,7 @@ export function initialBidQuery(
     resume: "all",
     bidder: bidderId ?? "all",
     source: "all",
+    ipCountry: "all",
     job: "all",
     columnFilters: [],
     sorting: [{ id: "found_at", desc: true }],

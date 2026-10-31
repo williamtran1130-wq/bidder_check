@@ -2,6 +2,9 @@ import { test, expect } from "@playwright/test";
 import { calendarToday } from "../src/lib/calendar-period";
 import type { MailInsightsReport } from "../src/lib/mail-insights-report";
 const day = calendarToday();
+test.beforeEach(async ({ page }) => {
+  await page.route("**/api/mail-insights/status*", route => route.fulfill({ json: { status: "not_synced", updatedAt: null, from: null, to: null } }));
+});
 const report: MailInsightsReport = {
   status: "ready", received_at: new Date().toISOString(), generated_at: new Date().toISOString(), range: { from: day, to: day, clipped: false },
   mailboxes: [{ email: "shared@example.test", account_label: "Shared", collected_at: null, coverage_start: null, rows: [
@@ -25,7 +28,8 @@ test("mail filters refine only mail, tabs deduplicate shared counts, mailbox sel
   const section = page.getByRole("region", { name: "Email insights", exact: true });
   await section.getByRole("button", { name: "Bids and email activity", exact: true }).click();
   const table = section.getByRole("tabpanel");
-  await expect(table.getByRole("row").filter({ hasText: "shared@example.test" })).toContainText("Shared mailbox");
+  await expect(table.getByRole("row").filter({ hasText: "shared@example.test" })).toContainText("Current assignments: Alex · Candidate, Blair · Candidate");
+  await expect(section).not.toContainText(/Shared mailbox|\(partial\)/);
   await expect(table.getByRole("row").filter({ hasText: "missing@example.test" })).toContainText("Not synced");
   const readsBefore = Number(await page.locator("html").getAttribute("data-report-reads"));
   await section.getByRole("combobox", { name: "Mail category", exact: true }).selectOption("interview_invite");
@@ -48,11 +52,19 @@ test("mail filters refine only mail, tabs deduplicate shared counts, mailbox sel
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: "test-results/mail-insights/mobile.png", fullPage: true });
 });
-test("unavailable preview mail endpoints preserve main activity and comparisons", async ({ page }) => {
+test("a failed report bundle remains unavailable until an explicit retry succeeds", async ({ page }) => {
+  let reads = 0;
+  page.on("request", request => { if (request.url().includes("/api/mail-insights/report")) reads++; });
   await page.route("**/api/mail-insights/report*", route => route.fulfill({ status: 503, body: "unavailable" }));
   await page.goto("http://127.0.0.1:3001/dashboard");
-  await expect(page.getByRole("alert")).toContainText("Email insights are temporarily unavailable");
+  await expect(page.getByRole("alert", { name: "Bid reporting error" })).toContainText("Email insights are temporarily unavailable");
   await expect(page.getByRole("heading", { name: "Application activity", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "By profile", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry email insights" })).toBeEnabled();
+  await expect(page.getByText("Activity unavailable.", { exact: true })).toBeVisible();
+  expect(reads).toBe(1);
+  await page.route("**/api/mail-insights/report*", route => route.fulfill({ json: report }));
+  await page.getByRole("button", { name: "Retry email insights" }).click();
+  await expect(page.getByRole("img", { name: /Activity chart: .*2 interview invites\./ })).toBeVisible();
+  expect(reads).toBe(2);
 });

@@ -68,6 +68,8 @@ import {
   AppliedBadge,
 } from "./common";
 import { ScreenshotCell } from "./screenshot-cell";
+import { invalidateReports } from "@/lib/report-cache";
+import { countryLabel } from "@/lib/application-location";
 import { AppliedIpLocationCell } from "./applied-ip-location-cell";
 import { FileUpload } from "./file-upload";
 import { BulkBidToolbar } from "./bulk-bid-toolbar";
@@ -391,6 +393,7 @@ function BidWorkspaceContent({
   const seedEligible = useRef(true);
   const [preferencesReady, setPreferencesReady] = useState(false);
   function refreshSnapshot() {
+    invalidateReports();
     requests.current.invalidate();
     if (editing.current) deferredRefresh.current = true;
     else setRevision((n) => n + 1);
@@ -416,6 +419,7 @@ function BidWorkspaceContent({
     setStatus("all");
     setArrangement("all");
     setSource("all");
+    setIpCountry("all");
     setJob("all");
     setBidder(result.bidder);
     setResume(result.resume);
@@ -439,6 +443,7 @@ function BidWorkspaceContent({
     setBidder(next);
   }
   const [source, setSource] = useState("all");
+  const [ipCountry, setIpCountry] = useState("all");
   const [job, setJob] = useState("all");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -471,6 +476,7 @@ function BidWorkspaceContent({
   const [list, setList] = useState(data.bids);
   const [totalCount, setTotalCount] = useState(0);
   const [sourceOptions, setSourceOptions] = useState<string[]>([]);
+  const [countryOptions, setCountryOptions] = useState<string[]>([]);
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -484,6 +490,7 @@ function BidWorkspaceContent({
       resume,
       bidder,
       source,
+      ipCountry,
       job,
       columnFilters,
       sorting,
@@ -497,6 +504,7 @@ function BidWorkspaceContent({
       resume,
       bidder,
       source,
+      ipCountry,
       job,
       columnFilters,
       sorting,
@@ -532,7 +540,7 @@ function BidWorkspaceContent({
     ) {
       setStatus("pending_review");
       setDateMode("all");
-      }
+    }
   }, []);
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
@@ -605,12 +613,14 @@ function BidWorkspaceContent({
               rows: Bid[];
               total: number;
               sources: string[];
+              countryOptions: string[];
               statusCounts: Record<string, number>;
             }
           | undefined;
         setList(page?.rows ?? []);
         setTotalCount(page?.total ?? 0);
         setSourceOptions(page?.sources ?? []);
+        setCountryOptions(page?.countryOptions ?? []);
         setStatusCounts(page?.statusCounts ?? {});
         setLoadedKey(queryKey);
       }
@@ -637,6 +647,7 @@ function BidWorkspaceContent({
     resume,
     bidder,
     source,
+    ipCountry,
     job,
     columnFilters,
     sorting,
@@ -710,11 +721,22 @@ function BidWorkspaceContent({
     });
   }
   async function toggleTrash(b: Bid) {
-    if (!window.confirm("Permanently delete this bid, its activity history and screenshots? This cannot be undone.")) return;
-    const result = await bidAction(() => deleteBids([{id:b.id,version:b.version}]));
+    if (
+      !window.confirm(
+        "Permanently delete this bid, its activity history and screenshots? This cannot be undone.",
+      )
+    )
+      return;
+    const result = await bidAction(() =>
+      deleteBids([{ id: b.id, version: b.version }]),
+    );
     if (result.error) toast.error(result.error);
     else {
-      toast.success(result.data?.status.pendingFiles ? "Bid deleted. File cleanup pending; retry is automatic." : "Bid permanently deleted");
+      toast.success(
+        result.data?.status.pendingFiles
+          ? "Bid deleted. File cleanup pending; retry is automatic."
+          : "Bid permanently deleted",
+      );
       setSelected(undefined);
       refreshSnapshot();
       router.refresh();
@@ -1250,24 +1272,17 @@ function BidWorkspaceContent({
         />
       ),
     },
-    ...(canReview
-      ? ([
-          {
-            id: "applied_ip_location",
-            header: "Applied IP / location",
-            enableSorting: false,
-            cell: ({ row }) => (
-              <AppliedIpLocationCell
-                key={row.original.evidence_file_id ?? "no-screenshot"}
-                fileId={row.original.evidence_file_id}
-                actorScope={actorReadScope(data)}
-                role={data.profile.role}
-                disabled={isEditing || pending}
-              />
-            ),
-          },
-        ] satisfies ColumnDef<Bid>[])
-      : []),
+    {
+      id: "applied_ip_location",
+      header: "Applied IP / location",
+      enableSorting: false,
+      cell: ({ row }) => (
+        <AppliedIpLocationCell
+          applicationLocation={row.original.applicationLocation ?? null}
+          applied={row.original.applied}
+        />
+      ),
+    },
     {
       id: "actions",
       header: "Actions",
@@ -1317,6 +1332,7 @@ function BidWorkspaceContent({
     resume,
     bidder,
     source,
+    ipCountry,
     job,
     dateMode,
     from,
@@ -1449,7 +1465,6 @@ function BidWorkspaceContent({
                 setTo(selection.to ?? "");
               }}
             />
-
           </div>
           {loadError && (
             <p role="alert" className="px-5 pt-3 text-sm text-destructive">
@@ -1533,6 +1548,23 @@ function BidWorkspaceContent({
                 <option value="closed">Closed</option>
               </SelectField>
               <SelectField
+                label="Application country"
+                value={ipCountry}
+                onChange={(e) => setIpCountry(e.target.value)}
+              >
+                <option value="all">All countries</option>
+                <option value="US">United States (US)</option>
+                <option value="non-US">Non-US</option>
+                <option value="unknown">Unknown</option>
+                {countryOptions
+                  .filter((country) => country !== "US")
+                  .map((country) => (
+                    <option key={country} value={country}>
+                      {countryLabel(country)}
+                    </option>
+                  ))}
+              </SelectField>
+              <SelectField
                 label="Jobsite source"
                 value={source}
                 onChange={(e) => setSource(e.target.value)}
@@ -1553,6 +1585,7 @@ function BidWorkspaceContent({
                   setArrangement("all");
                   setJob("all");
                   setSource("all");
+                  setIpCountry("all");
                   setDateMode("today");
                   setFrom("");
                   setTo("");
@@ -1617,20 +1650,22 @@ function BidWorkspaceContent({
           onPaste={setPaste}
           onOpen={openBid}
           emptyMessage={
-            loading
-              ? <PageLoading label="Loading bid applications…" size="section" />
-              : loadError
-                ? "Bid results could not be loaded. Use Retry above to try again."
-                : canReview &&
-                    columnFilters.some(
-                      (filter) =>
-                        filter.id === "screenshot" &&
-                        filter.value === "Repeated sizes only",
-                    )
-                  ? "No applications with matching screenshot sizes"
-                  : totalCount > 0
-                    ? "No matching opportunities. Clear filters or change your search to see bids."
-                    : "Your next opportunity starts here. Add a job URL and choose a resume to start tracking."
+            loading ? (
+              <PageLoading label="Loading bid applications…" size="section" />
+            ) : loadError ? (
+              "Bid results could not be loaded. Use Retry above to try again."
+            ) : canReview &&
+              columnFilters.some(
+                (filter) =>
+                  filter.id === "screenshot" &&
+                  filter.value === "Repeated sizes only",
+              ) ? (
+              "No applications with matching screenshot sizes"
+            ) : totalCount > 0 ? (
+              "No matching opportunities. Clear filters or change your search to see bids."
+            ) : (
+              "Your next opportunity starts here. Add a job URL and choose a resume to start tracking."
+            )
           }
         />
         <div className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-4 text-xs text-muted-foreground">

@@ -9,16 +9,17 @@ import { CandidateProfileLibrary } from "@/components/profiles";
 import { People } from "@/components/people";
 import { Earnings } from "@/components/earnings";
 import { Settings } from "@/components/settings";
-import { Notifications } from "@/components/notifications";
 import { InterviewReport } from "@/components/interviews";
 import { AuthForm } from "@/components/auth-form";
 import { BackgroundBeams } from "@/components/ui/background-beams";
 import WorkspaceLoading from "@/app/(workspace)/loading";
 import { fixture, longWorkspaceName } from "./sample-data";
 import { getBidRows } from "./actions";
-import { getNotificationPage } from "./notification-actions";
 import { bidReadKey, initialBidQuery } from "@/lib/read-keys";
 import { calendarToday } from "@/lib/calendar-period";
+import { fetchReportBundle } from "@/lib/report-bundle";
+import { readKey } from "@/lib/read-state";
+import { workspaceActorScope } from "@/lib/actor-scope";
 import "@/app/globals.css";
 const parameters = new URLSearchParams(location.search);
 const seedQuery = initialBidQuery(parameters.get("review") === "pending");
@@ -41,26 +42,11 @@ const bidSeed = parameters.has("bid-seed")
     }
   : undefined;
 if (bidSeed) document.documentElement.dataset.bidListReads = "0";
-// Mirror the real notification page's SSR results, including pagination and
-// failures. Empty arrays would falsely claim a successful empty server read.
-const notificationRole =
-  location.pathname === "/admin-notifications" ? "admin" : fixture.profile.role;
-const [initialInboxPage, initialMessagesPage] = [
-  "/notifications",
-  "/admin-notifications",
-].includes(location.pathname)
-  ? await Promise.all([
-      notificationRole !== "client"
-        ? getNotificationPage({ kind: "inbox" })
-        : Promise.resolve(undefined),
-      notificationRole !== "bidder"
-        ? getNotificationPage({
-            kind: "messages",
-            workspace_id: fixture.workspaces[0]?.id,
-          })
-        : Promise.resolve(undefined),
-    ])
-  : [undefined, undefined];
+const overviewQuery = { period: { preset: "this_week" as const }, workspace: undefined, bidder: undefined, profile: undefined };
+const reportSeed = parameters.has("report-seed") ? {
+  key: readKey(workspaceActorScope(fixture.profile, fixture.workspaces), "bundle-overview", overviewQuery, calendarToday()),
+  result: await fetchReportBundle("overview", overviewQuery),
+} : undefined;
 window.addEventListener("fixture-change-bid", (event) => {
   const change = (
     event as CustomEvent<{
@@ -97,7 +83,7 @@ const pages: Record<string, React.ReactNode> = {
       <AuthForm mode="login" />
     </div>
   ),
-  "/dashboard": <Dashboard data={fixture} />,
+  "/dashboard": <Dashboard data={fixture} initial={reportSeed} />,
   "/bids": <BidWorkspace data={fixture} initial={bidSeed} />,
   "/switch-account": <ChangingAccountBids />,
   "/scoped-admin": (
@@ -110,13 +96,6 @@ const pages: Record<string, React.ReactNode> = {
   "/resumes": <ResumeLibrary data={fixture} />,
   "/profiles": <CandidateProfileLibrary data={fixture} />,
   "/users": <People data={fixture} />,
-  "/admin-notifications": (
-    <Notifications
-      data={{ ...fixture, profile: { ...fixture.profile, role: "admin" } }}
-      initialInboxPage={initialInboxPage}
-      initialMessagesPage={initialMessagesPage}
-    />
-  ),
   "/admin-users": (
     <People
       data={{
@@ -166,13 +145,6 @@ const pages: Record<string, React.ReactNode> = {
   ),
   "/earnings": <Earnings />,
   "/settings": <Settings data={fixture} />,
-  "/notifications": (
-    <Notifications
-      data={fixture}
-      initialInboxPage={initialInboxPage}
-      initialMessagesPage={initialMessagesPage}
-    />
-  ),
   "/interviews": <InterviewReport />,
 };
 function ChangingAccountBids() {
@@ -202,11 +174,13 @@ function ChangingAccountBids() {
   }, []);
   return <BidWorkspace data={data} />;
 }
-createRoot(document.getElementById("root")!).render(
+const FixtureMode = parameters.has("report-strict") ? React.StrictMode : React.Fragment;
+createRoot(document.getElementById("root")!).render(<FixtureMode>
   <Providers>
     <Shell
       profile={fixture.profile}
-      notificationWorkspaces={fixture.workspaces}
+      workspaces={fixture.workspaces}
+      initialCollection={reportSeed?.result.data ? { data: reportSeed.result.data.collection } : undefined}
       workspace={
         new URLSearchParams(window.location.search).has("long-workspace")
           ? longWorkspaceName
@@ -217,5 +191,5 @@ createRoot(document.getElementById("root")!).render(
     >
       {pages[window.location.pathname] ?? pages["/dashboard"]}
     </Shell>
-  </Providers>,
+  </Providers></FixtureMode>,
 );

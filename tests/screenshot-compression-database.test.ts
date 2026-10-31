@@ -172,7 +172,7 @@ it("atomically retains WebP while preserving proof metadata, original hash, cont
   expect(await file(id)).toMatchObject({filename:'proof.png',mime:'image/png',size_bytes:100,sha256:sha,finalized:true,storage_path:a.storage_path,stored_size_bytes:50,stored_mime:'image/webp',stored_sha256:storedSha});
   expect(await task(a.storage_path)).toBeUndefined();
   expect((await task(original.storage_path as string)).due).toBeLessThanOrEqual(0);
-  expect((await db.query("select original_file_id from public.screenshot_upload_contexts where original_file_id=$1",[id])).rows).toHaveLength(1);
+  expect((await db.query("select original_file_id from public.bid_application_locations where original_file_id=$1",[id])).rows).toHaveLength(1);
   expect((await db.query("select screenshot_sha256,evidence_file_id from public.bids where id=$1",[bid])).rows[0]).toEqual({screenshot_sha256:sha,evidence_file_id:id});
   await db.query("insert into storage.objects(bucket_id,name) values('private-files',$1)",[a.storage_path]);
   await actor();
@@ -223,7 +223,7 @@ it("rejects another uploader, revoked access, stale approval and rejected origin
   await expect(statement(()=>finalize(id,a))).rejects.toThrow(/rejected|new proof/i);
   expect((await file(id)).finalized).toBe(false);
   expect(await task(a.storage_path)).toBeDefined();
-  expect((await db.query("select id from public.screenshot_upload_contexts where original_file_id=$1",[id])).rows).toEqual([]);
+  expect((await db.query("select bid_id from public.bid_application_locations where original_file_id=$1",[id])).rows).toEqual([]);
 });
 
 it("expires reservations, rejects abandoned uploads and keeps their candidate cleanup durable", async () => {
@@ -274,7 +274,7 @@ it("rolls back activation, context and original cleanup together if the surround
   expect(await file(id)).toEqual(before);
   expect(await task(a.storage_path)).toBeDefined();
   expect(await task(before.storage_path as string)).toBeUndefined();
-  expect((await db.query("select id from public.screenshot_upload_contexts where original_file_id=$1",[id])).rows).toEqual([]);
+  expect((await db.query("select bid_id from public.bid_application_locations where original_file_id=$1",[id])).rows).toEqual([]);
   await finalize(id,a);
   expect((await file(id)).stored_size_bytes).toBe(50);
 });

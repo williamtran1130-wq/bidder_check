@@ -1,3 +1,4 @@
+import type { ApplicationLocation } from "./upload-context-types";
 import type { Row } from "./database.types";
 export type BidderRow = Omit<Row<"bidders">, "default_rate_cents"> & {
   default_rate_cents?: number | null;
@@ -9,6 +10,7 @@ export type ResumeRow = Omit<Row<"resumes">, "rate_override_cents"> & {
 export const SAFE_RESUME_COLUMNS =
   "id,workspace_id,bidder_id,identifier,candidate_name,email,phone,address,links,instructions,file_id,archived,created_at,profile_id" as const;
 export type BidRow = Omit<Row<"bids">, "rate_cents" | "screenshot_uploaded_at" | "screenshot_sha256"> & {
+  applicationLocation?: ApplicationLocation | null;
   rate_cents?: number | null;
   screenshot_uploaded_at?: string | null;
   screenshot_size_bytes?: number | null;

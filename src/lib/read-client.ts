@@ -1,6 +1,5 @@
 "use client";
 import type * as reads from "./read-services";
-import type * as notifications from "./notification-reads";
 import type {
   ReportQuery,
   GroupedReportQuery,
@@ -18,7 +17,6 @@ async function request<T>(
   const query = `/api/read/${operation}?q=${encodeURIComponent(payload)}`;
   const post =
     operation === "files" ||
-    operation === "upload-contexts" ||
     query.length > 1800;
   try {
     const response = await fetch(post ? `/api/read/${operation}` : query, {
@@ -51,8 +49,6 @@ export const getBidHistory: typeof reads.getBidHistory = (id) =>
   request("history", id);
 export const getFileUrls: typeof reads.getFileUrls = (ids) =>
   request("files", ids);
-export const getScreenshotUploadContexts: typeof reads.getScreenshotUploadContexts = (ids) =>
-  request("upload-contexts", ids);
 export const getFileUrl: typeof reads.getFileUrl = async (id) => {
   const result = await getFileUrls([id]);
   const file = result.data?.[0];
@@ -70,22 +66,6 @@ export const getPurgeStatus: typeof reads.getPurgeStatus = (id) =>
   request("purge", id);
 export const recentBidPurges: typeof reads.recentBidPurges = () =>
   request("purges");
-export const getInboxNotifications: typeof reads.getInboxNotifications = () =>
-  request("legacy-inbox");
-export const getUnreadNotificationCount: typeof reads.getUnreadNotificationCount =
-  () => request("legacy-unread");
-export const getClientMessages: typeof reads.getClientMessages = () =>
-  request("messages");
-export const getNotificationPage: typeof notifications.getNotificationPage = (
-  query,
-) => request("notification-page", query);
-export const getNotificationById: typeof notifications.getNotificationById = (
-  id,
-) => request("notification", id);
-export const getNotificationUnreadCount: typeof notifications.getNotificationUnreadCount =
-  () => request("unread");
-export const getNotificationDeviceEnabled: typeof notifications.getNotificationDeviceEnabled =
-  (endpoint) => request("device", endpoint);
 export const getDashboardPerformance = (query: ReportQuery) =>
   request<ReportResult<DashboardReport>>("dashboard", query);
 export const getEarningsPerformance = (query: GroupedReportQuery) =>

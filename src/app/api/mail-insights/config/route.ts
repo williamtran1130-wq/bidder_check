@@ -4,5 +4,5 @@ export async function GET() {
   const app_url = process.env.APP_URL;
   if (!supabase_url || !publishable_key || !app_url)
     return Response.json({ error: "Connection is not configured." }, { status: 503 });
-  return Response.json({ supabase_url, publishable_key, app_url }, { headers: { "Cache-Control": "no-store" } });
+  return Response.json({ supabase_url, publishable_key, app_url, snapshot_versions: [1, 2] }, { headers: { "Cache-Control": "no-store" } });
 }

@@ -18,7 +18,6 @@ import { getManagerFinancialValues } from "./financial-data";
 import type { Database } from "./database.types";
 import type { PurgeStatus } from "./bulk-types";
 import type { FileUrlOutcome } from "./read-types";
-import type { UploadContext, UploadContextOutcome } from "./upload-context-types";
 async function perform<T>(
   run: () => Promise<T>,
   _mutate = false,
@@ -48,55 +47,6 @@ export function createReadServices(
   }
   const purgeStatus = async (operation: string) =>
     (await rpc("bid_purge_status", { p_operation: operation })) as PurgeStatus;
-  async function getInboxNotifications() {
-    return perform(async () => {
-      const { supabase, profile } = await getReadContext();
-      if (profile.role === "client") throw new Error("Access denied");
-      let query = supabase
-        .from("inbox_notifications")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(100);
-      query =
-        profile.role === "admin"
-          ? query.eq("kind", "client_signup")
-          : query.eq("kind", "message");
-      const { data, error } = await query;
-      if (error) throw new Error(error.message);
-      return data;
-    }, false);
-  }
-  async function getUnreadNotificationCount() {
-    return perform(async () => {
-      const { supabase, profile } = await getReadContext();
-      if (profile.role === "client") return 0;
-      let query = supabase
-        .from("inbox_notifications")
-        .select("id", { count: "exact", head: true })
-        .is("read_at", null)
-        .is("resolved_at", null);
-      query =
-        profile.role === "admin"
-          ? query.eq("kind", "client_signup")
-          : query.eq("kind", "message");
-      const { count, error } = await query;
-      if (error) throw new Error(error.message);
-      return count ?? 0;
-    }, false);
-  }
-  async function getClientMessages() {
-    return perform(async () => {
-      const { supabase, profile } = await getReadContext();
-      if (profile.role === "bidder") throw new Error("Access denied");
-      const { data, error } = await supabase
-        .from("client_messages")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(200);
-      if (error) throw new Error(error.message);
-      return data;
-    }, false);
-  }
   async function getFileUrl(fileId: string) {
     const parsed = z.uuid().safeParse(fileId);
     if (!parsed.success) return { error: actionErrorMessage(parsed.error) };
@@ -194,51 +144,6 @@ export function createReadServices(
     }, false);
   }
 
-  async function getScreenshotUploadContexts(
-    input: string[],
-  ): Promise<{ data?: UploadContextOutcome[]; error?: string }> {
-    return perform(async () => {
-      const ids = [...new Set(z.array(z.uuid()).max(100).parse(input))];
-      const { supabase, profile } = await getReadContext();
-      if (
-        !["admin", "client"].includes(profile.role) ||
-        profile.archived ||
-        profile.approval_status !== "approved"
-      )
-        throw new Error("Access denied");
-
-      const outcomes: UploadContextOutcome[] = new Array(ids.length);
-      let next = 0;
-      // Share one live actor check without fanning a page out into 100 RPCs at once.
-      // Each caller-JWT RPC still enforces the existing per-file manager boundary.
-      await Promise.all(
-        Array.from({ length: Math.min(4, ids.length) }, async () => {
-          while (next < ids.length) {
-            const index = next++;
-            const id = ids[index];
-            try {
-              const { data, error } = await supabase.rpc(
-                "manager_screenshot_upload_context",
-                { p_file: id },
-              );
-              outcomes[index] = error
-                ? { id, error: "Upload details could not be loaded. Please retry." }
-                : { id, data: data as UploadContext | null };
-            } catch (error) {
-              unstable_rethrow(error);
-              if (error instanceof AuthorizationError) throw error;
-              outcomes[index] = {
-                id,
-                error: "Upload details could not be loaded. Please retry.",
-              };
-            }
-          }
-        }),
-      );
-      return outcomes;
-    });
-  }
-
   async function getBidRows(
     mode: string,
     from: string,
@@ -333,6 +238,7 @@ export function createReadServices(
             .union([z.literal(""), z.literal("all"), z.uuid()])
             .parse(query.bidder),
           source: z.string().max(200).parse(query.source),
+          ipCountry: z.string().regex(/^(all|non-US|unknown|[A-Z]{2})$/).parse(query.ipCountry ?? "all"),
           job: z.string().max(20).parse(query.job),
           columnFilters: filters,
           sorting: query.sorting.slice(0, 1),
@@ -369,7 +275,7 @@ export function createReadServices(
           rate_cents: financial.bids[row.id] ?? null,
         }));
       }
-      console.info("Bid list query", {
+      if (process.env.NODE_ENV !== "production" || performance.now() - startedAt >= 500 || Math.random() < 0.01) console.info("Bid list query", {
         ...diagnostic,
         durationMs: Math.round(performance.now() - startedAt),
         outcome: "success",
@@ -401,12 +307,8 @@ export function createReadServices(
     );
   }
   return {
-    getInboxNotifications,
-    getUnreadNotificationCount,
-    getClientMessages,
     getFileUrl,
     getFileUrls,
-    getScreenshotUploadContexts,
     getBidHistory,
     getBidRows,
     getPurgeStatus,
@@ -414,12 +316,8 @@ export function createReadServices(
   };
 }
 export const {
-  getInboxNotifications,
-  getUnreadNotificationCount,
-  getClientMessages,
   getFileUrl,
   getFileUrls,
-  getScreenshotUploadContexts,
   getBidHistory,
   getBidRows,
   getPurgeStatus,

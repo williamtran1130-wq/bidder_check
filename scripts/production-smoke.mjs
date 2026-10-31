@@ -32,15 +32,6 @@ try {
   );
   assert.equal(designated.role, "admin");
   assert.equal(designated.archived, false);
-  const unauthenticatedWorker = await fetch(`${origin}/api/cron/notifications`, { method: "POST", redirect: "manual" });
-  assert.equal(unauthenticatedWorker.status, 401);
-  const workerResponse = await fetch(`${origin}/api/cron/notifications`, {
-    method: "POST", redirect: "manual",
-    headers: { authorization: `Bearer ${process.env.NOTIFICATION_WORKER_SECRET}` },
-  });
-  assert.equal(workerResponse.status, 200);
-  assert.match(workerResponse.headers.get("content-type") ?? "", /application\/json/);
-  assert.equal(typeof (await workerResponse.json()).schedule.occurrences, "number");
   const signup = ok(
     await client.auth.signUp({
       email,
@@ -63,16 +54,6 @@ try {
       .single(),
   );
   assert.deepEqual(profile, { role: "client", approval_status: "pending" });
-  const activeAdmins = ok(await admin.from("profiles").select("id").eq("role", "admin").eq("archived", false));
-  const alerts = ok(await admin.from("inbox_notifications").select("user_id,kind,href,resolved_at")
-    .eq("client_id", signup.user.id));
-  assert.deepEqual(alerts.map(row => row.user_id).sort(), activeAdmins.map(row => row.id).sort());
-  for (const alert of alerts) {
-    assert.equal(alert.kind, "client_signup");
-    assert.equal(alert.resolved_at, null);
-    assert.equal(alert.href, `/users?tab=pending&highlight=${signup.user.id}`);
-  }
-  assert.deepEqual(ok(await client.from("inbox_notifications").select("id")), []);
   assert.deepEqual(ok(await client.from("workspaces").select("id")), []);
   assert.deepEqual(ok(await client.from("bids").select("id")), []);
   // Run after financial enforcement (202610120004), never at the compatibility-only gate.

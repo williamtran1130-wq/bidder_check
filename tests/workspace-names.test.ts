@@ -460,14 +460,6 @@ it("names trusted managed client workspaces from the reservation despite conflic
       consumed: true,
     },
   ]);
-  expect(
-    (
-      await db.query(
-        "select id from public.inbox_notifications where client_id=$1 and kind='client_signup'",
-        [managedClient],
-      )
-    ).rows,
-  ).toHaveLength(0);
   await asUser(managedClient);
   expect(
     (

@@ -96,7 +96,7 @@ test("only an open manager dialog renews authorization without downloading its i
   await page.clock.runFor(120_000);
   expect(await batches(page)).toBe(signed);
 });
-test("hidden tabs suspend preview renewal and notification polling", async ({
+test("hidden tabs suspend preview renewal", async ({
   page,
 }) => {
   await setup(page, 2, "client");
@@ -107,13 +107,8 @@ test("hidden tabs suspend preview renewal and notification polling", async ({
   await page.clock.runFor(31_000);
   await visible(page, "hidden");
   const signed = await batches(page);
-  const unread = await page.locator("html").getAttribute("data-egress-unread");
   await page.clock.runFor(120_000);
   expect(await batches(page)).toBe(signed);
-  await expect(page.locator("html")).toHaveAttribute(
-    "data-egress-unread",
-    unread!,
-  );
   await visible(page, "visible");
   await page.clock.runFor(100);
   await expect.poll(() => batches(page)).toBe(signed + 1);

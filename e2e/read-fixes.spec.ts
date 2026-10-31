@@ -10,44 +10,7 @@ async function open(page: Page) {
   );
   await page.goto(base);
 }
-test("returning notification seeds reconcile once, fresh hydration does not read and mutation rejects stale reconciliation", async ({
-  page,
-}) => {
-  await open(page);
-  await expect(page.getByTestId("notices")).toHaveText("1");
-  await expect(page.getByTestId("notice-loads")).toHaveText("0");
-  await page
-    .getByRole("button", { name: "Leave notices", exact: true })
-    .click();
-  await page
-    .getByRole("button", { name: "Return notices", exact: true })
-    .click();
-  await expect(page.getByTestId("notice-loads")).toHaveText("1");
-  await page
-    .getByRole("button", { name: "Resolve old notice", exact: true })
-    .click();
-  await expect(page.getByTestId("notices")).toHaveText("2");
-  await page
-    .getByRole("button", { name: "Leave notices", exact: true })
-    .click();
-  await page
-    .getByRole("button", { name: "Return older seed", exact: true })
-    .click();
-  await expect(page.getByTestId("notices")).toHaveText("2");
-  await expect(page.getByTestId("notice-loads")).toHaveText("2");
-  await page
-    .getByRole("button", { name: "Mutate notices", exact: true })
-    .click();
-  await expect(page.getByTestId("notice-loads")).toHaveText("3");
-  await page
-    .getByRole("button", { name: "Resolve new notice", exact: true })
-    .click();
-  await expect(page.getByTestId("notices")).toHaveText("3");
-  await page
-    .getByRole("button", { name: "Resolve old notice", exact: true })
-    .click();
-  await expect(page.getByTestId("notices")).toHaveText("3");
-});
+
 test("two remounted consumers renew a44-second-old cached URL before expiry", async ({
   page,
 }) => {

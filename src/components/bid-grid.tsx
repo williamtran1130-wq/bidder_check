@@ -4,6 +4,7 @@ import { flexRender, type Table } from "@tanstack/react-table";
 import { formatInTimeZone } from "date-fns-tz";
 import type { BidRow } from "@/lib/workspace-types";
 import type { WorkspaceData } from "@/lib/data";
+import { applicationLocationState } from "@/lib/application-location";
 import { BID_TIMEZONE } from "@/lib/domain";
 import { toTsv } from "@/lib/sheets";
 import { updateBidCell } from "@/app/(workspace)/actions";
@@ -379,7 +380,26 @@ export function BidGrid({
         </thead>
         <tbody>
           {rows.map((row, r) => (
-            <tr key={row.id} className="hover:bg-muted/30">
+            <tr
+              key={row.id}
+              data-application-location={applicationLocationState(
+                row.original.applied,
+                row.original.applicationLocation,
+              )}
+              className={
+                applicationLocationState(
+                  row.original.applied,
+                  row.original.applicationLocation,
+                ) === "us"
+                  ? "bg-emerald-50/60 dark:bg-emerald-950/20 hover:bg-emerald-100/50 dark:hover:bg-emerald-950/30"
+                  : applicationLocationState(
+                        row.original.applied,
+                        row.original.applicationLocation,
+                      ) === "warning"
+                    ? "bg-amber-50/60 dark:bg-amber-950/20 hover:bg-amber-100/50 dark:hover:bg-amber-950/30"
+                    : "hover:bg-muted/30"
+              }
+            >
               <td className="border px-2 py-2">
                 <input
                   type="checkbox"
@@ -427,7 +447,7 @@ export function BidGrid({
                     tabIndex={
                       active || (!selection && r === 0 && c === 0) ? 0 : -1
                     }
-                    className={`relative min-w-24 border px-3 py-2 align-middle outline-none ${selected ? "bg-primary/10" : ""} ${active ? "ring-2 ring-inset ring-primary" : ""}`}
+                    className={`relative min-w-24 border px-3 py-2 align-middle outline-none ${selected || active ? "bg-accent" : ""} ${active ? "ring-2 ring-inset ring-primary" : ""}`}
                     onFocus={(e) => {
                       if (e.target === e.currentTarget && !selection && !edit)
                         setSelection({

@@ -13,11 +13,6 @@ const workspace = "70000000-0000-4000-8000-000000000004";
 const reads = [
   "/auth/v1/user",
   "/rest/v1/bids?select=id&limit=1",
-  `/rest/v1/rpc/manager_screenshot_upload_context?p_file=${file}`,
-  `/rest/v1/rpc/manager_screenshot_upload_history?p_bid=${bid}`,
-  "/rest/v1/rpc/notification_unread_count",
-  `/rest/v1/rpc/notification_by_id?p_id=${bid}`,
-  "/rest/v1/rpc/notification_page?p_kind=inbox",
   `/rest/v1/rpc/list_bids_v2?p_query=${encodeURIComponent(JSON.stringify({ scopeBidderId: actor, pageSize: 100, pageIndex: 0, status: "all", columnFilters: { screenshot: "Repeated sizes only" }, sorting: [{ id: "screenshot_size_bytes", desc: true }] }))}`,
 ];
 it("allows only exact production read endpoints and forces failed redirects", async () => {
@@ -276,10 +271,11 @@ function fixtureTransport(fail = false) {
           workspace_id: workspace,
           archived: false,
         });
-      if (url.pathname === "/rest/v1/screenshot_upload_contexts")
+      if (url.pathname === "/rest/v1/bid_application_locations")
         return deny("42501");
       const name = url.pathname.split("/").at(-1);
       if (name === "list_bids_v2") {
+        if (!manager && !bidder) return deny("42501");
         const query = JSON.parse(url.searchParams.get("p_query")!);
         const repeated =
           manager && query.columnFilters.screenshot === "Repeated sizes only";
@@ -298,10 +294,11 @@ function fixtureTransport(fail = false) {
           manager
             ? {
                 ...row,
+                applicationLocation: {ip:privateText,city:null,region:null,country:"US",uploadedAt:"2026-10-31T12:00:00Z",source:"vercel",status:"available"},
                 screenshot_size_bytes: fail ? privateText : 100,
                 screenshot_size_match_count: selected.length,
               }
-            : row,
+            : {...row,applicationLocation:{ip:privateText,city:null,region:null,country:"US",uploadedAt:"2026-10-31T12:00:00Z",source:"vercel",status:"available"}},
         );
         return response({
           rows,
@@ -309,36 +306,6 @@ function fixtureTransport(fail = false) {
           statusCounts: repeated ? repeatedCounts : counts,
         });
       }
-      if (name === "notification_unread_count") return response(bidder ? 1 : 0);
-      if (name === "notification_page") {
-        if (!manager && !bidder) return deny("42501");
-        if (url.searchParams.get("p_kind") === "messages")
-          return manager
-            ? response({
-                rows: [{ workspace_id: workspace, body: privateText }],
-              })
-            : deny();
-        return response({
-          rows: [
-            { id: bid, user_id: actor, kind: "message", body: privateText },
-          ],
-        });
-      }
-      if (name === "notification_by_id")
-        return bidder
-          ? response({ id: bid, user_id: actor, body: privateText })
-          : deny();
-      if (name === "manager_screenshot_upload_history")
-        return manager
-          ? response({
-              items: [{ bidId: bid, bidderId: actor, ip: privateText }],
-              nextCursor: null,
-            })
-          : deny(bidder ? "P0001" : "42501");
-      if (name === "manager_screenshot_upload_context")
-        return manager
-          ? response({ bidId: bid, originalFileId: file, ip: privateText })
-          : deny(bidder ? "P0001" : "42501");
       throw new Error(`Unexpected local fixture route: ${url.pathname}`);
     },
   );
@@ -358,12 +325,10 @@ it("uses real Supabase GET serialization for all checks and returns only nonsens
     readOnly: true,
     coverage: {
       repeatedRowsObserved: true,
-      privateContextObserved: true,
-      privateHistoryObserved: true,
-      notificationByIdObserved: true,
+      applicationLocationObserved: true,
     },
   });
-  expect(result.checks).toHaveLength(11);
+  expect(result.checks).toHaveLength(10);
   expect(JSON.stringify(result)).not.toContain(privateText);
   for (const value of [
     bid,

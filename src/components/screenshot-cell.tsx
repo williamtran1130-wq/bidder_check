@@ -1,4 +1,5 @@
 "use client";
+import { refreshWorkspace } from "@/lib/report-cache";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { BidRow } from "@/lib/workspace-types";
@@ -79,7 +80,7 @@ export function ScreenshotCell({
         if (bid.evidence_file_id) invalidateThumbnail(scope, bid.evidence_file_id);
         setOpenFile("");
         onUploaded?.();
-        router.refresh();
+        refreshWorkspace(router);
       }).catch((reason: unknown) => {
         setPasteError(reason instanceof Error ? reason.message : "Screenshot upload failed. Paste the image again to retry.");
       }).finally(() => {
@@ -145,7 +146,7 @@ export function ScreenshotCell({
             if (bid.evidence_file_id) invalidateThumbnail(scope, bid.evidence_file_id);
             setOpenFile("");
             onUploaded?.();
-            router.refresh();
+            refreshWorkspace(router);
           }}
         />
       )}
@@ -160,7 +161,7 @@ export function ScreenshotCell({
             </DialogDescription>
           </DialogHeader>
           {manager && open && status === "uploaded" && bid.evidence_file_id && <EnlargedScreenshot key={fileKey} scope={scope} fileId={bid.evidence_file_id} company={bid.company} />}
-          {open && (role === "client" || role === "admin") && bid.evidence_file_id && <UploadDetails key={bid.evidence_file_id} fileId={bid.evidence_file_id} role={role} />}
+          {open && (role === "client" || role === "admin") && bid.evidence_file_id && <UploadDetails applicationLocation={bid.applicationLocation ?? null} applied={bid.applied} />}
         </DialogContent>
       </Dialog>
     </div>

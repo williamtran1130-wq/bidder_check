@@ -59,7 +59,6 @@ async function recoverInitialPlan(foreign = false) {
     retained_bid_daily_aggregates: [],
     invitations: [],
     account_events: [],
-    inbox_notifications: [],
   };
   const auth = new Map<string, string>(accounts.map((a) => [a.id, a.email]));
   if (foreign) auth.set(accounts[0].id, "foreign@example.invalid");
@@ -212,7 +211,7 @@ describe("recovery from an off-runner initial plan", () => {
     const receipt = JSON.parse(readFileSync(fixture.receiptPath, "utf8"));
     expect(receipt.workspaceIds).toHaveLength(1);
     expect(receipt.cleanupComplete).toBe(true);
-    expect(Object.values(receipt.cleanupCounts)).toHaveLength(14);
+    expect(Object.values(receipt.cleanupCounts)).toHaveLength(13);
     expect(
       Object.values(receipt.cleanupCounts).every((value) => value === 0),
     ).toBe(true);

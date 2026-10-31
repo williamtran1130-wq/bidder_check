@@ -2,8 +2,7 @@
 import { PageLoading } from "@/components/page-loading";
 import { InterviewReport } from "@/components/interviews";
 import { getContext } from "@/lib/auth";
-import { readReport } from "@/lib/reporting-server";
-import type { InterviewReport as Report } from "@/lib/report-types";
+import { readReportBundle } from "@/lib/report-bundle-server";
 import { actorReadScope } from "@/lib/read-keys";
 import { readKey } from "@/lib/read-state";
 import { calendarToday } from "@/lib/calendar-period";
@@ -11,12 +10,13 @@ async function Content() {
   const context = await getContext(),
     day = calendarToday(),
     query = { period: { preset: "all" as const }, group: "profile" as const };
-  const result = await readReport<Report>("interview_performance", query);
+  const result = await readReportBundle("interviews", query);
   return (
     <InterviewReport
       mailContext={{ role: context.profile.role, workspaces: context.workspaces.map(({ id, name }) => ({ id, name })) }}
       initial={{
-        key: readKey(actorReadScope(context), "interviews", query, day),
+        receivedAt: result.receivedAt,
+        key: readKey(actorReadScope(context), "bundle-interviews", query, day),
         result,
       }}
     />

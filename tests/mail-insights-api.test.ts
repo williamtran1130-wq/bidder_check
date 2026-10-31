@@ -42,7 +42,7 @@ it("returns revision conflicts as 409 and never exposes arbitrary database error
 });
 it("requires bearer for connection identity and exposes only public configuration",async()=>{
  expect((await connection(new Request("https://example.test/api/mail-insights/connection"))).status).toBe(401);
- const response=await configuration();expect(await response.json()).toEqual({supabase_url:"https://test.supabase.co",publishable_key:"public-key",app_url:"https://bidder-check.vercel.app"});
+ const response=await configuration();expect(await response.json()).toEqual({supabase_url:"https://test.supabase.co",publishable_key:"public-key",snapshot_versions:[1,2],app_url:"https://bidder-check.vercel.app"});
 });
 it("keeps transient Auth outages retryable instead of expiring a healthy publisher session",async()=>{
  for(const error of [{name:"AuthRetryableFetchError",status:503},{name:"AuthApiError",status:429}]) {

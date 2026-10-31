@@ -20,26 +20,19 @@ import {
   ArrowUpRight,
   ChevronRight,
   ShieldCheck,
-  MessageSquareText,
   ChartNoAxesCombined,
-  Bell,
 } from "lucide-react";
 import { Brand } from "./brand";
 import { Button } from "./ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "./ui/sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { signOut } from "@/app/auth/actions";
-import { getNotificationUnreadCount } from "@/lib/read-client";
 import { ReadScope } from "@/lib/read-scope";
-import type { NotificationResult } from "@/lib/notification-types";
-import {
-  useNotificationResource,
-  useNotificationScope,
-} from "@/lib/use-notifications";
-import {
-  notificationScope,
-  type NotificationMembership,
-} from "@/lib/notification-scope";
+import { workspaceActorScope, type WorkspaceMembership } from "@/lib/actor-scope";
+import { CollectionStatusPanel } from "./collection-status";
+import type { CollectionStatus } from "@/lib/report-bundle";
+import type { ReportResult } from "@/lib/report-types";
+import { RetirePushWorker } from "./retire-push-worker";
 import { initials } from "@/lib/domain";
 import { cn } from "@/lib/utils";
 import type { Row } from "@/lib/database.types";
@@ -55,22 +48,21 @@ const links = [
     label: "Interviews",
     icon: ChartNoAxesCombined,
   },
-  { href: "/notifications", label: "Notifications", icon: MessageSquareText },
 ];
 export function Shell({
   children,
   profile,
   workspace,
-  unreadCount = 0,
-  initialUnread,
-  notificationWorkspaces = [],
+  workspaces = [],
+  initialCollection,
+  collectionReceivedAt,
 }: {
   children: React.ReactNode;
   profile: Row<"profiles">;
   workspace: string;
-  unreadCount?: number;
-  initialUnread?: NotificationResult<number>;
-  notificationWorkspaces?: NotificationMembership[];
+  workspaces?: (WorkspaceMembership & { name?: string })[];
+  initialCollection?: ReportResult<CollectionStatus>;
+  collectionReceivedAt?: number;
 }) {
   const pathname = usePathname();
   const workspaceName = workspace.trim() || "Workspace";
@@ -79,11 +71,11 @@ export function Shell({
     : workspaceName;
   const [collapsed, setCollapsed] = useState(false);
   const [mobile, setMobile] = useState(false);
-  const notificationKey = notificationScope(profile, notificationWorkspaces);
+  const actorScope = workspaceActorScope(profile, workspaces);
   const { resolvedTheme, setTheme } = useTheme();
   const nav = (small = false) => (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
-      <Link href="/dashboard" className="px-5 py-7">
+      <Link prefetch={false} href="/dashboard" className="px-5 py-7">
         <Brand compact={small} />
       </Link>
       <div
@@ -123,6 +115,7 @@ export function Shell({
           </div>
         )}
       </div>
+      <CollectionStatusPanel scope={actorScope} role={profile.role} workspaces={workspaces} initial={initialCollection} receivedAt={collectionReceivedAt} collapsed={small} />
       {!small && <p className="eyebrow px-6 pb-3">WORKSPACE</p>}
       <nav className="space-y-1 px-3">
         {links
@@ -135,6 +128,7 @@ export function Shell({
           )
           .map((l) => (
             <Link
+              prefetch={false}
               title={l.label}
               onClick={() => setMobile(false)}
               key={l.href}
@@ -166,6 +160,7 @@ export function Shell({
           </div>
         )}
         <Link
+              prefetch={false}
           title="Settings"
           href="/settings"
           aria-current={pathname.startsWith("/settings") ? "page" : undefined}
@@ -193,7 +188,8 @@ export function Shell({
     </div>
   );
   return (
-    <ReadScope scope={notificationKey}>
+    <ReadScope scope={actorScope}>
+      <RetirePushWorker />
       <div className="flex min-h-screen">
         <a
           href="#main"
@@ -254,13 +250,6 @@ export function Shell({
               </span>
             </div>
             <div className="ml-auto flex items-center gap-3">
-              {profile.role !== "client" && (
-                <UnreadBell
-                  scope={notificationKey}
-                  initial={initialUnread}
-                  fallback={unreadCount}
-                />
-              )}
               <span className="hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] text-muted-foreground sm:flex">
                 <span className="size-1.5 rounded-full bg-emerald-500" />{" "}
                 Private workspace
@@ -277,7 +266,7 @@ export function Shell({
                 <Moon className="size-4 dark:hidden" />
               </Button>
               <span className="h-7 border-l" />
-              <Link href="/settings" className="flex items-center gap-2.5">
+              <Link prefetch={false} href="/settings" className="flex items-center gap-2.5">
                 <span className="flex size-9 items-center justify-center rounded-full bg-[#f2e6dc] text-xs font-bold text-[#795539]">
                   {initials(profile.display_name || profile.email)}
                 </span>
@@ -307,41 +296,5 @@ export function Shell({
         </div>
       </div>
     </ReadScope>
-  );
-}
-
-function UnreadBell({
-  scope,
-  initial,
-  fallback,
-}: {
-  scope: string;
-  initial?: NotificationResult<number>;
-  fallback: number;
-}) {
-  const allowInitial = useNotificationScope(scope);
-  const result = useNotificationResource(
-    `${scope}unread`,
-    getNotificationUnreadCount,
-    allowInitial ? (initial ?? {}) : {},
-  );
-  const unread = result.data ?? (allowInitial ? fallback : 0);
-  return (
-    <Link
-      href="/notifications"
-      aria-label={
-        result.error
-          ? "Unread notifications unavailable"
-          : `${unread} unread notifications`
-      }
-      className="relative rounded-md p-2 text-muted-foreground hover:bg-secondary focus-visible:outline-2 focus-visible:outline-primary"
-    >
-      <Bell size={17} />
-      {unread > 0 && (
-        <span className="absolute -right-0.5 -top-0.5 flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-semibold text-primary-foreground">
-          {unread > 9 ? "9+" : unread}
-        </span>
-      )}
-    </Link>
   );
 }

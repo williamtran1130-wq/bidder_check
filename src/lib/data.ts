@@ -37,7 +37,6 @@ export async function getWorkspaceData(
       | "people"
       | "profiles"
       | "resumes"
-      | "notifications"
       | "dashboard"
       | "bids"
       | "bidder-detail";
@@ -51,7 +50,6 @@ export async function getWorkspaceData(
     "people",
     "profiles",
     "resumes",
-    "notifications",
     "dashboard",
     "bids",
     "bidder-detail",
@@ -61,7 +59,6 @@ export async function getWorkspaceData(
     "people",
     "profiles",
     "resumes",
-    "notifications",
     "dashboard",
     "bids",
     "bidder-detail",

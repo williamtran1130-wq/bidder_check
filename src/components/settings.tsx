@@ -1,4 +1,5 @@
 "use client";
+import { refreshWorkspace } from "@/lib/report-cache";
 import { useState, useTransition } from "react";
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
@@ -31,7 +32,7 @@ export function Settings({ data }: { data: WorkspaceData }) {
               if (result.error) toast.error(result.error);
               else {
                 toast.success("Settings saved");
-                router.refresh();
+                refreshWorkspace(router);
               }
             })
           }

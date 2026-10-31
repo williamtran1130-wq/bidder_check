@@ -1,126 +1,76 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Copy, LoaderCircle } from "lucide-react";
-import { screenshotUploadContext } from "@/lib/upload-context-client";
-import type { UploadContext } from "@/lib/upload-context-types";
+import { useState } from "react";
+import { CheckCircle2, Copy, TriangleAlert } from "lucide-react";
+import type { ApplicationLocation } from "@/lib/upload-context-types";
+import {
+  applicationLocationState,
+  countryLabel,
+} from "@/lib/application-location";
 import { Button } from "./ui/button";
 
 export function AppliedIpLocationCell({
-  fileId,
-  actorScope,
-  role,
-  disabled,
+  applicationLocation,
+  applied,
 }: {
-  fileId: string | null;
-  actorScope: string;
-  role: string;
-  disabled?: boolean;
+  applicationLocation: ApplicationLocation | null;
+  applied: boolean;
 }) {
-  const [attempt, setAttempt] = useState(0);
   const [copyStatus, setCopyStatus] = useState("");
-  const [loaded, setLoaded] = useState<{
-    scope: string;
-    data?: UploadContext | null;
-    error?: string;
-  }>();
-  const manager = role === "client" || role === "admin";
-  const scope = JSON.stringify([actorScope, role, fileId, attempt]);
-  const result = loaded?.scope === scope ? loaded : undefined;
-
-  useEffect(() => {
-    if (!manager || !fileId) return;
-    let cancelled = false;
-    void screenshotUploadContext(actorScope, fileId).then((response) => {
-      if (!cancelled) setLoaded({ scope, ...response });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [actorScope, fileId, manager, scope]);
-
-  if (!manager) return null;
-  if (!fileId)
-    return (
-      <span
-        data-applied-ip-location
-        data-state="empty"
-        className="text-xs text-muted-foreground"
-      >
-        No screenshot
-      </span>
-    );
-
+  const state = applicationLocationState(applied, applicationLocation);
   const location = [
-    result?.data?.city,
-    result?.data?.region,
-    result?.data?.country,
+    applicationLocation?.city,
+    applicationLocation?.region,
+    applicationLocation?.country
+      ? countryLabel(applicationLocation.country)
+      : null,
   ]
     .filter(Boolean)
     .join(", ");
-  const state = !result
-    ? "loading"
-    : result.error
-      ? "error"
-      : !result.data
-        ? "historical"
-        : !result.data.ip && !location
-          ? "unavailable"
-          : "ready";
-
+  const assessment =
+    state === "us"
+      ? "Applied from United States"
+      : state === "warning"
+        ? applicationLocation?.country
+          ? "Applied from outside United States"
+          : "Applied country unknown"
+        : "Not applied";
   async function copy() {
-    if (!result?.data?.ip) return;
+    if (!applicationLocation?.ip) return;
     try {
-      await navigator.clipboard.writeText(result.data.ip);
+      await navigator.clipboard.writeText(applicationLocation.ip);
       setCopyStatus("IP address copied");
     } catch {
       setCopyStatus("Could not copy. Select the IP address to copy it.");
     }
   }
-
   return (
     <div
-      className="min-w-44 max-w-56 space-y-2 text-xs"
+      className="min-w-44 max-w-60 space-y-1.5 text-xs"
       data-grid-interactive
       data-applied-ip-location
       data-state={state}
       onCopy={(event) => event.stopPropagation()}
     >
-      {!result ? (
-        <p
-          role="status"
-          className="flex items-center gap-2 text-muted-foreground"
-        >
-          <LoaderCircle size={14} className="animate-spin" />
-          Loading IP / location…
-        </p>
-      ) : result.error ? (
-        <div className="space-y-2">
-          <p role="alert" className="text-destructive">
-            {result.error}
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={disabled}
-            onClick={() => {
-              setCopyStatus("");
-              setAttempt((value) => value + 1);
-            }}
-          >
-            Retry IP / location
-          </Button>
-        </div>
-      ) : result.data ? (
+      <p
+        className={`flex items-center gap-1.5 ${state === "us" ? "text-emerald-700 dark:text-emerald-400" : state === "warning" ? "text-amber-800 dark:text-amber-400" : "text-muted-foreground"}`}
+      >
+        {state === "us" ? (
+          <CheckCircle2 size={15} aria-hidden="true" />
+        ) : state === "warning" ? (
+          <TriangleAlert size={15} aria-hidden="true" />
+        ) : null}
+        <span>{assessment}</span>
+      </p>
+      {applicationLocation ? (
         <dl className="space-y-1.5">
           <div>
             <dt className="sr-only">IP address</dt>
             <dd className="flex min-w-0 items-center gap-1">
               <span className="min-w-0 select-text break-all font-mono">
-                {result.data.ip || "Unavailable"}
+                {applicationLocation.ip || "IP unavailable"}
               </span>
-              {result.data.ip && (
+              {applicationLocation.ip && (
                 <Button
                   type="button"
                   variant="ghost"
@@ -135,13 +85,13 @@ export function AppliedIpLocationCell({
           </div>
           <div title="IP location is approximate. VPNs and proxies may affect the location.">
             <dt className="text-muted-foreground">Approximate IP location</dt>
-            <dd className="break-words">{location || "Unavailable"}</dd>
+            <dd className="break-words">
+              {location || "Location unavailable"}
+            </dd>
           </div>
         </dl>
       ) : (
-        <p className="text-muted-foreground">
-          Not recorded for this historical screenshot.
-        </p>
+        <p className="text-muted-foreground">Location not recorded</p>
       )}
       {copyStatus && (
         <p role="status" className="text-muted-foreground">

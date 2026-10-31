@@ -10,7 +10,6 @@ import {
 import type { Database } from "@/lib/database.types";
 import { type BidListLoadResult, type BidListQuery } from "@/lib/bid-list";
 import { createHash } from "node:crypto";
-import { fromZonedTime } from "date-fns-tz";
 import { unstable_rethrow } from "next/navigation";
 import { actionErrorMessage, ActionValidationError } from "@/lib/action-errors";
 import { editableBidField, workArrangement, jobStatus, importDate, importRows } from "@/lib/action-validation";
@@ -182,77 +181,6 @@ export async function setBidInterviewAction(input: {
       p_reason: z.string().max(1000).parse(input.reason),
     });
   });
-}
-export async function saveClientMessageAction(form: FormData) {
-  return perform(async () => {
-    const { profile, workspaces } = await getContext();
-    if (profile.role === "bidder") throw new Error("Access denied");
-    const workspace = profile.role === "admin"
-      ? z.uuid().parse(text(form, "workspace_id"))
-      : workspaces[0]?.id;
-    if (!workspace) throw new Error("Workspace not found");
-    const kind = z.enum(["once", "daily", "weekly"]).parse(text(form, "schedule_kind"));
-    const mode = z.enum(["all", "selected"]).parse(text(form, "recipient_mode"));
-    const recipients = z.array(z.uuid()).max(500).parse(form.getAll("recipient_ids").map(String).filter(Boolean));
-    const local = text(form, "scheduled_local");
-    const sendNow = form.get("send_now") === "on";
-    const draft = form.get("save_draft") === "on";
-    const once = kind === "once" && !sendNow ? z.string().min(1).parse(local) : "";
-    const weekdays = form.getAll("weekdays").map((day) => z.coerce.number().int().min(0).max(6).parse(day));
-    return rpc("save_client_message", {
-      p_id: id(text(form, "id")),
-      p_workspace: workspace,
-      p_title: z.string().trim().min(1).max(120).parse(text(form, "title")),
-      p_body: z.string().trim().min(1).max(4000).parse(text(form, "body")),
-      p_mode: mode,
-      p_recipients: mode === "selected" ? recipients : [],
-      p_kind: kind,
-      p_scheduled_at: sendNow ? new Date().toISOString() : once ? fromZonedTime(once, "America/Chicago").toISOString() : null,
-      p_local_time: kind === "once" ? null : z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).parse(text(form, "local_time")),
-      p_weekdays: kind === "weekly" ? weekdays : [],
-      p_draft: draft,
-    });
-  });
-}
-export async function setClientMessageStatusAction(idValue: string, status: "active" | "paused" | "cancelled") {
-  return perform(async () => rpc("set_message_status", {
-    p_id: z.uuid().parse(idValue),
-    p_status: z.enum(["active", "paused", "cancelled"]).parse(status),
-  }));
-}
-export async function getInboxNotifications() {
-  return reads.getInboxNotifications();
-}
-
-export async function getUnreadNotificationCount() {
-  return reads.getUnreadNotificationCount();
-}
-
-export async function getClientMessages() {
-  return reads.getClientMessages();
-}
-
-export async function markInboxNotificationAction(notification: string, read: boolean) {
-  return perform(async () => rpc("mark_notification_read", {
-    p_id: z.uuid().parse(notification),
-    p_read: z.boolean().parse(read),
-  }));
-}
-export async function savePushSubscriptionAction(subscription: {
-  endpoint: string;
-  keys?: { p256dh?: string; auth?: string };
-}) {
-  return perform(async () => rpc("save_push_subscription", {
-    p_endpoint: z.url().parse(subscription.endpoint),
-    p_p256dh: z.string().min(1).max(256).parse(subscription.keys?.p256dh),
-    p_auth: z.string().min(1).max(256).parse(subscription.keys?.auth),
-  }));
-}
-export async function deletePushSubscriptionAction(endpoint: string) {
-  return perform(async () => rpc("delete_push_subscription", { p_endpoint: z.url().parse(endpoint) }));
-}
-export async function deleteAllPushSubscriptionsAction() {
-  return perform(async () => rpc("delete_all_push_subscriptions", {}), false);
 }
 export async function saveCandidateProfile(form: FormData) {
   return perform(async () => {

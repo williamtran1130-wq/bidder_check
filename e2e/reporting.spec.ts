@@ -4,6 +4,7 @@ const preview = process.env.PREVIEW_URL ?? "http://127.0.0.1:3001";
 const periods = ["Today", "Yesterday", "This week", "Last week", "This month", "Last month", "All time", "Custom range"];
 
 test.beforeEach(async ({ page }) => {
+  await page.route("**/api/mail-insights/status*", route => route.fulfill({ json: { status: "not_synced", updatedAt: null, from: null, to: null } }));
   await page.clock.setFixedTime(new Date("2026-10-12T17:00:00Z"));
 });
 
@@ -62,7 +63,7 @@ test("custom dates stay drafts until valid and explicitly applied", async ({ pag
   await page.goto(`${preview}/dashboard`);
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "1");
   await expect(page.getByText("2026-10-12 – 2026-10-12 CT", { exact: true })).toBeVisible();
-  await expect(page.getByRole("img", { name: "Activity chart: 1 found, 0 applications, unavailable confirmation emails." })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Activity chart: 1 found, 0 applications, unavailable confirmation emails, unavailable interview invites." })).toBeVisible();
   await page.getByLabel("Period", { exact: true }).selectOption("custom");
   await page.getByLabel("Period from CT", { exact: true }).fill("");
   await expect(page.getByRole("button", { name: "Apply range", exact: true })).toBeDisabled();
@@ -72,13 +73,13 @@ test("custom dates stay drafts until valid and explicitly applied", async ({ pag
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "1");
   await page.getByLabel("Period through CT", { exact: true }).fill("2026-10-12");
   await page.getByRole("button", { name: "Apply range", exact: true }).click();
-  await expect(page.getByRole("img", { name: "Activity chart: 2 found, 1 applications, unavailable confirmation emails." })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Activity chart: 2 found, 1 applications, unavailable confirmation emails, unavailable interview invites." })).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "2");
 });
 
 test("failed refresh keeps only same-filter results and retries only when requested", async ({ page }) => {
   await page.goto(`${preview}/dashboard?report-failure`);
-  const existing = page.getByRole("img", { name: "Activity chart: 1 found, 0 applications, unavailable confirmation emails." });
+  const existing = page.getByRole("img", { name: "Activity chart: 1 found, 0 applications, unavailable confirmation emails, unavailable interview invites." });
   await expect(existing).toBeVisible();
   await expect(page.getByText("2026-10-12 – 2026-10-12 CT", { exact: true })).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "1");
@@ -104,16 +105,16 @@ test("a late response cannot replace a newly selected period", async ({ page }) 
   await page.goto(`${preview}/dashboard?report-delay`);
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "1");
   await page.getByLabel("Period", { exact: true }).selectOption("yesterday");
-  await expect(page.getByRole("img", { name: "Activity chart: 1 found, 1 applications, unavailable confirmation emails." })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Activity chart: 1 found, 1 applications, unavailable confirmation emails, unavailable interview invites." })).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-report-completed", "this_week");
-  await expect(page.getByRole("img", { name: "Activity chart: 1 found, 1 applications, unavailable confirmation emails." })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Activity chart: 1 found, 1 applications, unavailable confirmation emails, unavailable interview invites." })).toBeVisible();
 });
 
 test("overlapping focus refreshes reuse the request already in flight", async ({ page }) => {
   await page.goto(`${preview}/dashboard?report-delay`);
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "1");
   await page.evaluate(() => { for (let i = 0; i < 4; i++) window.dispatchEvent(new Event("focus")); });
-  await expect(page.getByRole("img", { name: "Activity chart: 1 found, 0 applications, unavailable confirmation emails." })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Activity chart: 1 found, 0 applications, unavailable confirmation emails, unavailable interview invites." })).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "1");
 });
 
@@ -139,10 +140,10 @@ test("relative report filters refresh at CT midnight", async ({ page }) => {
   await page.goto(`${preview}/dashboard`);
   await page.getByLabel("Period", { exact: true }).selectOption("today");
   await expect(page.getByText("2026-10-12 – 2026-10-12 CT", { exact: true })).toBeVisible();
-  await expect(page.getByRole("img", { name: "Activity chart: 1 found, 0 applications, unavailable confirmation emails." })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Activity chart: 1 found, 0 applications, unavailable confirmation emails, unavailable interview invites." })).toBeVisible();
   await page.clock.fastForward(11000);
   await expect(page.getByText("2026-10-13 – 2026-10-13 CT", { exact: true })).toBeVisible();
-  await expect(page.getByRole("img", { name: "Activity chart: 0 found, 0 applications, unavailable confirmation emails." })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Activity chart: 0 found, 0 applications, unavailable confirmation emails, unavailable interview invites." })).toBeVisible();
 });
 
 test("bid date rollover defers while editing then refreshes on exit", async ({ page }) => {

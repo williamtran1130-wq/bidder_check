@@ -2,7 +2,7 @@
 // Explicit auth exception: generate a no-email link for EXISTING accounts,
 // verify an isolated session, and revoke only that generated local session.
 // node --env-file=.env.local scripts/reporting-production-smoke.mjs --production-read-only
-// Add --private-review after the notification/private-review migrations and application release.
+// Add --private-review after the private-review migrations and application release.
 // node --env-file=.env.staging scripts/reporting-production-smoke.mjs --staging-read-only
 import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";

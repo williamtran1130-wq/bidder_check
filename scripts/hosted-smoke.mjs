@@ -266,19 +266,9 @@ try {
     ).id,
   );
   ok(await client.auth.signInWithPassword({ email: ownerEmail, password }));
-  const signupAlert = ok(await administrator.from("inbox_notifications")
-    .select("id,href,read_at,resolved_at").eq("client_id", owner.id).single());
-  assert.equal(signupAlert.read_at, null);
-  assert.equal(signupAlert.resolved_at, null);
-  assert.equal(signupAlert.href, `/users?tab=pending&highlight=${owner.id}`);
-  assert.deepEqual(ok(await client.from("inbox_notifications").select("id")), []);
-  await ap.goto(`${origin}/notifications`);
-  const alertCard = ap.locator(`#notification-${signupAlert.id}`);
-  await expect(alertCard).toContainText(ownerEmail);
-  await alertCard.getByRole("link", { name: "Review client", exact: true }).click();
-  await expect(ap).toHaveURL(new RegExp(`/users\\?tab=pending&highlight=${owner.id}`));
+  await ap.goto(`${origin}/users?tab=pending&highlight=${owner.id}`);
   await expect(ap.getByRole("button", { name: /^pending/i })).toHaveAttribute("aria-pressed", "true");
-  pass("Public signup creates a private admin inbox alert with a highlighted approval deep link");
+  pass("Public signup remains pending and appears in People for approval");
   assert.equal(
     ok(
       await client
@@ -322,7 +312,6 @@ try {
   pass(
     "Signup is pending; URL and direct API access blocked; admin rejects with visible reason then approves",
   );
-  assert.ok(ok(await administrator.from("inbox_notifications").select("resolved_at").eq("id", signupAlert.id).single()).resolved_at);
   await ap.goto(`${origin}/users`);
   await ap.getByRole("button", { name: "Add client", exact: true }).click();
   await ap
@@ -341,7 +330,6 @@ try {
   );
   users.push(managed.id);
   assert.equal(managed.approval_status, "approved");
-  assert.deepEqual(ok(await admin.from("inbox_notifications").select("id").eq("client_id", managed.id)), []);
   await ap.getByLabel("Search people").fill(managedEmail);
   await ap.getByRole("button", { name: "Manage", exact: true }).click();
   await ap.getByLabel("Account status").selectOption("true");
@@ -478,52 +466,6 @@ try {
       .single(),
     ).accepted_at,
   );
-  const messageTitle = `Smoke update ${randomUUID()}`;
-  const messageId = ok(
-    await client.rpc("save_client_message", {
-      p_id: null,
-      p_workspace: workspaces[0],
-      p_title: messageTitle,
-      p_body: "Please review the updated application guidance.",
-      p_mode: "selected",
-      p_recipients: [invited.id],
-      p_kind: "once",
-      p_scheduled_at: new Date(Date.now() - 60_000).toISOString(),
-      p_local_time: null,
-      p_weekdays: [],
-      p_draft: false,
-    }),
-  );
-  assert.ok(messageId);
-  const notificationWorker = await fetch(`${origin}/api/cron/notifications`, {
-    method: "POST",
-    redirect: "manual",
-    headers: {
-      authorization: `Bearer ${process.env.NOTIFICATION_WORKER_SECRET}`,
-      ...(process.env.SMOKE_VERCEL_BYPASS ? { "x-vercel-protection-bypass": process.env.SMOKE_VERCEL_BYPASS } : {}),
-    },
-  });
-  assert.equal(notificationWorker.status, 200);
-  assert.match(notificationWorker.headers.get("content-type") ?? "", /application\/json/);
-  assert.equal(typeof (await notificationWorker.json()).schedule.occurrences, "number");
-  const inboxMessage = ok(
-    await bidder
-      .from("inbox_notifications")
-      .select("id,title,read_at")
-      .eq("user_id", invited.id)
-      .eq("title", messageTitle)
-      .single(),
-  );
-  assert.equal(inboxMessage.read_at, null);
-  assert.deepEqual(
-    ok(await other.from("inbox_notifications").select("id").eq("user_id", invited.id)),
-    [],
-  );
-  ok(await bidder.rpc("mark_notification_read", { p_id: inboxMessage.id, p_read: true }));
-  await bp.goto(`${origin}/notifications`);
-  await expect(bp.getByText(messageTitle, { exact: true })).toBeVisible();
-  await expect(bp.getByRole("button", { name: "Mark unread" })).toBeVisible();
-  pass("Client sends a selected-bidder inbox notification; ownership and read-state controls are enforced");
   pass(
     "Client creates bidder without email; 123456 signs in; Settings password change disables old password",
   );

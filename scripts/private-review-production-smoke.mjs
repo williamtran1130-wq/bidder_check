@@ -35,15 +35,10 @@ const SAFE_COLUMNS = {
   ],
   profiles: ["id", "role", "archived", "approval_status"],
   bidders: ["user_id", "workspace_id", "archived"],
-  screenshot_upload_contexts: ["id"],
+  bid_application_locations: ["bid_id"],
 };
 const RPC_PARAMS = {
   list_bids_v2: ["p_query"],
-  notification_page: ["p_kind", "p_workspace", "p_status", "p_cursor"],
-  notification_by_id: ["p_id"],
-  notification_unread_count: [],
-  manager_screenshot_upload_context: ["p_file"],
-  manager_screenshot_upload_history: ["p_bid"],
 };
 const safeKeys = (value, keys) =>
   value &&
@@ -102,20 +97,7 @@ export function productionReadOnlyFetch(fetchImpl = fetch) {
           assert.ok(
             validListQuery(JSON.parse(url.searchParams.get("p_query"))),
           );
-        else if (name === "notification_page") {
-          assert.ok(
-            ["inbox", "messages"].includes(url.searchParams.get("p_kind")),
-          );
-          assert.ok(!url.searchParams.has("p_cursor"));
-          assert.ok(
-            !url.searchParams.has("p_status") ||
-              url.searchParams.get("p_status") === "all",
-          );
-          assert.ok(
-            !url.searchParams.has("p_workspace") ||
-              UUID.test(url.searchParams.get("p_workspace")),
-          );
-        } else if (name !== "notification_unread_count") {
+        else {
           assert.equal(keys.length, 1);
           assert.ok(UUID.test(url.searchParams.get(RPC_PARAMS[name][0]) ?? ""));
         }
@@ -229,6 +211,11 @@ function denied(result) {
 function noPrivate(value, bidder = false) {
   if (!value || typeof value !== "object") return;
   for (const [key, nested] of Object.entries(value)) {
+    if (key === "applicationLocation") {
+      assert.ok(nested === null || safeKeys(nested, ["ip","city","region","country","uploadedAt","source","status"]));
+      if (nested) { assert.equal(typeof nested.uploadedAt,"string"); assert.ok(["available","unavailable"].includes(nested.status)); }
+      continue;
+    }
     assert.ok(
       !/^(ip|city|region|country|uploaderId|uploaderRole|uploaderName|originalFileId|upload_context|screenshot_upload_context)$/i.test(
         key,
@@ -320,9 +307,7 @@ export async function runPrivateReviewReadOnlySmoke(config, fetchImpl = fetch) {
   const results = [];
   const coverage = {
     repeatedRowsObserved: false,
-    privateContextObserved: false,
-    privateHistoryObserved: false,
-    notificationByIdObserved: false,
+    applicationLocationObserved: false,
   };
   const check = async (name, operation) => {
     const start = performance.now();
@@ -461,122 +446,18 @@ export async function runPrivateReviewReadOnlySmoke(config, fetchImpl = fetch) {
       noPrivate(ordinary.rows, true);
       noPrivate(fallback.rows, true);
     });
-  await check("notification-read-permissions", async () => {
-    const messages = ok(
-      await manager.rpc(
-        "notification_page",
-        { p_kind: "messages", p_workspace: sample.workspace_id },
-        { get: true },
-      ),
-    );
-    assert.ok(Array.isArray(messages.rows) && messages.rows.length <= 50);
-    assert.ok(
-      messages.rows.every((row) => row.workspace_id === sample.workspace_id),
-    );
-    denied(
-      await bidder.rpc(
-        "notification_page",
-        { p_kind: "messages", p_workspace: sample.workspace_id },
-        { get: true },
-      ),
-    );
-    const inbox = ok(
-      await bidder.rpc("notification_page", { p_kind: "inbox" }, { get: true }),
-    );
-    assert.ok(Array.isArray(inbox.rows) && inbox.rows.length <= 50);
-    assert.ok(
-      inbox.rows.every(
-        (row) => row.user_id === bidderId && row.kind === "message",
-      ),
-    );
-    for (const current of [manager, bidder])
-      assert.ok(
-        Number.isSafeInteger(
-          Number(
-            ok(
-              await current.rpc("notification_unread_count", {}, { get: true }),
-            ),
-          ),
-        ),
-      );
-    if (inbox.rows.length) {
-      const row = ok(
-        await bidder.rpc(
-          "notification_by_id",
-          { p_id: inbox.rows[0].id },
-          { get: true },
-        ),
-      );
-      assert.equal(row.user_id, bidderId);
-      denied(
-        await manager.rpc(
-          "notification_by_id",
-          { p_id: inbox.rows[0].id },
-          { get: true },
-        ),
-      );
-      coverage.notificationByIdObserved = true;
-    }
-    denied(
-      await anonymous.rpc(
-        "notification_page",
-        { p_kind: "inbox" },
-        { get: true },
-      ),
-    );
-  });
-  await check("private-context-read-permissions", async () => {
-    const history = ok(
-      await manager.rpc(
-        "manager_screenshot_upload_history",
-        { p_bid: sample.id },
-        { get: true },
-      ),
-    );
-    assert.ok(Array.isArray(history.items) && history.items.length <= 50);
-    assert.ok(
-      history.items.every(
-        (item) => item.bidId === sample.id && item.bidderId === bidderId,
-      ),
-    );
-    coverage.privateHistoryObserved = history.items.length > 0;
-    for (const current of [bidder, anonymous])
-      denied(
-        await current.rpc(
-          "manager_screenshot_upload_history",
-          { p_bid: sample.id },
-          { get: true },
-        ),
-      );
-    const evidence = repeatedOracle(bids, files, "all").evidence;
-    if (evidence.length) {
-      const context = ok(
-        await manager.rpc(
-          "manager_screenshot_upload_context",
-          { p_file: sample.evidence_file_id },
-          { get: true },
-        ),
-      );
-      if (context !== null) {
-        assert.equal(context.bidId, sample.id);
-        assert.equal(context.originalFileId, sample.evidence_file_id);
-        coverage.privateContextObserved = true;
-      }
-      for (const current of [bidder, anonymous])
-        denied(
-          await current.rpc(
-            "manager_screenshot_upload_context",
-            { p_file: sample.evidence_file_id },
-            { get: true },
-          ),
-        );
-    }
-    for (const current of [manager, bidder, anonymous]) {
-      const table = await current
-        .from("screenshot_upload_contexts")
-        .select("id")
-        .limit(1);
-      assert.equal(table.error?.code, "42501");
+  await check("application-location-read-permissions", async () => {
+    const request = { p_query: JSON.stringify(query(bidderId,"all",false,0,"found_at")) };
+    const managed = ok(await manager.rpc("list_bids_v2",request,{get:true}));
+    const own = ok(await bidder.rpc("list_bids_v2",request,{get:true}));
+    assert.deepEqual(own.rows.map(row => [row.id,row.applicationLocation]),managed.rows.map(row => [row.id,row.applicationLocation]));
+    for (const row of own.rows) assert.ok(Object.hasOwn(row,"applicationLocation"));
+    noPrivate(own.rows,true);
+    coverage.applicationLocationObserved = own.rows.some(row => row.applicationLocation !== null);
+    denied(await anonymous.rpc("list_bids_v2",request,{get:true}));
+    for (const current of [manager,bidder,anonymous]) {
+      const table = await current.from("bid_application_locations").select("bid_id").limit(1);
+      assert.equal(table.error?.code,"42501");
     }
   });
   return { passed: true, readOnly: true, checks: results, coverage };

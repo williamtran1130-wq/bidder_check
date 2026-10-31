@@ -2122,51 +2122,6 @@ it("lists bids with database filters and applies pagination before returning row
   await db.query("delete from public.bids where company like 'Pager %'");
 });
 
-it("publishes scheduled messages once to scoped inboxes and resolves Central DST times", async () => {
-  await asUser(client);
-  await db.query<{ id: string }>(
-      "select public.save_client_message(null,$1,'Shift update','Please review the new roles.','all','{}','once',clock_timestamp(),null,'{}') id",
-      [workspace],
-    );
-  await db.exec("reset role; set role service_role; select set_config('request.jwt.claim.role','service_role',false)");
-  const published = await db.query("select public.process_due_messages(clock_timestamp()+interval '5 seconds',10) result");
-  await db.query("select public.process_due_messages(clock_timestamp()+interval '6 seconds',10)");
-  await asUser(bidder);
-  expect(published.rows[0]).toEqual({ result: { occurrences: 1 } });
-  const inbox = await db.query<{ title: string; body: string }>(
-    "select title,body from public.inbox_notifications where user_id=auth.uid()",
-  );
-  expect(inbox.rows).toEqual([{ title: "Shift update", body: "Please review the new roles." }]);
-  await expect(
-    db.query("select public.mark_notification_read($1,true)", ["00000000-0000-4000-8000-000000000099"]),
-  ).rejects.toThrow(/not found/i);
-
-  await db.exec("reset role; set role service_role; select set_config('request.jwt.claim.role','service_role',false)");
-  const springForward = (
-    await db.query<{ local_stamp: string }>(
-      "select to_char(public.message_occurrence_at('2026-03-08','02:30') at time zone 'America/Chicago','YYYY-MM-DD HH24:MI:SS') local_stamp",
-    )
-  ).rows[0].local_stamp;
-  const fallUtc = (
-    await db.query<{ value: string }>(
-      "select to_char(public.message_occurrence_at('2026-11-01','01:30') at time zone 'UTC','YYYY-MM-DD HH24:MI:SS') value",
-    )
-  ).rows[0].value;
-  expect(fallUtc).toBe("2026-11-01 06:30:00");
-  expect(springForward).toContain("03:30");
-});
-
-it("editing a paused recurring notification does not resume delivery", async () => {
-  await asUser(client);
-  const id = (await db.query<{id:string}>("select public.save_client_message(null,$1,'Daily','Initial','all','{}','daily',null,'09:00','{1}',false) id",[workspace])).rows[0].id;
-  await db.query("select public.set_message_status($1,'paused')",[id]);
-  await db.query("select public.save_client_message($1,$2,'Daily','Edited while paused','all','{}','daily',null,'10:00','{1}',false)",[id,workspace]);
-  const row=(await db.query<{status:string;next_at:string|null}>("select status,next_at from public.client_messages where id=$1",[id])).rows[0];
-  expect(row).toEqual({status:"paused",next_at:null});
-  await db.exec("reset role");
-  await db.query("delete from public.client_messages where id=$1",[id]);
-});
-
 it("resets only an explicitly inventoried application library and preserves accounts", async () => {
   const adminId = "00000000-0000-4000-8000-000000000006";
   await db.exec("reset role");
@@ -2267,7 +2222,7 @@ it("resets only an explicitly inventoried application library and preserves acco
   await db.query("select public.set_application_library_cutover(false)");
 });
 
-it("creates admin signup alerts only for public pending clients and defaults new profiles to two months", async () => {
+it("preserves public signup, managed provisioning, approval and two month retention after notification retirement", async () => {
   const admin = other;
   const publicClient = "00000000-0000-4000-8000-000000000011";
   await db.exec("reset role");
@@ -2283,20 +2238,6 @@ it("creates admin signup alerts only for public pending clients and defaults new
     )
   ).rows[0];
   expect(pending.approval_status).toBe("pending");
-  expect(
-    (
-      await db.query<{ kind: string; client_id: string; href: string }>(
-        "select kind,client_id,href from public.inbox_notifications where user_id=$1 and client_id=$2",
-        [admin, publicClient],
-      )
-    ).rows,
-  ).toEqual([
-    {
-      kind: "client_signup",
-      client_id: publicClient,
-      href: `/users?tab=pending&highlight=${publicClient}`,
-    },
-  ]);
   const newProfile = (
     await db.query<{ retention_months: number }>(
       "insert into public.candidate_profiles(workspace_id,identifier,candidate_name) values($1,'TWO-MONTH','Default check') returning retention_months",
@@ -2324,52 +2265,11 @@ it("creates admin signup alerts only for public pending clients and defaults new
       )
   ).rows[0].approval_status,
   ).toBe("approved");
-  expect(
-    (
-      await db.query(
-        "select 1 from public.inbox_notifications where client_id=$1",
-        [managedClient],
-      )
-    ).rows,
-  ).toHaveLength(0);
-  await asUser(admin);
-  expect((await db.query("select id from public.inbox_notifications where client_id=$1", [publicClient])).rows).toHaveLength(1);
-  await asUser(bidder);
-  expect((await db.query("select id from public.inbox_notifications where client_id=$1", [publicClient])).rows).toHaveLength(0);
   await asUser(admin);
   await db.query("select public.review_client($1,'approved',null)", [publicClient]);
-  const resolved = (
-    await db.query<{ read_at: string | null; resolved_at: string | null }>(
-      "select read_at,resolved_at from public.inbox_notifications where user_id=$1 and client_id=$2",
-      [admin, publicClient],
-    )
-  ).rows[0];
-  expect(resolved.read_at).not.toBeNull();
-  expect(resolved.resolved_at).not.toBeNull();
-  await expect(db.query(
-    "select public.mark_notification_read((select id from public.inbox_notifications where user_id=$1 and client_id=$2),false)",
-    [admin, publicClient],
-  )).rejects.toThrow("Notification not found or resolved");
-});
-
-it("does not deliver a queued admin alert after its device belongs to another user", async () => {
-  await asUser(other);
-  console.log("trash-other");
-  const subscription = (await db.query<{ id: string }>(
-    "select public.save_push_subscription('https://push.example.test/device','key','auth') id",
-  )).rows[0].id;
   await db.exec("reset role");
-  await db.query("insert into auth.users(id,email) values('00000000-0000-4000-8000-000000009020','device-alert@example.test')");
-  await db.exec("set role service_role; select set_config('request.jwt.claim.role','service_role',false)");
-  await db.query("select public.queue_notification_pushes()");
-  const queued = (await db.query("select id from public.push_attempts where subscription_id=$1", [subscription])).rows;
-  expect(queued).toHaveLength(1);
-  await asUser(bidder);
-  console.log("trash-bidder");
-  await db.query("select public.save_push_subscription('https://push.example.test/device','new-key','new-auth')");
-  await db.exec("reset role; set role service_role; select set_config('request.jwt.claim.role','service_role',false)");
-  expect((await db.query("select id from public.push_attempts where subscription_id=$1", [subscription])).rows).toHaveLength(0);
-  expect((await db.query("select * from public.claim_push_attempts(100)")).rows).toHaveLength(0);
+  expect((await db.query("select approval_status from public.profiles where id=$1", [publicClient])).rows).toEqual([{ approval_status: 'approved' }]);
+  expect((await db.query("select to_regclass('public.inbox_notifications') retired")).rows).toEqual([{ retired: null }]);
 });
 
 it("returns a bounded, tenant-scoped legacy manager dashboard report with a complete daily series", async () => {

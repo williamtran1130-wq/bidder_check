@@ -67,7 +67,7 @@ for (const route of ["bids", "earnings", "interviews"]) {
     await expect(page.locator("html")).toHaveAttribute("data-page-loading-reads", "1");
     if (route === "bids") await expect(page.getByRole("checkbox", { name: /^Select bid at/ })).toHaveCount(1);
     else if (route === "earnings") await expect(page.getByRole("table")).toContainText("$10.00");
-    else await expect(page.getByRole("table")).toContainText("ENG-01");
+    else await expect(page.getByRole("table")).toContainText("No applications or assigned email activity in this period.");
   });
 }
 

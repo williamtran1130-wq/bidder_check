@@ -1,4 +1,5 @@
 "use client";
+import { refreshWorkspace } from "@/lib/report-cache";
 import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -279,7 +280,7 @@ function AccountRecovery() {
                     );
                     setMessage(result.error ?? "Account change completed.");
                     await load();
-                    router.refresh();
+                    refreshWorkspace(router);
                   } catch {
                     setMessage(
                       "The response was lost. Check this same request again.",
@@ -312,7 +313,7 @@ function AccountRecovery() {
                           "Remaining work abandoned.",
                       );
                       await load();
-                      router.refresh();
+                      refreshWorkspace(router);
                     } catch {
                       setMessage(
                         "Disposition could not be confirmed. Check this request again.",
@@ -357,7 +358,7 @@ export function CreateBidderDialog({
     else if (result.operation?.status === "completed") {
       toast.success("Bidder account created. Initial password: 123456");
       setOpen(false);
-      router.refresh();
+      refreshWorkspace(router);
     }
   }
   return (
@@ -470,7 +471,7 @@ export function EditPerson({
     else if (result.operation?.status === "completed") {
       toast.success("Account updated");
       setOpen(false);
-      router.refresh();
+      refreshWorkspace(router);
     }
   }
   return (
@@ -607,7 +608,7 @@ function CreateClientDialog() {
     else if (result.operation?.status === "completed") {
       setOpen(false);
       toast.success("Client created");
-      router.refresh();
+      refreshWorkspace(router);
     }
   }
   return (
@@ -669,7 +670,7 @@ function ApprovalActions({ person }: { person: Row<"profiles"> }) {
         toast.success(
           status === "approved" ? "Client approved" : "Client rejected",
         );
-        router.refresh();
+        refreshWorkspace(router);
       }
     });
   }

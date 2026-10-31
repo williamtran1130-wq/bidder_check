@@ -297,3 +297,21 @@ if (new URLSearchParams(window.location.search).get("role") === "bidder") {
       return safe;
     });
 }
+
+// Latest application location is a field on the bid response, including for bidders.
+if (new URLSearchParams(window.location.search).has("upload-context")) {
+  const params = new URLSearchParams(window.location.search);
+  fixture.bids = fixture.bids.map((bid) => {
+    const index = Number(bid.id.replace("bid-", ""));
+    const country = index === 1 ? "CA" : index === 2 ? null : "US";
+    return { ...bid, applicationLocation: params.has("upload-context-old") || !bid.applied ? null : {
+      ip: params.has("upload-context-unavailable") ? null : params.has("upload-context-ipv6") ? "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff" : "203.0.113.10",
+      city: params.has("upload-context-unavailable") ? null : params.has("upload-context-ipv6") ? "S?o Paulo" : country === "CA" ? "Toronto" : "Chicago",
+      region: params.has("upload-context-unavailable") ? null : params.has("upload-context-ipv6") ? "SP" : country === "CA" ? "ON" : "IL",
+      country: params.has("upload-context-unavailable") ? null : params.has("upload-context-ipv6") ? "BR" : country,
+      source: params.has("upload-context-unavailable") ? "unavailable" as const : "vercel" as const,
+      status: params.has("upload-context-unavailable") ? "unavailable" as const : "available" as const,
+      uploadedAt: "2026-10-12T16:30:00Z",
+    }};
+  });
+}

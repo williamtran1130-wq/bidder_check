@@ -4,7 +4,7 @@ const { session } = vi.hoisted(() => ({ session: vi.fn(() => new Response("sessi
 vi.mock("@/lib/middleware", () => ({ updateSession: session }));
 import { proxy } from "@/proxy";
 beforeEach(() => session.mockClear());
-it.each(["/api/cron/notifications", "/api/cron/storage-cleanup", "/push-worker.js", "/manifest.webmanifest"])(
+it.each(["/api/cron/notifications", "/api/cron/storage-cleanup", "/push-worker.js", "/manifest.webmanifest", "/api/reports/overview", "/api/mail-insights/status"])(
   "allows %s to use its own authorization or public asset behavior", async (path) => {
     const response = await proxy(new NextRequest(`https://example.test${path}`));
     expect(session).not.toHaveBeenCalled();

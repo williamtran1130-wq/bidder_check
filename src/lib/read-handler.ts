@@ -3,7 +3,6 @@ import { z } from "zod";
 import { unstable_rethrow } from "next/navigation";
 import { getActor } from "./auth";
 import { createReadServices } from "./read-services";
-import { createNotificationReads } from "./notification-reads";
 import { createReportReader } from "./reporting-server";
 const bidInput = z.tuple([
   z.string(),
@@ -19,6 +18,7 @@ const bidInput = z.tuple([
     bidder: z.string(),
     source: z.string(),
     job: z.string(),
+    ipCountry: z.string().optional(),
     columnFilters: z.array(z.object({ id: z.string(), value: z.unknown() })),
     sorting: z.array(z.object({ id: z.string(), desc: z.boolean() })),
     pageIndex: z.number(),
@@ -43,19 +43,11 @@ const operations = new Set([
   "bids",
   "history",
   "files",
-  "upload-contexts",
   "purge",
   "purges",
   "dashboard",
   "earnings",
   "interviews",
-  "notification-page",
-  "notification",
-  "unread",
-  "device",
-  "legacy-inbox",
-  "legacy-unread",
-  "messages",
 ]);
 const json = (body: unknown, status = 200) =>
   Response.json(body, {
@@ -66,12 +58,12 @@ export async function handleRead(
   request: Request,
   operation: string,
 ): Promise<Response> {
+  if (["notification-page", "notification", "unread", "device", "legacy-inbox", "legacy-unread", "messages", "upload-contexts"].includes(operation)) return json({ error: "This feature has been retired." }, 410);
   // The first service boundary checks live authorization after input parsing.
   // Share that one actor/client (including a rejection) only within this request.
   let context: ReturnType<typeof getActor> | undefined;
   const requestContext = () => (context ??= getActor());
   const reads = createReadServices(requestContext);
-  const notifications = createNotificationReads(requestContext);
   const readReport = createReportReader(requestContext);
   async function dispatch(): Promise<Response> {
     if (!operations.has(operation))
@@ -107,11 +99,6 @@ export async function handleRead(
           z.array(z.string()).max(100).parse(input),
         );
         break;
-      case "upload-contexts":
-        result = await reads.getScreenshotUploadContexts(
-          z.array(z.uuid()).max(100).parse(input),
-        );
-        break;
       case "purge":
         result = await reads.getPurgeStatus(z.string().parse(input));
         break;
@@ -135,42 +122,7 @@ export async function handleRead(
         );
         break;
       }
-      case "notification-page":
-        result = await notifications.getNotificationPage(
-          z
-            .object({
-              kind: z.enum(["inbox", "messages"]),
-              workspace_id: z.string().optional(),
-              status: z.string().optional(),
-              cursor: z
-                .object({ created_at: z.string(), id: z.string() })
-                .nullish(),
-            })
-            .parse(input),
-        );
-        break;
-      case "notification":
-        result = await notifications.getNotificationById(
-          z.string().parse(input),
-        );
-        break;
-      case "unread":
-        result = await notifications.getNotificationUnreadCount();
-        break;
-      case "device":
-        result = await notifications.getNotificationDeviceEnabled(
-          z.string().parse(input),
-        );
-        break;
-      case "legacy-inbox":
-        result = await reads.getInboxNotifications();
-        break;
-      case "legacy-unread":
-        result = await reads.getUnreadNotificationCount();
-        break;
-      case "messages":
-        result = await reads.getClientMessages();
-        break;
+
     }
     return json(result);
   }

@@ -76,10 +76,11 @@ async function explainListing(canViewSizes: boolean, sort: string) {
       "select prosrc body from pg_proc where oid='public.list_bids_v2(jsonb)'::regprocedure",
     )
   ).rows[0].body;
-  let statement = body.slice(
-    body.search(/with filtered as (?:not )?materialized/),
-    body.indexOf(" into result;"),
-  );
+  // These helpers explain size sorting / searched queries, which use the
+  // retained grouped branch. Keep the complete SELECT including locations.
+  const statementStart = [...body.matchAll(/with (?:application_locations|filtered) as (?:not )?materialized/g)].at(-1)?.index;
+  if (statementStart === undefined) throw new Error("Retained list SELECT missing");
+  let statement = body.slice(statementStart,body.indexOf(" into result;",statementStart));
   const locals: Record<string, string> = {
     p_query: "($1::jsonb)",
     page_index: "40",

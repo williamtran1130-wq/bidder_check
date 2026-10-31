@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { beforeEach, expect, it, vi } from "vitest";
 import sharp from "sharp";
 import { createHash } from "node:crypto";
@@ -17,9 +16,6 @@ vi.mock("@/lib/auth", () => ({ getContext: async () => ({ profile: state.profile
 vi.mock("@/lib/admin", () => ({ adminClient: () => ({ rpc: state.verified, storage: { from: () => ({ upload: state.upload }) } }) }));
 vi.mock("@/lib/storage-cleanup", () => ({ runStorageCleanup: vi.fn() }));
 import { finalizeUpload } from "@/app/(workspace)/actions";
-const actions = existsSync("src/app/(workspace)/upload-context-actions.ts")
-  ? await import("@/app/(workspace)/upload-context-actions")
-  : { getScreenshotUploadContext: async () => ({ error: "Unavailable" }), getScreenshotUploadHistory: async () => ({ error: "Unavailable" }) };
 const fileId = "40000000-0000-4000-8000-000000000002", bidId = "40000000-0000-4000-8000-000000000003";
 beforeEach(async () => {
   state.file.finalized = false;
@@ -81,28 +77,4 @@ it("does not collect screenshot request metadata for resume uploads", async () =
   state.verified.mockResolvedValue({ error: null });
   expect(await finalizeUpload(fileId)).toEqual({ data: fileId });
   expect(state.headerReads).toBe(0);
-});
-it("returns manager lookup and bounded history responses through the caller JWT", async () => {
-  state.rpc.mockImplementation(async (name, args) => {
-    if (name === "manager_screenshot_upload_context" && args.p_file === fileId) return { data: null };
-    if (name === "manager_screenshot_upload_history" && args.p_bid === bidId && args.p_before_id === fileId && args.p_before_at === "2026-10-12T12:00:00Z") return { data: { items: [], nextCursor: null } };
-    return { error: { message: "Wrong review boundary" } };
-  });
-  expect(await actions.getScreenshotUploadContext(fileId)).toEqual({ data: null });
-  expect(await actions.getScreenshotUploadHistory(bidId, { uploadedAt: "2026-10-12T12:00:00Z", id: fileId })).toEqual({ data: { items: [], nextCursor: null } });
-});
-it("rejects bidder, archived and unapproved manager reads and incomplete cursor input before database access", async () => {
-  for (const patch of [{ role: "bidder" }, { archived: true }, { approval_status: "pending" }]) {
-    const saved = { ...state.profile }; Object.assign(state.profile, patch);
-    expect(await actions.getScreenshotUploadContext(fileId)).toHaveProperty("error");
-    expect(await actions.getScreenshotUploadHistory(bidId)).toHaveProperty("error");
-    state.profile = saved;
-  }
-  expect(await actions.getScreenshotUploadHistory(bidId, { uploadedAt: "bad-date", id: fileId })).toHaveProperty("error");
-  expect(state.rpc).not.toHaveBeenCalled();
-});
-it("keeps private SQL detail out of manager load failures", async () => {
-  state.rpc.mockResolvedValue({ error: { message: "private-network-detail", code: "57014" } });
-  const result = await actions.getScreenshotUploadHistory(bidId);
-  expect(result).toHaveProperty("error"); expect(JSON.stringify(result)).not.toContain("private-network-detail");
 });

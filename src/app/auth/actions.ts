@@ -59,7 +59,7 @@ export async function authenticate(
   if (error) return { error: error.message };
   const next = values.next;
   // Only allow same-origin relative paths. This preserves protected deep links
-  // (including notification IDs) without creating an open redirect.
+  // without creating an open redirect.
   if (next?.startsWith("/") && !next.startsWith("//") && !next.includes("\\")) {
     redirect(next);
   }
@@ -67,8 +67,6 @@ export async function authenticate(
 }
 export async function signOut() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (user) await supabase.rpc("delete_all_push_subscriptions", {});
   await supabase.auth.signOut();
   redirect("/auth/login");
 }

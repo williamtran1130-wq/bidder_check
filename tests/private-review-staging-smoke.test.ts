@@ -38,34 +38,28 @@ it("requires a retained passed full57 matrix at five readers and twice represent
   ];
   for (const patch of mutations) expect(() => smoke.validateBenchmarkReceipt({ ...receipt(), ...patch })).toThrow();
 });
-it("chooses the next future whole minute as a Chicago wall-clock schedule", () => {
-  expect(smoke.nextMinuteSchedule(Date.parse("2026-10-12T16:30:20Z"))).toEqual({ scheduledAt: "2026-10-12T16:31:00.000Z", scheduledLocal: "2026-10-12T11:31", waitMs: 0 });
-  expect(smoke.nextMinuteSchedule(Date.parse("2026-10-12T16:30:59Z"))).toEqual({ scheduledAt: "2026-10-12T16:31:00.000Z", scheduledLocal: "2026-10-12T11:31", waitMs: 2000 });
-});
-function fixtureService(full = receipt(), mismatch: "auth" | "profile" | "workspace" | "membership" | "assignment" | "push" | null = null) {
+function fixtureService(full = receipt(), mismatch: "auth" | "profile" | "workspace" | "membership" | "assignment" | null = null) {
   const rows: Record<string, unknown[]> = {
     profiles: full.accounts.map((account, index) => ({ ...account, role: index < 2 ? ["client", "admin"][index] : "bidder", archived: false, approval_status: "approved" })),
     workspaces: full.workspaceIds.map((id, index) => ({ id, owner_id: full.accounts[index].id })),
     bidders: [{ user_id: full.accounts[2].id, workspace_id: full.workspaceIds[0], archived: false }],
     resumes: [{ id: "70000000-0000-4000-8000-000000000021", workspace_id: full.workspaceIds[0], bidder_id: full.accounts[2].id, identifier: `${full.marker}-0`, profile_id: "70000000-0000-4000-8000-000000000022", archived: false }],
     candidate_profiles: [{ id: "70000000-0000-4000-8000-000000000022", workspace_id: full.workspaceIds[0], identifier: `${full.marker}-0` }],
-    push_subscriptions: [],
   };
   if (mismatch === "profile") (rows.profiles[0] as { email: string }).email = "foreign@example.com";
   if (mismatch === "workspace") (rows.workspaces[0] as { owner_id: string }).owner_id = full.accounts[4].id;
   if (mismatch === "membership") (rows.bidders[0] as { workspace_id: string }).workspace_id = full.workspaceIds[1];
   if (mismatch === "assignment") (rows.resumes[0] as { identifier: string }).identifier = "Foreign assignment";
-  if (mismatch === "push") rows.push_subscriptions = [{ id: "foreign-device" }];
   const table = (name: string) => {
     const response = { data: rows[name], count: rows[name]?.length ?? 0, error: null };
     const query = { select: () => query, in: () => query, eq: () => query, limit: () => query, then: (resolve: (value: typeof response) => unknown) => Promise.resolve(response).then(resolve) }; return query;
   };
   return { auth: { admin: { getUserById: vi.fn(async (id: string) => ({ data: { user: { id, email: mismatch === "auth" ? "foreign@example.com" : full.accounts.find((account) => account.id === id)?.email } }, error: null })) } }, from: table };
 }
-it("proves receipt actor, workspace, bidder, assignment and no-push ownership before any authentication or writes", async () => {
+it("proves receipt actor, workspace, bidder, assignment ownership before any authentication or writes", async () => {
   const full = receipt();
   expect(await smoke.verifyFixtureOwnership(fixtureService(full), full)).toMatchObject({ workspaceId: full.workspaceIds[0], owner: { id: full.accounts[0].id }, bidder: { id: full.accounts[2].id } });
-  for (const mismatch of ["auth", "profile", "workspace", "membership", "assignment", "push"] as const) await expect(smoke.verifyFixtureOwnership(fixtureService(receipt(), mismatch), receipt())).rejects.toThrow();
+  for (const mismatch of ["auth", "profile", "workspace", "membership", "assignment"] as const) await expect(smoke.verifyFixtureOwnership(fixtureService(receipt(), mismatch), receipt())).rejects.toThrow();
 });
 function privateReceipt() {
   const full = receipt();
@@ -80,7 +74,6 @@ function cleanupService(value = privateReceipt(), foreign = false) {
   const rows: Record<string, object[]> = {
     bids: value.bidIds.map((id, index) => ({ id, workspace_id: value.workspaceId, bidder_id: value.bidderId, resume_id: value.assignmentId, company: `${value.marker}-${index ? "ui" : "atomic"}` })),
     files: value.fileIds.map((id) => ({ id, workspace_id: value.workspaceId, bidder_id: value.bidderId, bid_id: value.bidIds[0], created_by: foreign ? receipt().accounts[4].id : value.ownerId, storage_path: `${value.marker}/${id}` })),
-    client_messages: [{ id: value.messageId, workspace_id: value.workspaceId, created_by: value.ownerId, title: value.marker, recipient_ids: [value.bidderId] }],
   };
   const service = { from: (table: string) => {
     let method = "select", head = false; const filters: unknown[] = [];
@@ -93,7 +86,6 @@ it("verifies ownership and persists cleanup intent before touching only planned 
   await smoke.cleanupOwnedResources(fixture.service, value, async () => { phases.push(value.phase); if (phases.length === 1) expect(fixture.effects).toHaveLength(0); });
   expect(phases).toEqual(["cleanup", "cleaned"]); expect(value.cleanupComplete).toBe(true); expect(value.fixtureRetained).toBe(false);
   expect(fixture.effects).toEqual([
-    { table: "client_messages", method: "delete", filters: [["id", value.messageId], ["workspace_id", value.workspaceId], ["created_by", value.ownerId]] },
     { table: "bid_events", method: "delete", filters: [["bid_id", value.bidIds]] },
     { table: "bids", method: "update", filters: [["id", value.bidIds], ["workspace_id", value.workspaceId]] },
     { table: "files", method: "delete", filters: [["id", value.fileIds], ["workspace_id", value.workspaceId]] },
@@ -118,11 +110,11 @@ it("rejects hosted finalizer transports outside the exact staging RPC before net
   await expect(transport(`${target}/rest/v1/rpc/process_due_messages`)).rejects.toThrow();
   await expect(smoke.main({ ...config, target: "https://production.invalid" })).rejects.toThrow();
 });
-it("persists database-generated event and context IDs for crash recovery before later mutations", async () => {
-  const value = { ...privateReceipt(), contextIds: [] as string[], eventIds: [] as string[] }, saves: object[] = [];
+it("persists database-generated event IDs and location bid IDs for crash recovery before later mutations", async () => {
+  const value = { ...privateReceipt(), locationBidIds: [] as string[], eventIds: [] as string[] }, saves: object[] = [];
   const contextId = "70000000-0000-4000-8000-000000000040", eventId = "70000000-0000-4000-8000-000000000041";
-  const service = { from: (table: string) => { const query = { select: () => query, eq: (_column: string, id: string) => { expect(id).toBe(value.bidIds[0]); return query; }, then: (resolve: (result: unknown) => unknown) => Promise.resolve({ data: [{ id: table === "bid_events" ? eventId : contextId }], error: null }).then(resolve) }; return query; } };
+  const service = { from: (table: string) => { const query = { select: () => query, eq: (_column: string, id: string) => { expect(id).toBe(value.bidIds[0]); return query; }, then: (resolve: (result: unknown) => unknown) => Promise.resolve({ data: [table === "bid_events" ? {id:eventId} : {bid_id:contextId}], error: null }).then(resolve) }; return query; } };
   const record = "recordUploadIds" in smoke ? smoke.recordUploadIds : async () => {};
   await record(service, value, async () => { saves.push(structuredClone(value)); });
-  expect(saves).toEqual([expect.objectContaining({ contextIds: [contextId], eventIds: [eventId] })]);
+  expect(saves).toEqual([expect.objectContaining({ locationBidIds: [contextId], eventIds: [eventId] })]);
 });

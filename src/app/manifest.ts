@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Bidder Check",
     short_name: "Bidder Check",
-    description: "Bid application workspace and bidder notifications",
+    description: "Bid application workspace",
     start_url: "/dashboard",
     display: "standalone",
     background_color: "#ffffff",

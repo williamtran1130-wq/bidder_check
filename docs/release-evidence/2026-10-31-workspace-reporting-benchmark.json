@@ -1,0 +1,79 @@
+{
+  "checkedAt": "2026-10-31T22:12:27.341Z",
+  "environment": "local PGlite",
+  "requestedPrimaryBids": 22456,
+  "reference": "22,456 is twice the 11,228 historical production count in docs/reporting-performance.md; current hosted count has not been re-measured",
+  "limitations": "Five queued readers share one embedded database. This is not hosted parallel-connection, Vercel CPU, or billing evidence.",
+  "baseline": {
+    "owner:all": {
+      "p95Ms": 409.31,
+      "responseBytes": 4755
+    },
+    "owner:week": {
+      "p95Ms": 18.14,
+      "responseBytes": 1370
+    },
+    "admin:all": {
+      "p95Ms": 433.35,
+      "responseBytes": 4755
+    },
+    "admin:week": {
+      "p95Ms": 17.63,
+      "responseBytes": 1370
+    },
+    "bidder:all": {
+      "p95Ms": 400.11,
+      "responseBytes": 3735
+    },
+    "bidder:week": {
+      "p95Ms": 20.46,
+      "responseBytes": 1312
+    },
+    "rawUpdate": {
+      "p95Ms": 0.48
+    },
+    "write": {
+      "p95Ms": 1.41,
+      "operation": "authenticated update_bid_cell, including locks/version/validation/audit"
+    }
+  },
+  "candidate": {
+    "owner:all": {
+      "p95Ms": 27.99,
+      "responseBytes": 4755
+    },
+    "owner:week": {
+      "p95Ms": 6.1,
+      "responseBytes": 1370
+    },
+    "admin:all": {
+      "p95Ms": 28.17,
+      "responseBytes": 4755
+    },
+    "admin:week": {
+      "p95Ms": 5.12,
+      "responseBytes": 1370
+    },
+    "bidder:all": {
+      "p95Ms": 22.36,
+      "responseBytes": 3735
+    },
+    "bidder:week": {
+      "p95Ms": 5.19,
+      "responseBytes": 1312
+    },
+    "rawUpdate": {
+      "p95Ms": 1.12
+    },
+    "write": {
+      "p95Ms": 1.36,
+      "operation": "authenticated update_bid_cell, including locks/version/validation/audit"
+    }
+  },
+  "parity": true,
+  "actualBids": 22576,
+  "reconciliationDifferences": 0,
+  "writeP95ChangePercent": -3.5,
+  "localReadTargetMet": true,
+  "localWriteTargetMet": true
+}

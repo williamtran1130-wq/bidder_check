@@ -2,8 +2,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { getFileUrls } from "@/lib/read-client";
 import { FileUrlQueue } from "./file-url-cache";
-import { discardNotificationScope } from "./notification-store";
-import { resetUploadContexts } from "./upload-context-client";
+import { browserReports } from "./report-cache";
 const Scope = createContext("");
 let queue: FileUrlQueue | undefined;
 function browserQueue() {
@@ -29,8 +28,7 @@ export function ReadScope({
   useEffect(() => {
     const reset = () => {
       queue?.reset();
-      resetUploadContexts();
-      discardNotificationScope("");
+      browserReports.clear();
     };
     const revoked = () => {
       reset();

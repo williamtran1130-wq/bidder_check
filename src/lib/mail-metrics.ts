@@ -44,7 +44,11 @@ export function confirmationBuckets(report: MailInsightsReport | undefined, buck
     const available = days.filter(day => day.metric.confirmations !== null);
     const status: MailMetricStatus = !report ? "unavailable" : !days.length ? "outside_retention" : !available.length ? days[0].metric.status :
       bucket.from < report.range.from || bucket.to > report.range.to || days.some(day => day.metric.status !== "ready") ? "partial" : "ready";
-    return { confirmations: available.length ? available.reduce((sum, day) => sum + day.metric.confirmations!, 0) : null, status };
+    return {
+      confirmations: available.length ? available.reduce((sum, day) => sum + day.metric.confirmations!, 0) : null,
+      invitations: available.length ? available.reduce((sum, day) => sum + (day.metric.invitations ?? 0), 0) : null,
+      status,
+    };
   });
 }
 
@@ -54,6 +58,6 @@ export function invitationRate(metric: MailMetric, applications: number): number
 
 export function mergeMailGroups<T extends { id: string; label: string }>(rows: T[], groups: Map<string, MailMetricGroup>, empty: (group: MailMetricGroup) => T): T[] {
   const merged = new Map(rows.map(row => [row.id, row]));
-  for (const group of groups.values()) if (!merged.has(group.id) && group.metric.confirmations !== null) merged.set(group.id, empty(group));
+  for (const group of groups.values()) if (!merged.has(group.id) && (group.metric.confirmations !== null || group.metric.invitations !== null)) merged.set(group.id, empty(group));
   return [...merged.values()];
 }

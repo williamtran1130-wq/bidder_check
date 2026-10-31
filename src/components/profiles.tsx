@@ -1,4 +1,5 @@
 "use client";
+import { refreshWorkspace } from "@/lib/report-cache";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2, MapPin, Plus } from "lucide-react";
@@ -69,7 +70,7 @@ function CandidateProfileDialog({
               else {
                 toast.success("Candidate profile saved");
                 setOpen(false);
-                router.refresh();
+                refreshWorkspace(router);
               }
             })
           }
@@ -231,7 +232,7 @@ function ProfileRulesDialog({
               else {
                 toast.success("Profile restrictions saved");
                 setOpen(false);
-                router.refresh();
+                refreshWorkspace(router);
               }
             });
           }}
@@ -460,7 +461,7 @@ export function CandidateProfileLibrary({ data }: { data: WorkspaceData }) {
                           else {
                             toast.success(result.data?.status.pendingFiles ? "Profile deleted. File cleanup pending; retry is automatic." : "Profile permanently deleted");
                             setSelected(undefined);
-                            router.refresh();
+                            refreshWorkspace(router);
                           }
                         })
                       }

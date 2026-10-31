@@ -13,6 +13,6 @@ it('auth failure dispatches private-state reset and explicit login destination',
  const win=Object.assign(new EventTarget(),{location:{assign:vi.fn()}});vi.stubGlobal('window',win);
  const revoked=vi.fn();win.addEventListener('workspace-access-revoked',revoked);
  vi.stubGlobal('fetch',async()=>new Response(JSON.stringify({error:'Sign in',destination:'/auth/login'}),{status:401}));
- const {getNotificationUnreadCount}=await import('@/lib/read-client');await getNotificationUnreadCount();
+ const {recentBidPurges}=await import('@/lib/read-client');await recentBidPurges();
  expect(revoked).toHaveBeenCalledOnce();expect(win.location.assign).toHaveBeenCalledWith('/auth/login');
 });

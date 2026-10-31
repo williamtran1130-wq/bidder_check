@@ -1,9 +1,11 @@
 import type { SortingState, ColumnFiltersState } from "@tanstack/react-table";
 import type { BidRow } from "./workspace-types";
+import type { ApplicationLocation } from "./upload-context-types";
 
 export const BID_LIST_RPC = "list_bids_v2" as const;
 
 export type BidListQuery = {
+  ipCountry?: string;
   search: string;
   status: string;
   arrangement: string;
@@ -18,9 +20,10 @@ export type BidListQuery = {
 };
 
 export type BidListResult = {
-  rows: BidRow[];
+  rows: (BidRow & { applicationLocation: ApplicationLocation | null })[];
   total: number;
   sources: string[];
+  countryOptions: string[];
   statusCounts: Record<string, number>;
 };
 

@@ -9,8 +9,6 @@ vi.mock("@/lib/auth", () => ({ getContext: async () => {
   return { profile: { role: state.role, archived: false, approval_status: "approved" }, workspaces: [], supabase: { rpc: state.rpc, from: state.reads } };
 } }));
 import * as actions from "@/app/(workspace)/actions";
-import { getNotificationUnreadCount, getNotificationPage, previewNotificationSchedule } from "@/app/(workspace)/notification-actions";
-import { getScreenshotUploadContext, getScreenshotUploadHistory } from "@/app/(workspace)/upload-context-actions";
 
 const bid = "00000000-0000-4000-8000-000000000001";
 const request = "00000000-0000-4000-8000-000000000002";
@@ -28,9 +26,6 @@ describe("framework recovery at real action boundaries", () => {
     ["reviewed import", () => actions.importReviewedBids(bid, "2026-10-05", rows, [4], request)],
     ["bid list", () => actions.getBidRows("all", "", "", false, undefined, { ...query, columnFilters: [], sorting: [] })],
     ["report", () => actions.getDashboardPerformance({ period: { preset: "all" } })],
-    ["notifications", getNotificationUnreadCount],
-    ["upload context", () => getScreenshotUploadContext(bid)],
-    ["upload history", () => getScreenshotUploadHistory(bid)],
   ] as const;
   for (const [kind, invoke] of calls) {
     it(`propagates auth redirects through ${kind}`, async () => {
@@ -101,16 +96,6 @@ it("rejects malformed list UUID selectors before RPC but preserves all and empty
   state.role = "bidder"; state.rpc.mockResolvedValue({ data: { rows: [], count: 0, sources: [] } });
   for (const selector of ["all", "", bid]) {
     expect(await actions.getBidRows("all", "", "", false, undefined, { ...query, resume: selector, bidder: selector, columnFilters: [], sorting: [] })).toHaveProperty("data");
-  }
-});
-it("rejects malformed notification dates and status types before RPC", async () => {
-  expect(await previewNotificationSchedule({ kind: "once", scheduled_local: "2026-02-30T09:30" })).toHaveProperty("error");
-  expect(await previewNotificationSchedule({ kind: "once", scheduled_local: "2026-03-08T02:30" })).toHaveProperty("error");
-  expect(await getNotificationPage({ kind: "messages", status: 1 as unknown as string })).toHaveProperty("error");
-  expect(state.rpc).not.toHaveBeenCalled();
-  state.rpc.mockResolvedValue({ data: { rows: [], next_cursor: null, unread_count: 0 } });
-  for (const status of [undefined, "all", "draft", "active", "paused", "completed", "cancelled", "", "unknown"]) {
-    expect(await getNotificationPage({ kind: "messages", status })).toHaveProperty("data");
   }
 });
 it("preserves valid SQL correction text without silently trimming Unicode whitespace", async () => {

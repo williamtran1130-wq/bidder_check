@@ -1,3 +1,5 @@
+> Notification retirement, 2026-10-31: local implementation removes notification delivery and message management. Apply `202610310003_retire_notifications.sql` with the compatible application release; it unschedules only `bidder-check-notifications` and removes notification-only data and Vault entries. Storage cleanup remains active. Production application/schema changes have not been executed by this implementation task. Historical notification verification and credential instructions below are superseded. See [implementation and release notes](review/notification-retirement-implementation.md).
+
 # Deployment handoff
 
 ## Current release — mail metrics and original theme, 2026-10-31

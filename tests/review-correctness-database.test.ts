@@ -392,10 +392,6 @@ it("preserves manual fingerprints, rate snapshots, authorization and sequential 
 
 const repairedFunctions = [
   "public.candidate_bid_issues(uuid,uuid,text,text,text)",
-  "public.finish_push_attempt(uuid,uuid,text,boolean)",
-  "public.message_occurrence_at(date,time)",
-  "public.next_message_occurrence(timestamptz,time,smallint[],boolean)",
-  "public.process_due_messages(timestamptz,integer)",
 ];
 
 it.each(repairedFunctions)(

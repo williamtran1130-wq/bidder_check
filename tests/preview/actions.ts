@@ -254,7 +254,7 @@ export async function getBidRows(
       (status === "pending_review"
         ? b.review_status === "pending"
         : b.applied === (status === "applied"));
-    const base = fixture.bids.filter((b) => {
+    const countryBase = fixture.bids.filter((b) => {
       const columns = Object.fromEntries(
         query.columnFilters.map((filter) => [filter.id, filter.value]),
       );
@@ -325,6 +325,19 @@ export async function getBidRows(
     const sizeScenario = new URLSearchParams(location.search).has(
       "screenshot-sizes",
     );
+    const matchesCountry = (b: import("@/lib/workspace-types").BidRow) => {
+      const country = b.applicationLocation?.country;
+      return !query.ipCountry || query.ipCountry === "all" ||
+        (query.ipCountry === "unknown" ? !country : query.ipCountry === "non-US" ? Boolean(country && country !== "US") : country === query.ipCountry);
+    };
+    const base = countryBase.filter(matchesCountry);
+    const countryRows = countryBase.filter((b) => matchesStatus(b, query.status));
+    const countrySizes = new Map<number, number>();
+    for (const bid of countryRows) if (bid.evidence_file_id && bid.screenshot_size_bytes != null)
+      countrySizes.set(bid.screenshot_size_bytes, (countrySizes.get(bid.screenshot_size_bytes) ?? 0) + 1);
+    const countryOptions = [...new Set(countryRows.filter((b) => !repeated ||
+      b.evidence_file_id && b.screenshot_size_bytes != null && (countrySizes.get(b.screenshot_size_bytes) ?? 0) >= 2)
+      .map((b) => b.applicationLocation?.country).filter((c): c is string => Boolean(c)))].sort();
     const statusCounts: Record<string, number> = {};
     let sizes = new Map<number, number>();
     let filtered = base;
@@ -356,6 +369,7 @@ export async function getBidRows(
       manager && sizeScenario
         ? {
             ...bid,
+            applicationLocation: bid.applicationLocation ?? null,
             screenshot_size_bytes: bid.evidence_file_id
               ? (bid.screenshot_size_bytes ?? null)
               : null,
@@ -365,7 +379,7 @@ export async function getBidRows(
                 : 0,
           }
         : (() => {
-            const safe = { ...bid };
+            const safe = { ...bid, applicationLocation: bid.applicationLocation ?? null };
             delete safe.screenshot_size_bytes;
             delete safe.screenshot_size_match_count;
             return safe;
@@ -413,6 +427,7 @@ export async function getBidRows(
           ...new Set(fixture.bids.map((b) => b.source).filter(Boolean)),
         ],
         statusCounts,
+        countryOptions,
       },
     };
   } catch (e) {

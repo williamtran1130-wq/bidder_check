@@ -1,3 +1,5 @@
+> Historical release record. Notifications and the old upload context flow are retired by the 2026-10-31 changes. Do not run the notification scheduling, message publication, or push checks below. Current smoke scripts preserve ordinary account, bid, and storage checks. See [notification retirement](review/notification-retirement-implementation.md).
+
 # Notifications and private screenshot review rollout
 
 This release adds Central Time message scheduling, paged notification reads, bounded push delivery, manager-only repeated screenshot sizes and upload context, and searchable resume assignments. Existing period defaults and review-queue behavior stay intact.

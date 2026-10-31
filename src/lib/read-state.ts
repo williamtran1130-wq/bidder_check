@@ -1,5 +1,6 @@
 export type ReadSeed<T> = {
   key: string;
+  receivedAt?: number;
   result: { data?: T; error?: string; code?: string };
 };
 export function readKey(

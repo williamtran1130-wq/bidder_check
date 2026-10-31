@@ -395,7 +395,7 @@ it("validates cross-workspace filters and preserves archived bidder permissions"
   await db.exec("rollback; reset role");
   await asUser(owner);
 });
-it("keeps both timestamp bounds in generic-plan index conditions", async () => {
+it("keeps fallback raw-reader timestamp bounds in generic-plan index conditions", async () => {
   await db.exec("reset role; begin");
   try {
     await db.query(
@@ -415,7 +415,7 @@ it("keeps both timestamp bounds in generic-plan index conditions", async () => {
         await db.query<{ prosrc: string }>(
           "select prosrc from pg_proc where oid=$1::regprocedure",
           [
-            `private.${helper}(date,date,uuid,uuid,uuid${helper === "report_events" ? ",boolean" : ""})`,
+            `private.${helper}_legacy(date,date,uuid,uuid,uuid${helper === "report_events" ? ",boolean" : ""})`,
           ],
         )
       ).rows[0].prosrc;

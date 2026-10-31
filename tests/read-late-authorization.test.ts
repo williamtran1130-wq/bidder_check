@@ -79,16 +79,12 @@ vi.mock("@/lib/server", () => ({
 
 import { handleRead } from "@/lib/read-handler";
 import * as client from "@/lib/read-client";
-import { getNotificationUnreadCount } from "@/app/(workspace)/notification-actions";
 import {
   getBidHistory,
   getDashboardPerformance,
 } from "@/app/(workspace)/actions";
 import { readReport } from "@/lib/reporting-server";
-import {
-  discardNotificationScope,
-  notificationResource,
-} from "@/lib/notification-store";
+
 
 const bidId = "00000000-0000-4000-8000-000000000001";
 const revokedCases = [
@@ -129,7 +125,6 @@ beforeEach(() => {
   state.rpc.mockReset().mockResolvedValue({ data: 3, error: null });
 });
 afterEach(() => {
-  discardNotificationScope("late-auth:");
   vi.unstubAllGlobals();
 });
 
@@ -147,7 +142,7 @@ describe("fresh service-boundary authorization through actual read transport", (
     async (actor, status, destination) => {
       const parsing = deferred<void>();
       const parsed = deferred<unknown>();
-      const request = new Request("https://local/api/read/unread", {
+      const request = new Request("https://local/api/read/purges", {
         method: "POST",
         body: "null",
       });
@@ -155,7 +150,7 @@ describe("fresh service-boundary authorization through actual read transport", (
         parsing.resolve();
         return parsed.promise;
       });
-      const responsePromise = handleRead(request, "unread");
+      const responsePromise = handleRead(request, "purges");
       await parsing.promise;
       expect(state.authCalls).toBe(0);
       state.actor = actor;
@@ -173,8 +168,8 @@ describe("fresh service-boundary authorization through actual read transport", (
     const gate = deferred<void>();
     state.authGate = gate.promise;
     const responsePromise = handleRead(
-      new Request("https://local/api/read/unread"),
-      "unread",
+      new Request("https://local/api/read/purges"),
+      "purges",
     );
     await vi.waitFor(() => expect(state.authCalls).toBe(1));
     expect(state.rpc).not.toHaveBeenCalled();
@@ -184,8 +179,8 @@ describe("fresh service-boundary authorization through actual read transport", (
     expect(state.rpc).toHaveBeenCalledOnce();
     state.actor = "archived";
     const denied = await handleRead(
-      new Request("https://local/api/read/unread"),
-      "unread",
+      new Request("https://local/api/read/purges"),
+      "purges",
     );
     expect(denied.status).toBe(403);
     expect(state.authCalls).toBe(2);
@@ -196,8 +191,8 @@ describe("fresh service-boundary authorization through actual read transport", (
     const gate = deferred<void>();
     state.profileGate = gate.promise;
     const responsePromise = handleRead(
-      new Request("https://local/api/read/unread"),
-      "unread",
+      new Request("https://local/api/read/purges"),
+      "purges",
     );
     await vi.waitFor(() => expect(state.authCalls).toBe(1));
     expect(state.rpc).not.toHaveBeenCalled();
@@ -227,18 +222,10 @@ describe("fresh service-boundary authorization through actual read transport", (
 
   const earlyResponses = [
     ["unknown", "unknown", null, 404],
-    ["malformed JSON", "unread", undefined, 400],
+    ["malformed JSON", "purges", undefined, 400],
     ["handler schema", "history", 42, 400],
     ["history UUID", "history", "bad", 200],
     ["purge UUID", "purge", "bad", 200],
-    ["notification UUID", "notification", "bad", 200],
-    [
-      "notification cursor",
-      "notification-page",
-      { kind: "inbox", cursor: { created_at: "bad", id: "bad" } },
-      200,
-    ],
-    ["device URL", "device", "bad", 200],
     [
       "calendar",
       "dashboard",
@@ -257,7 +244,6 @@ describe("fresh service-boundary authorization through actual read transport", (
       { period: { preset: "all" }, group: "bad" },
       200,
     ],
-    ["business role", "legacy-inbox", null, 200],
   ] as const;
   it.each(earlyResponses)(
     "%s response is authorized even when service returns before its context",
@@ -289,8 +275,8 @@ describe("fresh service-boundary authorization through actual read transport", (
     async (actor, status, destination) => {
       state.actor = actor;
       const response = await handleRead(
-        new Request("https://local/api/read/unread"),
-        "unread",
+        new Request("https://local/api/read/purges"),
+        "purges",
       );
       expect(state.authCalls).toBe(1);
       expect(response.status).toBe(status);
@@ -305,22 +291,13 @@ describe("fresh service-boundary authorization through actual read transport", (
       expect(state.protectedReads).toEqual([]);
 
       const { win, reset } = browser();
-      const resource = notificationResource(
-        "late-auth:private",
-        client.getNotificationUnreadCount,
-        { data: 9 },
-      );
-      win.addEventListener("workspace-access-revoked", () =>
-        discardNotificationScope("late-auth:"),
-      );
       vi.stubGlobal(
         "fetch",
         vi.fn(async () => response),
       );
-      await resource.refresh();
+      await client.recentBidPurges();
       expect(reset).toHaveBeenCalledOnce();
       expect(win.location.assign).toHaveBeenCalledExactlyOnceWith(destination);
-      expect(resource.snapshot()).toEqual({});
     },
   );
 
@@ -368,14 +345,14 @@ describe("fresh service-boundary authorization through actual read transport", (
           error: { message: "private database detail" },
         });
       const response = await handleRead(
-        new Request("https://local/api/read/unread"),
-        "unread",
+        new Request("https://local/api/read/purges"),
+        "purges",
       );
       expect(state.authCalls).toBe(1);
       const error =
         failure === "profile-error"
           ? "This request could not be completed. Please retry."
-          : "Notifications are unavailable. Please retry.";
+          : "This request could not be completed. Please retry.";
       expect(response.status).toBe(failure === "profile-error" ? 500 : 200);
       expect(await response.clone().json()).toEqual({ error });
       if (failure === "profile-error") expect(state.rpc).not.toHaveBeenCalled();
@@ -384,22 +361,13 @@ describe("fresh service-boundary authorization through actual read transport", (
         "fetch",
         vi.fn(async () => response),
       );
-      const resource = notificationResource(
-        "late-auth:transient",
-        client.getNotificationUnreadCount,
-        { data: 9 },
-      );
-      await resource.refresh();
-      expect(resource.snapshot()).toEqual({
-        data: 9,
-        error,
-      });
+      await client.recentBidPurges();
       expect(reset).not.toHaveBeenCalled();
       expect(win.location.assign).not.toHaveBeenCalled();
     },
   );
 
-  it.each(["unread", "unknown", "history"])(
+  it.each(["purges", "unknown", "history"])(
     "preserves unrelated Next control exceptions in %s",
     async (operation) => {
       const expected = controlError(notFound);
@@ -416,7 +384,6 @@ describe("fresh service-boundary authorization through actual read transport", (
 
 describe("default legacy and RSC authorization behavior", () => {
   for (const [name, run] of [
-    ["notification action", getNotificationUnreadCount],
     ["history action", () => getBidHistory(bidId)],
     [
       "report action",

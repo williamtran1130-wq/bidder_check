@@ -10,6 +10,6 @@ it('malformed payloads, unknown operations and denied requests are private JSON 
  const res=await handleRead(new Request(url,{method,body}),operation);
  expect(res.status).toBe(status);expect(res.headers.get('Cache-Control')).toBe('private, no-store');expect(res.headers.get('Location')).toBeNull();
  }
- h.destination='/auth/inactive';const denied=await handleRead(new Request('https://local/api/read/unread'),'unread');
+ h.destination='/auth/inactive';const denied=await handleRead(new Request('https://local/api/read/purges'),'purges');
  expect(denied.status).toBe(403);expect(await denied.json()).toMatchObject({destination:'/auth/inactive'});expect(denied.headers.get('Cache-Control')).toBe('private, no-store');h.destination='';
 });

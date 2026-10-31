@@ -25,6 +25,7 @@ it("uses inclusive calendar bucket boundaries, preserves retention gaps and mark
   const report = { ...sample, assignments: sample.assignments.slice(0, 2) };
   const values = confirmationBuckets(report, [{ from: "2026-10-01", to: "2026-10-28" }, { from: "2026-10-28", to: "2026-10-29" }, { from: "2026-10-30", to: "2026-10-30" }]);
   expect(values.map(v => [v.confirmations, v.status])).toEqual([[null, "outside_retention"], [3, "partial"], [0, "ready"]]);
+  expect(values.map(v => v.invitations)).toEqual([null, 2, 0]);
 });
 
 it("suppresses rates after collection stops, including mixed fresh and stale mailboxes", () => {

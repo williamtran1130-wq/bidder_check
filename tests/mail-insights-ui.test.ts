@@ -25,12 +25,12 @@ it("renders all ten category totals, four mail cards, shared current assignments
   expect(html).toContain("Information requests");
   expect(html).toContain("Recruiter outreach");
   expect(html).toContain("Job alerts");
-  expect(html).toContain("Shared mailbox");
+  expect(html).not.toContain("Shared mailbox");
   expect(html).toContain("Current assignments");
   expect(html).toContain("Not synced");
   expect(html).toContain("Unassigned");
-  expect(html).toContain("Coverage unknown");
-  expect(html).toContain("90 CT days");
+  expect(html).not.toContain("Coverage unknown");
+  expect(html).not.toContain("Published:");
   expect(html).toContain("Applied activity");
   expect(html).not.toContain("conversion");
 });

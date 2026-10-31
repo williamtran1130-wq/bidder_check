@@ -1,5 +1,4 @@
-// Dedicated staging only. Scheduled delivery is observed through the real cron;
-// this helper never calls a worker RPC, cron HTTP route, or uploads storage data.
+// Dedicated staging only. This helper never uploads storage data.
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, realpath, rename } from "node:fs/promises";
@@ -7,14 +6,10 @@ import { Agent, request } from "node:https";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { createClient } from "@supabase/supabase-js";
-import { formatInTimeZone } from "date-fns-tz";
 
 export const STAGING = "https://kdmvludtvhuuewmhurpw.supabase.co";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const LABELS = ["owner", "admin", "bidder1", "bidder2", "outsider"];
-const CRON_CYCLE_MS = 60000;
-const MARGIN_MS = 15000;
-const body = "Synthetic staging notification acceptance.";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const ok = (response) => { if (response.error) throw new Error("Hosted operation failed; details withheld"); return response.data; };
 
@@ -72,10 +67,6 @@ export function validateBenchmarkReceipt(value) {
   }
   assert.equal(expected.size, 0);
 }
-export function nextMinuteSchedule(now = Date.now()) {
-  assert.ok(Number.isFinite(now)); const scheduled = Math.floor(now / CRON_CYCLE_MS + 1) * CRON_CYCLE_MS;
-  return { scheduledAt: new Date(scheduled).toISOString(), scheduledLocal: formatInTimeZone(new Date(scheduled), "America/Chicago", "yyyy-MM-dd'T'HH:mm"), waitMs: scheduled - now < MARGIN_MS ? scheduled - now + 1000 : 0 };
-}
 export async function verifyFixtureOwnership(service, benchmark) {
   validateBenchmarkReceipt(benchmark);
   for (const actor of benchmark.accounts) { const user = ok(await service.auth.admin.getUserById(actor.id)).user; assert.equal(user.id, actor.id); assert.equal(user.email, actor.email); assert.ok(!user.banned_until || Date.parse(user.banned_until) < Date.now()); }
@@ -92,7 +83,6 @@ export async function verifyFixtureOwnership(service, benchmark) {
   assert.equal(assignments.length, 1); const assignment = assignments[0]; assert.match(assignment.id, UUID); assert.equal(assignment.identifier, `${benchmark.marker}-0`); assert.equal(assignment.workspace_id, workspaceId); assert.equal(assignment.bidder_id, bidder.id); assert.equal(assignment.archived, false);
   const candidates = ok(await service.from("candidate_profiles").select("id,workspace_id,identifier").eq("id", assignment.profile_id));
   assert.equal(candidates.length, 1); assert.equal(candidates[0].id, assignment.profile_id); assert.equal(candidates[0].workspace_id, workspaceId); assert.equal(candidates[0].identifier, `${benchmark.marker}-0`);
-  const devices = await service.from("push_subscriptions").select("id", { count: "exact", head: true }).eq("user_id", bidder.id); ok(devices); assert.equal(devices.count, 0, "Synthetic recipient must have no push devices");
   return { owner, bidder, workspaceId, assignmentId: assignment.id };
 }
 
@@ -133,37 +123,35 @@ export function validatePrivateReceipt(value, benchmark, benchmarkPath) {
   assert.equal(value.version, 1); assert.equal(value.target, STAGING); assert.equal(value.benchmarkPath, benchmarkPath);
   assert.equal(value.benchmarkMarker, benchmark.marker); assert.ok(value.marker.startsWith(`${benchmark.marker}-private-`)); assert.match(value.marker.slice(`${benchmark.marker}-private-`.length), UUID);
   assert.match(value.workspaceId, UUID); assert.equal(value.ownerId, benchmark.accounts[0].id); assert.equal(value.bidderId, benchmark.accounts[2].id); assert.match(value.assignmentId, UUID);
-  assert.equal(value.bidIds.length, 2); assert.equal(value.fileIds.length, 2); assert.match(value.messageId, UUID);
-  const ids = [...value.bidIds, ...value.fileIds, value.messageId]; ids.forEach((id) => assert.match(id, UUID)); assert.equal(new Set(ids).size, 5);
+  assert.equal(value.bidIds.length, 2); assert.equal(value.fileIds.length, 2);
+  const ids = [...value.bidIds, ...value.fileIds]; ids.forEach((id) => assert.match(id, UUID)); assert.equal(new Set(ids).size, 4);
 }
 async function verifyOwnResources(service, receipt) {
   const bids = ok(await service.from("bids").select("id,workspace_id,bidder_id,resume_id,company").in("id", receipt.bidIds));
   for (const row of bids) { assert.equal(row.workspace_id, receipt.workspaceId); assert.equal(row.bidder_id, receipt.bidderId); assert.equal(row.resume_id, receipt.assignmentId); assert.ok([`${receipt.marker}-atomic`, `${receipt.marker}-ui`].includes(row.company)); }
   const files = ok(await service.from("files").select("id,workspace_id,bidder_id,bid_id,created_by,storage_path").in("id", receipt.fileIds));
   for (const row of files) { assert.equal(row.workspace_id, receipt.workspaceId); assert.equal(row.bidder_id, receipt.bidderId); assert.equal(row.bid_id, receipt.bidIds[0]); assert.equal(row.created_by, receipt.ownerId); assert.equal(row.storage_path, `${receipt.marker}/${row.id}`); }
-  const messages = ok(await service.from("client_messages").select("id,workspace_id,created_by,title,recipient_ids").eq("id", receipt.messageId));
-  for (const row of messages) { assert.equal(row.workspace_id, receipt.workspaceId); assert.equal(row.created_by, receipt.ownerId); assert.equal(row.title, receipt.marker); assert.deepEqual(row.recipient_ids, [receipt.bidderId]); }
-  return { bids, files, messages };
+  return { bids, files };
 }
 export async function cleanupOwnedResources(service, receipt, save) {
   await verifyOwnResources(service, receipt); receipt.phase = "cleanup"; await save();
-  ok(await service.from("client_messages").delete().eq("id", receipt.messageId).eq("workspace_id", receipt.workspaceId).eq("created_by", receipt.ownerId));
   ok(await service.from("bid_events").delete().in("bid_id", receipt.bidIds));
   ok(await service.from("bids").update({ applied: false, evidence_file_id: null }).in("id", receipt.bidIds).eq("workspace_id", receipt.workspaceId));
   ok(await service.from("files").delete().in("id", receipt.fileIds).eq("workspace_id", receipt.workspaceId));
   ok(await service.from("bids").delete().in("id", receipt.bidIds).eq("workspace_id", receipt.workspaceId));
-  for (const [table, column, ids] of [["bids", "id", receipt.bidIds], ["files", "id", receipt.fileIds], ["bid_events", "bid_id", receipt.bidIds], ["screenshot_upload_contexts", "bid_id", receipt.bidIds], ["client_messages", "id", [receipt.messageId]], ["message_occurrences", "message_id", [receipt.messageId]]]) {
-    const result = await service.from(table).select("id", { count: "exact", head: true }).in(column, ids); ok(result); assert.equal(result.count, 0);
+  for (const [table, column, ids] of [["bids", "id", receipt.bidIds], ["files", "id", receipt.fileIds], ["bid_events", "bid_id", receipt.bidIds], ["bid_application_locations", "bid_id", receipt.bidIds]]) {
+    const result = await service.from(table).select(column, { count: "exact", head: true }).in(column, ids); ok(result); assert.equal(result.count, 0);
   }
   receipt.cleanupComplete = true; receipt.fixtureRetained = false; receipt.phase = "cleaned"; await save();
 }
 // The RPC creates these child IDs itself. Discover and persist them immediately
 // after each successful transaction, before issuing subsequent writes.
 export async function recordUploadIds(service, receipt, save) {
-  const contexts = ok(await service.from("screenshot_upload_contexts").select("id").eq("bid_id", receipt.bidIds[0]));
+  const locations = ok(await service.from("bid_application_locations").select("bid_id").eq("bid_id", receipt.bidIds[0]));
   const events = ok(await service.from("bid_events").select("id").eq("bid_id", receipt.bidIds[0]));
-  for (const row of [...contexts, ...events]) assert.match(row.id, UUID);
-  receipt.contextIds = contexts.map((row) => row.id); receipt.eventIds = events.map((row) => row.id); await save();
+  for (const row of events) assert.match(row.id, UUID);
+  for (const row of locations) assert.match(row.bid_id, UUID);
+  receipt.locationBidIds = locations.map((row) => row.bid_id); receipt.eventIds = events.map((row) => row.id); await save();
 }
 async function gate(config, receipt, save) {
   if (!config.gatePath) return;
@@ -176,14 +164,6 @@ async function gate(config, receipt, save) {
     await sleep(1000);
   }
   throw new Error("Concurrency gate deadline exceeded");
-}
-async function readInbox(bidder, service, receipt) {
-  const occurrences = ok(await service.from("message_occurrences").select("id").eq("message_id", receipt.messageId));
-  assert.ok(occurrences.length <= 1);
-  const inbox = ok(await bidder.from("inbox_notifications").select("id,occurrence_id").eq("title", receipt.marker).eq("user_id", receipt.bidderId));
-  assert.ok(inbox.length <= 1); for (const row of inbox) assert.ok(occurrences.some((occurrence) => occurrence.id === row.occurrence_id));
-  receipt.occurrenceIds = occurrences.map((row) => row.id); receipt.inboxIds = inbox.map((row) => row.id);
-  return inbox.length;
 }
 async function checkUploads(config, service, owner, bidder, receipt, save, transports) {
   const bidId = receipt.bidIds[0], firstId = receipt.fileIds[0], nextId = receipt.fileIds[1];
@@ -198,53 +178,38 @@ async function checkUploads(config, service, owner, bidder, receipt, save, trans
   await gate(config, receipt, save); receipt.phase = "concurrent-finalization"; await save();
   const settled = await Promise.allSettled(transports.map((client, index) => client.rpc("finalize_verified_file_v2", { ...finalArgs, p_context: index ? secondContext : firstContext })));
   for (const result of settled) { if (result.status === "rejected") throw result.reason; ok(result.value); }
-  const current = ok(await owner.rpc("manager_screenshot_upload_context", { p_file: firstId }));
-  assert.equal(current.uploaderId, receipt.ownerId); assert.equal(current.uploaderRole, "client"); assert.equal(current.bidderId, receipt.bidderId); assert.ok([firstContext.ip, secondContext.ip].includes(current.ip));
-  receipt.contextIds = [current.id];
-  let contexts = await service.from("screenshot_upload_contexts").select("id", { count: "exact", head: true }).eq("bid_id", bidId); ok(contexts); assert.equal(contexts.count, 1);
-  const events = await service.from("bid_events").select("id", { count: "exact", head: true }).eq("bid_id", bidId).eq("file_id", firstId); ok(events); assert.equal(events.count, 1);
-  await recordUploadIds(service, receipt, save);
-  for (const name of ["manager_screenshot_upload_context", "manager_screenshot_upload_history"]) assert.ok((await bidder.rpc(name, name.endsWith("context") ? { p_file: firstId } : { p_bid: bidId })).error);
-  assert.equal((await bidder.from("screenshot_upload_contexts").select("id")).error?.code, "42501");
-  assert.equal((await owner.rpc("finalize_verified_file_v2", { ...finalArgs, p_context: firstContext })).error?.code, "42501");
-  receipt.phase = "retry-replacement"; await save();
-  ok(await service.rpc("finalize_verified_file_v2", { ...finalArgs, p_context: current.ip === firstContext.ip ? secondContext : firstContext }));
-  assert.deepEqual(ok(await owner.rpc("manager_screenshot_upload_context", { p_file: firstId })), current);
-  ok(await service.rpc("finalize_verified_file_v2", { p_id: nextId, p_sha: "b".repeat(64), p_actor: receipt.ownerId, p_context: { ...firstContext, ip: "2001:db8::1" } }));
-  let history = ok(await owner.rpc("manager_screenshot_upload_history", { p_bid: bidId })); assert.equal(history.items.length, 2); receipt.contextIds = history.items.map((row) => row.id);
-  await recordUploadIds(service, receipt, save);
-  ok(await owner.rpc("trash_bid", { p_bid: bidId, p_deleted: true })); await recordUploadIds(service, receipt, save); assert.equal(ok(await owner.rpc("manager_screenshot_upload_history", { p_bid: bidId })).items.length, 2);
-  receipt.phase = "metadata-deletion"; await save();
-  ok(await service.from("bid_events").update({ file_id: null }).eq("bid_id", bidId).eq("file_id", firstId));
-  ok(await service.from("files").delete().eq("id", firstId).eq("bid_id", bidId).eq("workspace_id", receipt.workspaceId));
-  history = ok(await owner.rpc("manager_screenshot_upload_history", { p_bid: bidId }));
-  const removed = history.items.find((row) => row.originalFileId === firstId); assert.ok(removed); assert.equal(removed.fileAvailable, false); assert.equal(removed.ip, current.ip);
-  receipt.phase = "bid-cascade"; await save();
-  ok(await service.from("bid_events").delete().eq("bid_id", bidId));
-  ok(await service.from("bids").update({ applied: false, evidence_file_id: null }).eq("id", bidId).eq("workspace_id", receipt.workspaceId));
-  ok(await service.from("files").delete().eq("id", nextId).eq("bid_id", bidId));
-  ok(await service.from("bids").delete().eq("id", bidId).eq("workspace_id", receipt.workspaceId));
-  contexts = await service.from("screenshot_upload_contexts").select("id", { count: "exact", head: true }).eq("bid_id", bidId); ok(contexts); assert.equal(contexts.count, 0);
-  receipt.counts = { concurrentRequests: 2, firstSuccessContexts: 1, firstSuccessEvents: 1, retainedReplacementContexts: 2, contextsAfterBidDeletion: 0, bidderReviewDenials: 3 };
+  const location = async (client,trash=false) => {
+    const page=ok(await client.rpc("list_bids_v2",{p_query:{scopeBidderId:receipt.bidderId,search:receipt.marker,trash,pageSize:100}}));
+    return page.rows.find(row=>row.id===bidId)?.applicationLocation ?? null;
+  };
+  const current = await location(owner);
+  const stored = ok(await service.from("bid_application_locations").select("uploader_id,uploader_role,bidder_id").eq("bid_id",bidId).single());
+  assert.equal(stored.uploader_id,receipt.ownerId); assert.equal(stored.uploader_role,"client"); assert.equal(stored.bidder_id,receipt.bidderId);
+  assert.ok([firstContext.ip,secondContext.ip].includes(current.ip));
+  let locations = await service.from("bid_application_locations").select("bid_id",{count:"exact",head:true}).eq("bid_id",bidId); ok(locations); assert.equal(locations.count,1);
+  const events = await service.from("bid_events").select("id",{count:"exact",head:true}).eq("bid_id",bidId).eq("file_id",firstId); ok(events); assert.equal(events.count,1);
+  await recordUploadIds(service,receipt,save);
+  assert.deepEqual(await location(bidder),current);
+  assert.equal((await bidder.from("bid_application_locations").select("bid_id")).error?.code,"42501");
+  assert.equal((await owner.rpc("finalize_verified_file_v2",{...finalArgs,p_context:firstContext})).error?.code,"42501");
+  receipt.phase="retry-replacement"; await save();
+  ok(await service.rpc("finalize_verified_file_v2",{...finalArgs,p_context:current.ip===firstContext.ip ? secondContext:firstContext}));
+  assert.deepEqual(await location(owner),current);
+  ok(await service.rpc("finalize_verified_file_v2",{p_id:nextId,p_sha:"b".repeat(64),p_actor:receipt.ownerId,p_context:{...firstContext,ip:"2001:db8::1",country:"CA"}}));
+  const latest=await location(owner); assert.equal(latest.ip,"2001:db8::1"); assert.equal(latest.country,"CA");
+  locations=await service.from("bid_application_locations").select("bid_id",{count:"exact",head:true}).eq("bid_id",bidId); ok(locations); assert.equal(locations.count,1);
+  await recordUploadIds(service,receipt,save);
+  ok(await owner.rpc("trash_bid",{p_bid:bidId,p_deleted:true})); assert.deepEqual(await location(owner,true),latest);
+  receipt.phase="metadata-deletion"; await save();
+  ok(await service.from("bids").update({applied:false,evidence_file_id:null}).eq("id",bidId).eq("workspace_id",receipt.workspaceId));
+  assert.deepEqual(await location(owner,true),latest);
+  receipt.phase="bid-cascade"; await save();
+  ok(await service.from("bid_events").delete().eq("bid_id",bidId));
+  ok(await service.from("files").delete().eq("id",nextId).eq("bid_id",bidId));
+  ok(await service.from("bids").delete().eq("id",bidId).eq("workspace_id",receipt.workspaceId));
+  locations=await service.from("bid_application_locations").select("bid_id",{count:"exact",head:true}).eq("bid_id",bidId); ok(locations); assert.equal(locations.count,0);
+  receipt.counts={concurrentRequests:2,firstSuccessLocations:1,firstSuccessEvents:1,retainedReplacementLocations:1,locationsAfterBidDeletion:0,bidderOwnLocationReads:1};
   await save();
-}
-async function checkCron(service, owner, bidder, receipt, save) {
-  receipt.phase = "create-draft"; await save();
-  ok(await service.from("client_messages").insert({ id: receipt.messageId, workspace_id: receipt.workspaceId, created_by: receipt.ownerId, title: receipt.marker, body, recipient_mode: "selected", recipient_ids: [receipt.bidderId], schedule_kind: "once", scheduled_at: new Date(Date.now() + 120000).toISOString(), status: "draft", next_at: null }));
-  let schedule = nextMinuteSchedule(); if (schedule.waitMs) { await sleep(schedule.waitMs); schedule = nextMinuteSchedule(); }
-  receipt.phase = "publish-once"; await save();
-  const message = ok(await owner.rpc("save_notification_message", { p_input: { id: receipt.messageId, workspace_id: receipt.workspaceId, title: receipt.marker, body, recipient_mode: "selected", recipient_ids: [receipt.bidderId], schedule: { kind: "once", scheduled_local: schedule.scheduledLocal }, draft: false } }));
-  assert.equal(message.id, receipt.messageId); assert.equal(message.status, "scheduled");
-  const due = Date.parse(message.next_at); assert.ok(Number.isFinite(due) && due > Date.now() && due - Date.now() <= CRON_CYCLE_MS);
-  receipt.scheduledAt = message.next_at; receipt.phase = "awaiting-real-cron"; await save();
-  const deadline = due + 2 * CRON_CYCLE_MS + MARGIN_MS; let count = 0;
-  while (Date.now() < deadline && !count) { count = await readInbox(bidder, service, receipt); await save(); if (!count) await sleep(Math.min(3000, deadline - Date.now())); }
-  assert.equal(count, 1, "Scheduled cron did not publish within two cycles");
-  receipt.phase = "observe-extra-cron-cycle"; await save(); const extraDeadline = Date.now() + CRON_CYCLE_MS + MARGIN_MS;
-  while (Date.now() < extraDeadline) { assert.equal(await readInbox(bidder, service, receipt), 1); await sleep(Math.min(3000, extraDeadline - Date.now())); }
-  assert.equal(await readInbox(bidder, service, receipt), 1); assert.equal(receipt.occurrenceIds.length, 1);
-  const completed = ok(await service.from("client_messages").select("id,status,next_at").eq("id", receipt.messageId).single()); assert.equal(completed.status, "completed"); assert.equal(completed.next_at, null);
-  receipt.counts.scheduledInboxRows = 1; receipt.counts.scheduledOccurrences = 1; receipt.counts.extraObservedCycles = 1; await save();
 }
 export async function main(input) {
   const config = validateConfiguration(input), benchmarkPath = await existingPrivatePath(config.benchmarkPath);
@@ -258,11 +223,11 @@ export async function main(input) {
       assert.equal(receipt.workspaceId, scope.workspaceId); assert.equal(receipt.assignmentId, scope.assignmentId); await cleanupOwnedResources(service, receipt, save); return;
     }
     const marker = `${benchmark.marker}-private-${randomUUID()}`;
-    receipt = { version: 1, target: STAGING, benchmarkPath, benchmarkMarker: benchmark.marker, benchmarkSha256: createHash("sha256").update(benchmarkBytes).digest("hex"), marker, workspaceId: scope.workspaceId, ownerId: scope.owner.id, bidderId: scope.bidder.id, assignmentId: scope.assignmentId, bidIds: [randomUUID(), randomUUID()], fileIds: [randomUUID(), randomUUID()], messageId: randomUUID(), contextIds: [], eventIds: [], occurrenceIds: [], inboxIds: [], counts: {}, phase: "planned", passed: false, cleanupComplete: false, fixtureRetained: false, createdAt: new Date().toISOString() };
+    receipt = { version: 1, target: STAGING, benchmarkPath, benchmarkMarker: benchmark.marker, benchmarkSha256: createHash("sha256").update(benchmarkBytes).digest("hex"), marker, workspaceId: scope.workspaceId, ownerId: scope.owner.id, bidderId: scope.bidder.id, assignmentId: scope.assignmentId, bidIds: [randomUUID(), randomUUID()], fileIds: [randomUUID(), randomUUID()], locationBidIds: [], eventIds: [], counts: {}, phase: "planned", passed: false, cleanupComplete: false, fixtureRetained: false, createdAt: new Date().toISOString() };
     validatePrivateReceipt(receipt, benchmark, benchmarkPath); await savePrivateReceipt(config.outputPath, receipt, true); started = true;
     const owner = await authenticate(service, scope.owner, config.publishableKey, sessions), bidder = await authenticate(service, scope.bidder, config.publishableKey, sessions);
     const transports = [0, 1].map(() => { const agent = new Agent({ keepAlive: true, maxSockets: 1 }); agents.push(agent); return createClient(STAGING, config.secretKey, { ...clientOptions, global: { fetch: isolatedServiceFetch(agent) } }); });
-    await checkUploads(config, service, owner, bidder, receipt, save, transports); await checkCron(service, owner, bidder, receipt, save);
+    await checkUploads(config, service, owner, bidder, receipt, save, transports);
     if (config.keep) {
       receipt.phase = "create-ui-target"; await save();
       ok(await service.from("bids").insert({ id: receipt.bidIds[1], workspace_id: receipt.workspaceId, bidder_id: receipt.bidderId, resume_id: receipt.assignmentId, company: `${receipt.marker}-ui`, role_name: "Synthetic UI upload target", url: `https://private-review.invalid/${receipt.marker}/ui`, normalized_url: `https://private-review.invalid/${receipt.marker}/ui`, source: "synthetic", arrangement: "remote", review_status: "approved", review_revision: 1, rate_cents: 100 }));

@@ -6,6 +6,6 @@ test("IP and approximate location are visible without a reveal click", async ({ 
   const cell = page.getByRole("row").filter({ has: page.getByRole("gridcell", { name: "Linear", exact: true }) }).locator('[data-field="applied_ip_location"]');
   await cell.scrollIntoViewIfNeeded();
   await expect(cell).toContainText("203.0.113.10");
-  await expect(cell).toContainText("Chicago, IL, US");
+  await expect(cell).toContainText("Chicago, IL, United States (US)");
   await expect(page.getByRole("button", { name: "View IP / location", exact: true })).toHaveCount(0);
 });

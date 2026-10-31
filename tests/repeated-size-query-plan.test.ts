@@ -167,7 +167,7 @@ async function listingPlan(
   // The dedicated list-performance test explains a pending-review query that
   // actually selects the ordinary branch and compares both complete outputs.
   const statementStart = [
-    ...body.matchAll(/with filtered as (?:not )?materialized/g),
+    ...body.matchAll(/with (?:application_locations|filtered) as (?:not )?materialized/g),
   ].slice(-1)[0]?.index;
   if (statementStart === undefined)
     throw new Error("Retained list SELECT missing");
