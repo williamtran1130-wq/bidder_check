@@ -107,7 +107,7 @@ with tempfile.TemporaryDirectory() as temp:
  await page.waitForURL("**/dashboard",{timeout:60000});
  await page.getByRole("heading",{name:"Email insights",exact:true}).waitFor({timeout:60000});
  await page.getByRole("heading",{name:"Bids and email activity",exact:true}).waitFor();
- await page.getByRole("button",{name:"Profile",exact:true}).click();
+ await page.getByRole("tab",{name:"Profile",exact:true}).click();
  await page.getByRole("tabpanel",{name:"Activity by profile"}).getByText("INSIGHTS-SMOKE",{exact:true}).waitFor({timeout:30000});
  await mkdir("test-results",{recursive:true});
  await page.screenshot({path:"test-results/mail-insights-production.png",fullPage:true});
