@@ -23,6 +23,7 @@ test("mail filters refine only mail, tabs deduplicate shared counts, mailbox sel
   });
   await page.goto("http://127.0.0.1:3001/dashboard");
   const section = page.getByRole("region", { name: "Email insights", exact: true });
+  await section.getByRole("button", { name: "Bids and email activity", exact: true }).click();
   const table = section.getByRole("tabpanel");
   await expect(table.getByRole("row").filter({ hasText: "shared@example.test" })).toContainText("Shared mailbox");
   await expect(table.getByRole("row").filter({ hasText: "missing@example.test" })).toContainText("Not synced");

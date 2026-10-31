@@ -17,6 +17,8 @@ import { readKey, type ReadSeed } from "@/lib/read-state";
 import type { DashboardReport as SeedReport } from "@/lib/report-types";
 import { useReadScope } from "@/lib/read-scope";
 import { Button } from "./ui/button";
+import { useMailReport } from "./use-mail-report";
+import { confirmationBuckets, mergeMailGroups, projectMailMetrics } from "@/lib/mail-metrics";
 
 const chartStyle = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: 10, fontSize: 12 };
 const tick = { fontSize: 11, fill: "var(--muted)" };
@@ -33,6 +35,13 @@ export function Dashboard({ data, initial }: { data: DashboardData; initial?: Re
   const request = useCallback(() => getDashboardPerformance(query), [query]);
   const queryKey = readKey(scope, "dashboard", query, day);
   const { data: report, loading, error, refresh } = useReport(queryKey, request, initial);
+  const mail = useMailReport(query, data.profile.role === "admin");
+  const mailReport = mail.error ? undefined : mail.data;
+  const mailBidders = projectMailMetrics(mailReport, "bidder");
+  const mailProfiles = projectMailMetrics(mailReport, "profile");
+  const bidderRows = mergeMailGroups(report?.comparisons.bidders ?? [], mailBidders.groups, row => ({ id: row.id, label: row.label, found: 0, foundApplied: 0 }));
+  const profileRows = mergeMailGroups(report?.comparisons.profiles ?? [], mailProfiles.groups, row => ({ id: row.id, label: row.label, found: 0, foundApplied: 0 }));
+  const confirmationSeries = confirmationBuckets(mailReport, report?.series ?? []);
   const range = resolveCalendarPeriod(period);
   const rate = report ? applicationRate(report.totals.found, report.totals.foundApplied) : null;
   const interviewRate = report && report.totals.trackedApplications ? report.totals.trackedInterviews / report.totals.trackedApplications * 100 : null;
@@ -43,10 +52,10 @@ export function Dashboard({ data, initial }: { data: DashboardData; initial?: Re
     { label: "Interview conversion", value: interviewRate === null ? "—" : `${interviewRate.toFixed(1)}%`, note: report ? `${report.totals.trackedInterviews} invitations / ${report.totals.trackedApplications} tracked applications` : "By first applied date", icon: CalendarCheck2 },
     ...(isManager ? [{ label: "Earned", value: report?.financial ? usd(report.financial.earningsCents) : "—", note: "By first applied date", icon: Wallet }] : []),
   ];
-  const series = report?.series.map((row) => ({ ...row, label: dashboardDateLabel(row.from), tooltip: row.from === row.to ? `${dashboardDateLabel(row.from)} CT` : `${dashboardDateLabel(row.from)} – ${dashboardDateLabel(row.to)} CT` })) ?? [];
+  const series = report?.series.map((row, index) => ({ ...row, ...confirmationSeries[index], label: dashboardDateLabel(row.from), tooltip: `${row.from === row.to ? dashboardDateLabel(row.from) : `${dashboardDateLabel(row.from)} – ${dashboardDateLabel(row.to)}`} CT${confirmationSeries[index].status === "partial" ? " · Partial email coverage" : ""}` })) ?? [];
   return <>
     <PageHeading eyebrow="LET’S MAKE TODAY COUNT" title={`Welcome back, ${data.profile.display_name.split(" ")[0] || "there"}.`} description="Your team's application activity at a glance.">
-      <Button size="sm" variant="outline" onClick={refresh} disabled={loading} aria-label="Refresh dashboard">{loading ? <LoaderCircle className="animate-spin" /> : <RefreshCw />} Refresh</Button>
+      <Button size="sm" variant="outline" onClick={() => { refresh(); mail.refresh(); }} disabled={loading || mail.loading} aria-label="Refresh dashboard">{loading ? <LoaderCircle className="animate-spin" /> : <RefreshCw />} Refresh</Button>
       <Button size="sm" asChild><Link href="/bids">Bid workspace <ArrowUpRight size={14} /></Link></Button>
     </PageHeading>
     <section className="panel mb-5 flex flex-wrap items-end gap-3 p-4" aria-label="Dashboard report filters">
@@ -62,17 +71,17 @@ export function Dashboard({ data, initial }: { data: DashboardData; initial?: Re
     </div>
     <section className="panel mb-5 min-w-0 p-5" aria-label="Application activity">
       <h2 className="font-semibold">Application activity</h2><p className="mt-1 text-xs text-muted-foreground">Bids found and latest application activity by {report?.range.bucketUnit ?? "day"}, in CT.</p>
-      <div className="mt-5 h-64 min-w-0" role="img" aria-label={report ? `Activity chart: ${report.totals.found} found, ${report.totals.appliedActivity} applications.` : "Activity chart loading or unavailable"}>
-        {loading && !report ? <div className="h-full animate-pulse rounded bg-muted/50" /> : !report ? <p className="py-20 text-center text-sm text-muted-foreground">Activity unavailable.</p> : <ResponsiveContainer width="100%" height="100%"><AreaChart data={series} margin={{ top: 8, right: 8, left: -15, bottom: 0 }}><CartesianGrid strokeDasharray="3 5" vertical={false} stroke="var(--border)" /><XAxis dataKey="label" minTickGap={32} tick={tick} axisLine={false} tickLine={false} /><YAxis allowDecimals={false} tick={tick} axisLine={false} tickLine={false} /><Tooltip labelFormatter={(_, payload) => payload?.[0]?.payload?.tooltip ?? ""} contentStyle={chartStyle} /><Area name="Found" dataKey="found" type="monotone" stroke="#8576ed" strokeWidth={2} fill="#8576ed" fillOpacity={0.12} isAnimationActive={false} /><Area name="Applied activity" dataKey="applied" type="monotone" stroke="#34b991" strokeWidth={2} fill="transparent" isAnimationActive={false} /></AreaChart></ResponsiveContainer>}
+      <div className="mt-5 h-64 min-w-0" role="img" aria-label={report ? `Activity chart: ${report.totals.found} found, ${report.totals.appliedActivity} applications, ${mailProfiles.total.confirmations ?? "unavailable"} confirmation emails${mailProfiles.total.status === "partial" ? " (partial coverage)" : ""}.` : "Activity chart loading or unavailable"}>
+        {loading && !report ? <div className="h-full animate-pulse rounded bg-muted/50" /> : !report ? <p className="py-20 text-center text-sm text-muted-foreground">Activity unavailable.</p> : <ResponsiveContainer width="100%" height="100%"><AreaChart data={series} margin={{ top: 8, right: 8, left: -15, bottom: 0 }}><CartesianGrid strokeDasharray="3 5" vertical={false} stroke="var(--border)" /><XAxis dataKey="label" minTickGap={32} tick={tick} axisLine={false} tickLine={false} /><YAxis allowDecimals={false} tick={tick} axisLine={false} tickLine={false} /><Tooltip labelFormatter={(_, payload) => payload?.[0]?.payload?.tooltip ?? ""} contentStyle={chartStyle} /><Area name="Found" dataKey="found" type="monotone" stroke="#8576ed" strokeWidth={2} fill="#8576ed" fillOpacity={0.12} isAnimationActive={false} /><Area name="Applied activity" dataKey="applied" type="monotone" stroke="#34b991" strokeWidth={2} fill="transparent" isAnimationActive={false} /><Area name="Confirmation emails" dataKey="confirmations" type="monotone" stroke="var(--category-application_ack-fill)" strokeDasharray="6 4" strokeWidth={2} fill="transparent" connectNulls={false} isAnimationActive={false} /></AreaChart></ResponsiveContainer>}
       </div>
-      <div className="mt-2 flex gap-4 text-xs text-muted-foreground"><span>● Found</span><span className="text-emerald-700 dark:text-emerald-400">● Applied activity</span></div>
-      {!!report && <details className="mt-4 border-t pt-3 text-xs"><summary className="cursor-pointer font-medium">View activity values</summary><div className="mt-3 max-h-60 overflow-auto"><table className="w-full text-right"><caption className="sr-only">Activity values in Central Time</caption><thead><tr><th className="py-2 text-left">Period</th><th>Found</th><th>Applied from cohort</th><th>Applied activity</th></tr></thead><tbody>{series.map((row) => <tr key={row.from} className="border-t"><th className="py-2 text-left font-medium" scope="row">{row.tooltip}</th><td>{row.found}</td><td>{row.foundApplied}</td><td>{row.applied}</td></tr>)}</tbody></table></div></details>}
+      <div className="mt-2 flex gap-4 text-xs text-muted-foreground"><span>● Found</span><span className="text-emerald-700 dark:text-emerald-400">● Applied activity</span><span className="text-primary">┄ Confirmation emails</span></div>
+      {!!report && <details className="mt-4 border-t pt-3 text-xs"><summary className="cursor-pointer font-medium">View activity values</summary><div className="mt-3 max-h-60 overflow-auto"><table className="w-full text-right"><caption className="sr-only">Activity values in Central Time</caption><thead><tr><th className="py-2 text-left">Period</th><th>Found</th><th>Applied from cohort</th><th>Applied activity</th><th>Confirmation emails</th></tr></thead><tbody>{series.map((row) => <tr key={row.from} className="border-t"><th className="py-2 text-left font-medium" scope="row">{row.tooltip}</th><td>{row.found}</td><td>{row.foundApplied}</td><td>{row.applied}</td><td>{row.confirmations ?? "—"}{row.status === "partial" ? " (partial)" : ""}</td></tr>)}</tbody></table></div></details>}
     </section>
-    <EmailInsights query={query} isManager={isManager} email={email} onEmailChange={setEmail} />
     <div className={`mb-5 grid gap-5 ${isManager ? "xl:grid-cols-2" : ""}`}>
-      {isManager && <Comparison title="By bidder" rows={report?.comparisons.bidders ?? []} loading={loading} available={!!report} />}
-      <Comparison title="By profile" rows={report?.comparisons.profiles ?? []} loading={loading} available={!!report} />
+      {isManager && <Comparison title="By bidder" rows={bidderRows} mailGroups={mailBidders.groups} loading={loading} available={!!report} />}
+      <Comparison title="By profile" rows={profileRows} mailGroups={mailProfiles.groups} loading={loading} available={!!report} />
     </div>
+    <EmailInsights mail={mail} workspace={workspace} isManager={isManager} email={email} onEmailChange={setEmail} />
     <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground"><p className="mr-auto">Historical totals include retained application summaries.</p>{isManager && <><Link className="font-medium text-primary" href="/bids?review=pending">Open review queue <ArrowUpRight className="inline" size={12} /></Link><Link className="font-medium text-primary" href="/earnings">View earnings <ArrowUpRight className="inline" size={12} /></Link></>}</div>
   </>;
 }
