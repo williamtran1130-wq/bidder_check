@@ -46,6 +46,9 @@ try {
  ok(await admin.from("bidders").insert({user_id:ids[2],workspace_id:ownerWorkspace}));
  const profile=ok(await clients[0].client.rpc("save_candidate_profile",{p_id:null,p_workspace:ownerWorkspace,p_identifier:"INSIGHTS-SMOKE",p_name:"Synthetic candidate",p_address:"",p_links:"",p_instructions:""}));
  const assignment=ok(await clients[0].client.rpc("save_resume_assignment",{p_id:null,p_profile:profile,p_bidder:ids[2],p_email:"synthetic-mailbox@example.com",p_phone:"555-0000",p_file:null,p_rate:null}));
+ // Seed a found-only fixture directly: this acceptance checks reporting, not
+ // the existing PDF-upload prerequisite for creating a bid through the UI.
+ ok(await admin.from("bids").insert({workspace_id:ownerWorkspace,bidder_id:ids[2],resume_id:assignment,company:"Synthetic Insights Company",role_name:"Synthetic Engineer",url:`https://example.com/jobs/${prefix}`,normalized_url:`https://example.com/jobs/${prefix}`,source:"Synthetic acceptance",arrangement:"remote",job_status:"open"}));
  const localRoot=resolve("../mail-check/mail-check");
  const python=resolve(localRoot,".venv/Scripts/python.exe");
  const pythonCode=`import json,tempfile
@@ -88,6 +91,7 @@ with tempfile.TemporaryDirectory() as temp:
  const ownerResponse=await api(readPath,clients[0].token);assert.equal(ownerResponse.status,200);
  const owner=await ownerResponse.json();assert.equal(owner.status,"ready");assert.equal(owner.mailboxes.length,2);
  assert.equal(owner.mailboxes.flatMap(m=>m.rows).reduce((n,row)=>n+row.count,0),6);
+ assert.equal(owner.bid_rows.reduce((n,row)=>n+row.found,0),1);
  assert.ok(!JSON.stringify(owner).includes("Synthetic smoke only"));
  pass("owner report returns complete aggregate cubes without message contents");
  const other=await(await api(readPath,clients[1].token)).json();assert.equal(other.status,"not_synced");assert.equal(other.mailboxes.length,0);
@@ -103,16 +107,20 @@ with tempfile.TemporaryDirectory() as temp:
  await page.goto(origin+"/auth/login");
  await page.getByLabel("Email address",{exact:true}).fill(clients[0].email);
  await page.getByLabel("Password",{exact:true}).fill(password);
- await page.getByRole("button",{name:"Sign in",exact:true}).click();
+ await page.getByRole("button",{name:"Sign in to workspace",exact:true}).click();
  await page.waitForURL("**/dashboard",{timeout:60000});
  await page.getByRole("heading",{name:"Email insights",exact:true}).waitFor({timeout:60000});
  await page.getByRole("heading",{name:"Bids and email activity",exact:true}).waitFor();
  await page.getByRole("tab",{name:"Profile",exact:true}).click();
- await page.getByRole("tabpanel",{name:"Activity by profile"}).getByText("INSIGHTS-SMOKE",{exact:true}).waitFor({timeout:30000});
+ const profileRow=page.getByRole("tabpanel",{name:"Activity by profile"}).getByRole("rowheader").filter({hasText:"INSIGHTS-SMOKE"});
+ await profileRow.waitFor({timeout:30000});
+ assert.equal(await profileRow.locator("..").getByRole("cell").first().innerText(),"1");
  await mkdir("test-results",{recursive:true});
  await page.screenshot({path:"test-results/mail-insights-production.png",fullPage:true});
  pass("production Overview renders stored mail metrics and profile comparison after ordinary website sign-in");
- ok(await clients[0].client.rpc("archive_resume_assignment",{p_id:assignment,p_archived:true}));
+ // Current UI uses permanent deletion; toggle only this synthetic fixture's
+ // retained archive flag directly to verify the live read authorization guard.
+ ok(await admin.from("resumes").update({archived:true}).eq("id",assignment));
  const revoked=await(await api(readPath,clients[2].token)).json();assert.equal(revoked.mailboxes.length,0);
  pass("archiving the assignment immediately removes bidder mailbox visibility");
 } finally {
@@ -121,6 +129,9 @@ with tempfile.TemporaryDirectory() as temp:
  if(ids.length) {
   workspaceIds=ok(await admin.from("workspaces").select("id").in("owner_id",ids)).map(row=>row.id);
   if(workspaceIds.length) {
+   const bidIds=ok(await admin.from("bids").select("id").in("workspace_id",workspaceIds)).map(row=>row.id);
+   if(bidIds.length)ok(await admin.from("bid_events").delete().in("bid_id",bidIds));
+   ok(await admin.from("bids").delete().in("workspace_id",workspaceIds));
    for(const table of ["mail_insights_state","resumes","invitations","bidders","candidate_profiles"])
     ok(await admin.from(table).delete().in("workspace_id",workspaceIds));
    ok(await admin.from("workspaces").delete().in("id",workspaceIds));

@@ -1,0 +1,42 @@
+{
+  "feature": "Authenticated mail-check Email Insights in bidder-check Overview",
+  "verified_at": "2026-10-31T11:24:20.277Z",
+  "production_url": "https://bidder-check.vercel.app",
+  "deployment_id": "dpl_RZ6bCetFyzYfaYyqu9K4U8CWkpK2",
+  "deployment_source": "d9fe09d68f757e1605521f9e2d8be0beff852433",
+  "migration": "202610300001_mail_insights",
+  "cloud_unit_and_database_tests": 870,
+  "cloud_browser_suite": { "passed": 341, "environment_failure": "one Windows ERR_NO_BUFFER_SPACE navigation", "focused_recheck": "all 12 profile cases passed" },
+  "cloud_lint_typecheck_build_types_and_benchmark_manifest": "passed",
+  "local_python_tests": 134,
+  "local_frontend_tests": 74,
+  "local_desktop_unit_tests": 4,
+  "packaged_e2e": "passed with Python and Node removed from PATH; schema12 upgrade and new connection panel verified",
+  "production_acceptance_checks": 8,
+  "production_acceptance": [
+    "public config only contains public fields",
+    "uploads require bearer authentication",
+    "actual local Python publisher password login, export, production upload, local logout",
+    "owner sees complete aggregate cubes and one synthetic found bid without message contents",
+    "other client and bidder mailbox isolation",
+    "client ID spoofing rejected",
+    "ordinary website login renders production Overview and correct profile bid count",
+    "assignment revocation immediately removes bidder mailbox visibility"
+  ],
+  "synthetic_accounts_removed": 3,
+  "mail_check_version": "0.5.0",
+  "mail_check_source": "bc1e22f",
+  "installer_sha256": "e6a9717d3246d43d2e92cd7d2821b97e153c06adf08c25c8d25c15adc1a1355f",
+  "release_url": "https://github.com/DevTech06130324/mail-check/releases/tag/v0.5.0",
+  "limitations": [
+    "Unsigned Windows installer; clean-machine installation and live mailbox-provider consent were not exercised",
+    "Bid/mail comparisons are date-range totals grouped by current assignment emails, not matched application-to-message conversions",
+    "Laptop publisher must run for new uploads; last saved website metrics remain available while offline"
+  ],
+  "rulings": [
+    "Feature branches in existing checkouts preserve the unreleased desktop baseline and running old application",
+    "Existing httpx uses official Supabase Auth REST instead of adding frozen-app SDK dependencies; token sessions remain in OS keyring",
+    "Admin mail reports require an explicit workspace to avoid conflating identical mailbox emails across tenants",
+    "Follow-up deployment commit uses the authenticated account's verified GitHub noreply attribution; no history rewrite or global Git config changes"
+  ]
+}
