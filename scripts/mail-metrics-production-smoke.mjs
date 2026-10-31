@@ -161,7 +161,8 @@ with tempfile.TemporaryDirectory() as temp:
     for(const path of ["/earnings","/interviews"]) {
      await rolePage.goto(origin+path);
      await expect(rolePage.getByText("Choose a workspace to view email metrics.",{exact:true})).toBeVisible();
-     await rolePage.getByLabel("Workspace",{exact:true}).selectOption(ownerWorkspace);
+     // The native label wraps the select, so its text also includes option text.
+     await rolePage.getByLabel("Workspace").selectOption(ownerWorkspace);
      await expect(rolePage.getByLabel("Email metric coverage")).toContainText("Email dates:");
      await expect(rolePage.getByRole("table")).toContainText(path==="/earnings" ? "Insights smoke bidder" : "INSIGHTS-SMOKE");
     }

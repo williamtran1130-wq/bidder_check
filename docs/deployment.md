@@ -1,6 +1,17 @@
 # Deployment handoff
 
-## Current release: screenshot retention and permanent deletion, 2026-10-29
+## Current release — mail metrics and original theme, 2026-10-31
+
+Production source `db4986e6f5ad4f58388702d87ee6447a5f700a99`, deployment `dpl_6371qpJrhGKzkH8ZGp7KE85AQL6k`, is READY at https://bidder-check.vercel.app. Mail Check [0.5.1](https://github.com/DevTech06130324/mail-check/releases/tag/v0.5.1) is published with the matching original lavender category palette and Windows sign-in fix.
+
+Overview adds confirmation messages to activity and bidder/profile comparisons, moves email sections below comparisons, and remembers the activity table's collapsed state per account/workspace/browser. Earnings adds Applications received beside application counts without changing earnings calculations. Interviews uses Mail Check invitation messages throughout; the invitation/application percentage is a period ratio, not individually matched conversion. Missing or stale collection coverage is partial, and incomplete coverage suppresses ratios. Admin reports require workspace selection for mail metrics.
+
+No migration, new dependency or sync-format change. [Release evidence](release-evidence/2026-10-31-mail-metrics.json) records 893 unit/database and 348 browser cases passing locally and in [Linux/Windows CI](https://github.com/DevTech06130324/bidder-check/actions/runs/41202641218), packaged desktop validation and 12 production acceptance checks. All four synthetic acceptance accounts and their records were removed. Installer SHA-256: `e3d4a2b1aecdd1c2eb8c78e2abfb994961d8b3f3d6e623bf7e6bbdb61c3a3352`.
+
+Rollback deployment: `dpl_BXwdhd7g6XjCbEdKmAyfftYuNRvk`. Retain Mail Check 0.5.0 assets; no database rollback is required.
+
+
+## Previous release: screenshot retention and permanent deletion, 2026-10-29
 
 Production-only release: `d016b74`, deployment `dpl_13rhqKPFTBCXynKrtvsu9UA66yCf`, ready at https://bidder-check.vercel.app. Migrations `202610290001` and `202610290002` are applied. Seven-day screenshot retention and permanent bid/candidate-library deletion replace the older preview/archive/trash behavior described in historical sections below. Account deactivation and monthly application reporting retention remain.
 

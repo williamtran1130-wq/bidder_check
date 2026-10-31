@@ -14,35 +14,35 @@ Preserve local changes and running apps. Dedicated branches in existing checkout
 Missing coverage must not become zero/complete. Shared group sums must not inflate unique totals. Filter changes must not leak stale scoped data. Persisted collapse must not overwrite preferences at mount. Packaged source and production source must match verified commits.
 
 ### Task 1: Release baseline and credential compatibility
-- [ ] Save design/plan; establish feature branches and baseline tests.
-- [ ] Review existing credential storage diff, exercise regression tests and real isolated keyring; commit separately.
+- [x] Save design/plan; establish feature branches and baseline tests.
+- [x] Review existing credential storage diff, exercise regression tests and real isolated keyring; commit separately.
 
 ### Task 2: Shared mail metrics and theme
-- [ ] Add failing aggregation tests for assignment grouping, dedup, missing/partial/zero coverage, bucket clipping and ratios.
-- [ ] Implement shared projection and one-query loading hook; support required-workspace idle state, freshness and independent errors.
-- [ ] Apply spec palette and original semantic light/dark tokens in both apps, remove blue gradients. Check readable contrast; keep category identity.
-- [ ] Run focused tests and commit.
+- [x] Add failing aggregation tests for assignment grouping, dedup, missing/partial/zero coverage, bucket clipping and ratios.
+- [x] Implement shared projection and one-query loading hook; support required-workspace idle state, freshness and independent errors.
+- [x] Apply spec palette and original semantic light/dark tokens in both apps, remove blue gradients. Check readable contrast; keep category identity.
+- [x] Run focused tests and commit.
 
 ### Task 3: Overview confirmations and saved collapse
-- [ ] Add failing layout/metric/state regressions.
-- [ ] Share snapshot with email section; add third series and grouped metric with exact values; union email-only groups.
-- [ ] Move email section below comparisons; collapse activity only, persist per scope+workspace with safe mount/storage handling.
-- [ ] Run targeted checks and commit.
+- [x] Add failing layout/metric/state regressions.
+- [x] Share snapshot with email section; add third series and grouped metric with exact values; union email-only groups.
+- [x] Move email section below comparisons; collapse activity only, persist per scope+workspace with safe mount/storage handling.
+- [x] Run targeted checks and commit.
 
 ### Task 4: Earnings and Interviews
-- [ ] Add failing view/report regressions for grouped counts, ratios, admin and embedded scope.
-- [ ] Add Earnings card and adjacent column/unique total; preserve money math and union mail-only groups.
-- [ ] Use mail invitations throughout Interviews; align first-applied denominator to effective mail range, replace conversion labels and handle missing/partial coverage.
-- [ ] Pass minimal role/workspace props from server pages; add admin selector and pinned embedded workspace.
-- [ ] Run targeted checks and commit.
+- [x] Add failing view/report regressions for grouped counts, ratios, admin and embedded scope.
+- [x] Add Earnings card and adjacent column/unique total; preserve money math and union mail-only groups.
+- [x] Use mail invitations throughout Interviews; align first-applied denominator to effective mail range, replace conversion labels and handle missing/partial coverage.
+- [x] Pass minimal role/workspace props from server pages; add admin selector and pinned embedded workspace.
+- [x] Run targeted checks and commit.
 
 ### Task 5: Verification and whole-branch review
-- [ ] Bidder lint/typecheck/unit/database/types/benchmark/build/browser checks.
-- [ ] Mail Python/smoke/frontend tests+build/desktop tests, packaged E2E with runtime stripped PATH, isolated upgrade/keyring checks.
-- [ ] Fresh code reviewer; fix material findings with failing regressions, rerun affected full suites.
+- [x] Bidder lint/typecheck/unit/database/types/benchmark/build/browser checks.
+- [x] Mail Python/smoke/frontend tests+build/desktop tests, packaged E2E with runtime stripped PATH, isolated upgrade/keyring checks.
+- [x] Fresh code reviewer; fix material findings with failing regressions, rerun affected full suites.
 
 ### Task 6: Production release
-- [ ] Bump desktop+lock to0.5.1; isolated output release-0.5.1; build assets and checksums; create draft release.
-- [ ] Push reviewed commits and require green CI; deploy Bidder existing Vercel production project, verify READY/source.
-- [ ] Synthetic production applications+snapshots verify all metrics and auth isolation; remove fixtures.
-- [ ] Publish desktop stable release and verify remote asset digest. Record source refs/deployment/assets/QA in release docs; retain previous deployment/release rollback targets.
+- [x] Bump desktop+lock to0.5.1; isolated output release-0.5.1; build assets and checksums; create draft release.
+- [x] Push reviewed commits and require green CI; deploy Bidder existing Vercel production project, verify READY/source.
+- [x] Synthetic production applications+snapshots verify all metrics and auth isolation; remove fixtures.
+- [x] Publish desktop stable release and verify remote asset digest. Record source refs/deployment/assets/QA in release docs; retain previous deployment/release rollback targets.

@@ -1,0 +1,94 @@
+{
+  "feature": "Original lavender theme, confirmation metrics and mail-derived interview reporting",
+  "status": "released",
+  "verified_at": "2026-10-31T13:14:45.158Z",
+  "cloud": {
+    "source": "db4986e6f5ad4f58388702d87ee6447a5f700a99",
+    "production_url": "https://bidder-check.vercel.app",
+    "deployment_id": "dpl_6371qpJrhGKzkH8ZGp7KE85AQL6k",
+    "deployment_url": "https://bidder-check-5fac2ehtg-devtech06130324s-projects.vercel.app",
+    "ci_url": "https://github.com/DevTech06130324/bidder-check/actions/runs/41202641218",
+    "ci_conclusion": "success",
+    "unit_database_tests": 893,
+    "browser_tests": 348,
+    "lint_typecheck_build_types_benchmark": "passed",
+    "rollback_deployment_id": "dpl_BXwdhd7g6XjCbEdKmAyfftYuNRvk"
+  },
+  "desktop": {
+    "version": "0.5.1",
+    "source": "146886f167a990845e8f6e137228d3bdef1e474e",
+    "release_url": "https://github.com/DevTech06130324/mail-check/releases/tag/v0.5.1",
+    "published_at": "2026-10-31T13:15:27Z",
+    "installer_sha256": "e3d4a2b1aecdd1c2eb8c78e2abfb994961d8b3f3d6e623bf7e6bbdb61c3a3352",
+    "python_unit_tests": 141,
+    "python_smoke_checks": 331,
+    "frontend_tests": 74,
+    "desktop_unit_tests": 4,
+    "real_windows_credential_checks": 17,
+    "packaged_e2e": "passed with Python and Node removed from PATH; legacy upgrade/backup, responsive light/dark Mail and Insights, backend recovery",
+    "provenance": "Packaged ASAR version, backend executable and theme bundle verified against tested build outputs",
+    "assets": [
+      {
+        "name": "Mail.Check-0.5.1.Setup.exe",
+        "digest": "sha256:e3d4a2b1aecdd1c2eb8c78e2abfb994961d8b3f3d6e623bf7e6bbdb61c3a3352",
+        "size": 183905792
+      },
+      {
+        "name": "Mail.Check-0.5.1.Setup.exe.sha256",
+        "digest": "sha256:63eaf05bee81babb3b906693310dd446ada53949eae4ee0d184ed09b8cd9e611",
+        "size": 94
+      },
+      {
+        "name": "MailCheck-0.5.1-full.nupkg",
+        "digest": "sha256:0a14220b984a33a504c609d8906e5f32de723bb44577f074e2c6b64205865db6",
+        "size": 183419716
+      },
+      {
+        "name": "RELEASES",
+        "digest": "sha256:4226c42bf023eaf05caf1d8eb438ffee78c195b501a51d2fa73d970e71a8b565",
+        "size": 80
+      }
+    ]
+  },
+  "production_acceptance": {
+    "at": "2026-10-31T13:14:45.158Z",
+    "origin": "https://bidder-check.vercel.app",
+    "checks": [
+      "public connection config contains only expected public fields",
+      "unauthenticated uploads return JSON 401 without a login redirect",
+      "real local Python publisher signs in, exports metrics, uploads via production API and signs out",
+      "owner report returns complete aggregate cubes without message contents",
+      "other client and bidder projections enforce tenant and mailbox isolation",
+      "a valid token cannot substitute a different client ID",
+      "production Overview renders stored mail metrics and profile comparison after ordinary website sign-in",
+      "production Overview confirmations, stable group join and persisted collapse reconcile with the snapshot",
+      "production Earnings received counts3 by bidder and resume coexist with original1 application/$10.00",
+      "production Interviews uses2 mail invitations instead of0 manual flags, with200% ratio in all groupings",
+      "production bidder financial restriction and admin workspace selection retain scoped email metrics",
+      "archiving the assignment immediately removes bidder mailbox visibility"
+    ],
+    "synthetic_accounts_removed": 4
+  },
+  "review": {
+    "critical": 0,
+    "important_fixed": 1,
+    "deferred_minor": 0,
+    "fix": "Stale/invalid collection end dates mark coverage partial and suppress rates; CT DST boundary regressions RED to GREEN"
+  },
+  "rulings": [
+    "Ruling: use approved feature branches in existing checkouts rather than new worktrees \u2014 preserves existing Windows fix and build dependencies; unrelated files excluded.",
+    "Ruling: Git Bash workspace script cannot write translated /c paths under this sandbox and loops on failure; use native filesystem and ledger for equivalent task evidence \u2014 no product behavior change.",
+    "Ruling: production acceptance uses a non-exact Workspace label match \u2014 native label includes select option text; strict locator timed out despite rendered control \u2014 still selects and verifies the exact synthetic workspace UUID, no product code change."
+  ],
+  "compatibility": [
+    "No database migration, sync schema change or new project dependency.",
+    "Message counts use current assignments, unique mailboxes per group/total, and the latest 90 CT days.",
+    "Interviews reports an invitation-message/application period ratio, without individual matching.",
+    "Existing installed app, user mail/config and unrelated local files preserved."
+  ],
+  "verification_notes": [
+    "Initial browser assertions for prior labels/column counts were updated; final full local and hosted suites pass.",
+    "Initial production strict admin label selector failed and cleaned all fixtures; corrected acceptance script passed all 12 checks and cleaned all 4 accounts.",
+    "Supplemental standalone screenshot attempts timed out; the official passing packaged E2E captured both Mail and Insights themes, which were visually inspected."
+  ]
+}
