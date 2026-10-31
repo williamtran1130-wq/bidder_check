@@ -45,7 +45,7 @@ export function BidderDetail({
           <BidWorkspace data={data} bidderId={id} embedded />
         </TabsContent>
         <TabsContent value="earnings">
-          <Earnings bidderId={id} embedded />
+          <Earnings bidderId={id} embedded mailContext={{ role: data.profile.role, workspaceId: bidder.workspace_id }} />
         </TabsContent>
       </Tabs>
     </>

@@ -14,6 +14,7 @@ async function Content() {
   const result = await readReport<Report>("interview_performance", query);
   return (
     <InterviewReport
+      mailContext={{ role: context.profile.role, workspaces: context.workspaces.map(({ id, name }) => ({ id, name })) }}
       initial={{
         key: readKey(actorReadScope(context), "interviews", query, day),
         result,

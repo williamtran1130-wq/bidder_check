@@ -1,6 +1,6 @@
 "use client";
 import { PageLoading } from "./page-loading";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Wallet, CheckCheck, FileText } from "lucide-react";
 import { usd } from "@/lib/domain";
 import { PageHeading, EmptyState } from "./common";
@@ -12,23 +12,32 @@ import { useReport } from "./use-report";
 import { readKey, type ReadSeed } from "@/lib/read-state";
 import type { EarningsReport as SeedReport } from "@/lib/report-types";
 import { useReadScope } from "@/lib/read-scope";
+import { useMailReport, type MailReportContext } from "./use-mail-report";
+import { mergeMailGroups, projectMailMetrics } from "@/lib/mail-metrics";
+import { MailCount, MailReportNotice, ReportWorkspaceSelector } from "./mail-report-common";
 export function Earnings({
   bidderId,
   initial,
   embedded = false,
+  mailContext = {},
 }: {
   bidderId?: string;
   initial?: ReadSeed<SeedReport>;
   embedded?: boolean;
+  mailContext?: MailReportContext;
 }) {
   const scope = useReadScope();
   const [period, setPeriod] = useState<PeriodSelection>({ preset: "this_week" });
   const [group, setGroup] = useState("bidder");
+  const [workspace, setWorkspace] = useState(mailContext.workspaceId ?? "");
   const day = useCalendarDay();
-  const request = useCallback(() => getEarningsPerformance({ period, bidder: bidderId, group: group === "bidder" ? "bidder" : "assignment" }), [period, bidderId, group]);
-  const { data: report, loading, error, refresh } = useReport(readKey(scope, "earnings", { period, bidder: bidderId, group: group === "bidder" ? "bidder" : "assignment" }, day), request, initial);
+  const query = useMemo(() => ({ period, bidder: bidderId, group: group === "bidder" ? "bidder" as const : "assignment" as const, ...(workspace ? { workspace } : {}) }), [period, bidderId, group, workspace]);
+  const request = useCallback(() => getEarningsPerformance(query), [query]);
+  const { data: report, loading, error, refresh } = useReport(readKey(scope, "earnings", query, day), request, initial);
+  const mail = useMailReport(query, mailContext.role === "admin");
+  const metrics = projectMailMetrics(mail.error ? undefined : mail.data, query.group);
   const total = report?.totals;
-  const groups = report?.groups ?? [];
+  const groups = mergeMailGroups(report?.groups ?? [], metrics.groups, row => ({ id: row.id, label: row.label, sub: "Assigned mailbox activity", count: 0, cents: 0, applied: 0, interviews: 0 }));
   return (
     <>
       {!embedded && (
@@ -51,14 +60,21 @@ export function Earnings({
             </Button>
           ))}
         </div>
+        {mailContext.role === "admin" && !mailContext.workspaceId && <ReportWorkspaceSelector value={workspace} onChange={setWorkspace} workspaces={mailContext.workspaces ?? []} />}
         <PeriodSelector label="First applied period" value={period} onChange={setPeriod} />
+        <Button size="sm" variant="outline" onClick={() => { refresh(); mail.refresh(); }} disabled={loading || mail.loading}>Refresh reports</Button>
       </div>
-      <div className="mb-6 grid gap-4 sm:grid-cols-3">
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
           { label: "Total earned", value: total ? usd(total.cents) : "—", icon: Wallet },
           {
             label: "Qualifying applications",
             value: total?.count ?? "—",
+            icon: CheckCheck,
+          },
+          {
+            label: "Applications received",
+            value: <MailCount metric={metrics.total} />,
             icon: CheckCheck,
           },
           {
@@ -78,6 +94,7 @@ export function Earnings({
           </div>
         ))}
       </div>
+      <MailReportNotice mail={mail} />
       <section className="panel p-5">
         {error && <p role="alert" className="mb-4 text-sm text-destructive">{error}{report ? " Showing the last successful results for these filters." : ""} <Button size="sm" variant="outline" disabled={loading} onClick={refresh}>Retry</Button></p>}
         {loading && <PageLoading label="Loading earnings…" size="section" />}
@@ -95,6 +112,7 @@ export function Earnings({
                     {group === "bidder" ? "Team member" : "Resume profile"}
                   </th>
                   <th className="p-3 text-right font-semibold">Applications</th>
+                  <th className="p-3 text-right font-semibold">Applications received</th>
                   <th className="py-3 text-right font-semibold">
                     Earnings (USD)
                   </th>
@@ -112,6 +130,7 @@ export function Earnings({
                     <td className="p-3 text-right text-sm">
                       {g.count}
                     </td>
+                    <td className="p-3 text-right text-sm"><MailCount metric={metrics.groups.get(g.id)?.metric} />{metrics.groups.get(g.id)?.metric.shared && <span className="block text-[11px] text-muted-foreground">Shared mailbox</span>}</td>
                     <td className="py-4 text-right text-sm font-semibold">
                       {usd(g.cents)}
                     </td>
@@ -124,6 +143,7 @@ export function Earnings({
                   <td className="pt-4 text-right font-semibold">
                     {total.count}
                   </td>
+                  <td className="pt-4 text-right font-semibold"><MailCount metric={metrics.total} /></td>
                   <td className="pt-4 text-right font-semibold text-primary">
                     {usd(total.cents)}
                   </td>

@@ -22,6 +22,7 @@ async function Content() {
   );
   return (
     <Earnings
+      mailContext={{ role: context.profile.role, workspaces: context.workspaces.map(({ id, name }) => ({ id, name })) }}
       initial={{
         key: readKey(actorReadScope(context), "earnings", query, day),
         result,
