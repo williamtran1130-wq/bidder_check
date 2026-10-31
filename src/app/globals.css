@@ -185,3 +185,7 @@ textarea {
     scroll-behavior: auto !important;
   }
 }
+
+/* Original-theme category identity shared with Mail Check. */
+:root{--category-interview_invite-fill:#8576ed;--category-assessment-fill:#b59655;--category-offer-fill:#34b991;--category-info_request-fill:#4a9393;--category-recruiter_outreach-fill:#9a86bc;--category-rejection-fill:#b57887;--category-application_ack-fill:#6357df;--category-job_alert-fill:#8195b4;--category-other-fill:#7d879b;--category-unclassified-fill:#a29483;--category-sent-fill:#7d879b;}
+.dark{--category-interview_invite-fill:#9c8fff;--category-assessment-fill:#d8be83;--category-offer-fill:#55cda8;--category-info_request-fill:#7cbdbd;--category-recruiter_outreach-fill:#c0abd9;--category-rejection-fill:#d6a0ad;--category-application_ack-fill:#9c92ff;--category-job_alert-fill:#a7b8d1;--category-other-fill:#aab2c3;--category-unclassified-fill:#c7b9a6;--category-sent-fill:#aab2c3;}

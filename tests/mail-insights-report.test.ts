@@ -24,6 +24,13 @@ export const sample: MailInsightsReport = {
 };
 
 describe("mail insights scoped cube", () => {
+  it("groups by assignment IDs without combining two assignments sharing a mailbox", () => {
+    const result = aggregateMailInsights(sample, {}, "assignment" as never, false);
+    expect(result.groups.map(row => row.id).sort()).toEqual(["a1", "a2", "a3"]);
+    expect(result.groups.find(row => row.id === "a1")?.categories?.application_ack).toBe(3);
+    expect(result.groups.find(row => row.id === "a2")?.found).toBe(4);
+    expect(result.categories.application_ack).toBe(3);
+  });
   it("uses the same inclusive dates for mail and bid activity and category-tier attention semantics", () => {
     const result = aggregateMailInsights(sample);
     expect(result.summary).toEqual({ total: 15, pendingAttention: 7, completed: 3, unclassified: 4, retryable: 4 });

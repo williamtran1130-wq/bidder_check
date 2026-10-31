@@ -3,16 +3,16 @@ import { isCalendarDate, resolveCalendarPeriod, shiftCalendarDate } from "./cale
 import type { ReportQuery, ReportResult } from "./report-types";
 
 export const MAIL_CATEGORIES = [
-  { id: "interview_invite", label: "Interview emails", color: "#2563eb" },
-  { id: "assessment", label: "Assessments", color: "#b7790a" },
-  { id: "offer", label: "Offers", color: "#7c3aed" },
-  { id: "info_request", label: "Information requests", color: "#0f766e" },
-  { id: "recruiter_outreach", label: "Recruiter outreach", color: "#4f46e5" },
-  { id: "rejection", label: "Rejections", color: "#b56678" },
-  { id: "application_ack", label: "Confirmation emails", color: "#0891b2" },
-  { id: "job_alert", label: "Job alerts", color: "#7b8528" },
-  { id: "other", label: "Other", color: "#64748b" },
-  { id: "unclassified", label: "Unclassified", color: "#ea580c" },
+  { id: "interview_invite", label: "Interview emails", color: "var(--category-interview_invite-fill)" },
+  { id: "assessment", label: "Assessments", color: "var(--category-assessment-fill)" },
+  { id: "offer", label: "Offers", color: "var(--category-offer-fill)" },
+  { id: "info_request", label: "Information requests", color: "var(--category-info_request-fill)" },
+  { id: "recruiter_outreach", label: "Recruiter outreach", color: "var(--category-recruiter_outreach-fill)" },
+  { id: "rejection", label: "Rejections", color: "var(--category-rejection-fill)" },
+  { id: "application_ack", label: "Confirmation emails", color: "var(--category-application_ack-fill)" },
+  { id: "job_alert", label: "Job alerts", color: "var(--category-job_alert-fill)" },
+  { id: "other", label: "Other", color: "var(--category-other-fill)" },
+  { id: "unclassified", label: "Unclassified", color: "var(--category-unclassified-fill)" },
 ] as const;
 export type MailCategory = (typeof MAIL_CATEGORIES)[number]["id"];
 export type CategoryCounts = Record<MailCategory, number>;
@@ -26,7 +26,7 @@ export type MailInsightsReport = {
   range: { from: string; to: string; clipped: boolean; empty?: boolean }; status: "ready" | "not_synced";
 };
 export type MailFilters = { categories?: string[]; status?: "all" | "pending" | "done"; action?: "all" | "yes" | "no" };
-export type MailGroup = "email" | "profile" | "bidder";
+export type MailGroup = "email" | "profile" | "bidder" | "assignment";
 export type MailCombinedRow = { id: string; label: string; emails: string[]; assignments: MailAssignment[]; shared: boolean; unassigned: boolean; syncStatus: "ready" | "partial" | "not_synced" | "unavailable"; found: number; applied: number; categories: CategoryCounts | null };
 const attention = new Set(["interview_invite", "assessment", "offer", "info_request", "recruiter_outreach", "unclassified"]);
 const normalizeEmail = (value: string) => value.trim().toLowerCase();
@@ -83,13 +83,13 @@ export function aggregateMailInsights(report: MailInsightsReport, filters: MailF
   };
   for (const assignment of assignments) {
     const email = normalizeEmail(assignment.email);
-    const id = group === "email" ? email : group === "profile" ? assignment.profile_id : assignment.bidder_id;
-    ensure(id, group === "email" ? email : group === "profile" ? assignment.profile_label : assignment.bidder_name, email, assignment);
+    const id = group === "email" ? email : group === "profile" ? assignment.profile_id : group === "assignment" ? assignment.id : assignment.bidder_id;
+    ensure(id, group === "email" ? email : group === "profile" ? assignment.profile_label : group === "assignment" ? `${assignment.profile_label} · ${assignment.bidder_name}` : assignment.bidder_name, email, assignment);
   }
   if (includeUnassigned) for (const email of mailboxes.keys()) if (!assignmentEmails.has(email)) ensure(group === "email" ? email : "unassigned", group === "email" ? email : "Unassigned", email);
   const bids = report.bid_rows.filter(row => inRange(row.date));
   for (const bid of bids) {
-    const id = group === "email" ? normalizeEmail(bid.email) : group === "profile" ? bid.profile_id : bid.bidder_id;
+    const id = group === "email" ? normalizeEmail(bid.email) : group === "profile" ? bid.profile_id : group === "assignment" ? bid.assignment_id : bid.bidder_id;
     const row = groups.get(id);
     if (row) { row.found += bid.found; row.applied += bid.applied; }
   }
