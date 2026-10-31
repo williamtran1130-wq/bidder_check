@@ -1,8 +1,9 @@
 # Workspace reporting and latest application location
 
-This release changes both bidder-check and mail-check. All verification so far is
-local. No hosted migrations, scheduler changes, deployment, or billing settings
-have been applied by the implementation session.
+This release changes both bidder-check and mail-check. The October 31 production
+cutover applied the reporting, latest-location and notification-retirement
+migrations and verified the deployed report APIs. See the release record in
+`docs/deployment.md` for deployment identifiers and completed acceptance checks.
 
 ## Release sequence
 
@@ -32,6 +33,10 @@ the old upload-history and notification RPCs.
    negotiates v2 from `snapshot_versions`, retains v1 fallback, and discovers an
    upgraded server when pending work exists. No user re-login is required solely
    for the protocol upgrade. Verify one full upload, then a metadata-only delta.
+7. After verifying normalized readers and both publisher versions, apply
+   `202610310004_remove_legacy_mail_snapshot_blobs.sql`. It clears only redundant
+   JSON mailbox blobs; normalized counts, metadata and revision receipts remain.
+   Re-run reconciliation and confirm `mailboxes` is empty in snapshot state.
 
 Do not apply hosted migrations from a Vercel build. Keep any database backup
 required by the deployment operator's ordinary release process before the

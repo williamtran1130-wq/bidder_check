@@ -1,5 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 
 interface Row {
@@ -788,9 +788,12 @@ it("preserves screenshot-presence filtering and sorting independently of valid s
   expect(sorted.rows[0].company).toBe("Missing");
 });
 
-it.each([2000, 10000])(
-  "returns full-result counts for a realistic finalized manager dataset (%s screenshots)",
-  async (count) => {
+describe.each([2000, 10000])(
+  "realistic finalized manager dataset (%s screenshots)",
+  (count) => {
+    // Fixture writes dominate elapsed time on shared CI runners. Keep their
+    // setup budget separate from the unchanged 60-second read/plan check.
+    beforeEach(async () => {
     await db.exec("reset role");
     await db.query(
       `insert into public.bids(workspace_id,bidder_id,resume_id,company,role_name,url,normalized_url,source,arrangement,found_at,review_status)
@@ -806,6 +809,8 @@ it.each([2000, 10000])(
     await db.exec(
       "update public.bids b set evidence_file_id=f.id from public.files f where f.bid_id=b.id and b.company like 'Batch %'; analyze public.bids; analyze public.files",
     );
+    }, 120000);
+    it("returns full-result counts for every role and sort", async () => {
     for (const [user, role] of [
       [owner, "client"],
       [admin, "admin"],
@@ -842,6 +847,6 @@ it.each([2000, 10000])(
         `screenshot-size plan: ${role}, ${count} finalized screenshots, ${JSON.stringify(await explainListing(user !== bidder, user === bidder ? "found_at" : "screenshot_size_bytes"))}`,
       );
     }
+    }, 60000);
   },
-  60000,
 );

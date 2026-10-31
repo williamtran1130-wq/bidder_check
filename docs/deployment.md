@@ -1,6 +1,48 @@
-> Notification retirement, 2026-10-31: local implementation removes notification delivery and message management. Apply `202610310003_retire_notifications.sql` with the compatible application release; it unschedules only `bidder-check-notifications` and removes notification-only data and Vault entries. Storage cleanup remains active. Production application/schema changes have not been executed by this implementation task. Historical notification verification and credential instructions below are superseded. See [implementation and release notes](review/notification-retirement-implementation.md).
+> Notification retirement, 2026-10-31: migration `202610310003_retire_notifications.sql` is applied in production. It removed notification delivery, message management, notification-only data/Vault entries and the `bidder-check-notifications` cron job. Storage cleanup remains active. Historical notification verification and credential instructions below are superseded. See the current release record and [implementation notes](review/notification-retirement-implementation.md).
 
 # Deployment handoff
+
+## Workspace reporting, latest application IP and notification retirement, 2026-10-31
+
+Production cutover: `dpl_H1WxEKJSXKHpkyibPCxM6T81XXmZ`, source release marker
+`8b98e8ee028bdf02b1e15adba30d0af24592b6b6` (implementation `51074e8`), at
+https://bidder-check.vercel.app. Reporting migration `202610310001` was applied
+first and reconciled before promotion. Location/notification migrations 002/003
+followed promotion; post-cutover migration 004 removed redundant snapshot blobs.
+All four are recorded in the production migration ledger. Latest-location
+backfill preserved 4,141 records; summary reconciliation returned zero differences.
+
+The notification cron job, notification Vault entries and four notification-only
+Vercel production settings were removed. Storage cleanup remains active. IP
+history and notification tables were intentionally deleted. The compatible raw
+report reader remains available through the documented rollout switch.
+
+Ten production acceptance checkpoints passed: real Python publisher sign-in and
+v2 full/metadata-only uploads; tenant/mailbox isolation; all three bundled report
+APIs and a 200% interview-rate fixture; private headers, role denials, country
+filter counts and location-table permissions; browser sidebar/report UI; redirect
+of Notifications; no notification/per-row IP calls; and no duplicate Overview
+fetch after hydration. All four temporary synthetic accounts were removed.
+
+Mail Check [0.5.2](https://github.com/DevTech06130324/mail-check/releases/tag/v0.5.2)
+is published from `5eb3e0bb828ffde58f45778bd1d14b56404cb248`. All four uploaded asset
+SHA-256 digests matched local builds; the Squirrel manifest matched package SHA-1
+and size. Installer SHA-256:
+`0ae0071d8e1b488acbff14d099277d8490e792ec479451010a79c197a8ce9e1d`.
+The standalone packaged Windows app passed using an isolated profile with Python
+and Node removed from PATH.
+
+Local final verification passed 835 unit/database tests, lint, typecheck and
+generated-schema parity. A Linux CI timeout was traced to fixture construction:
+the 10,000-row setup consumed almost the entire 60-second test budget while
+listing calls took 100–444 ms. Setup now has its own bounded hook; the read/plan
+check retains its original timeout and all 48 affected tests pass locally.
+
+See [production acceptance evidence](release-evidence/2026-10-31-workspace-reporting-production.json),
+[rollout/repair instructions](workspace-reporting-rollout.md) and
+[logic/usage audit](review/2026-10-31-workspace-review.md). Seven-day provider usage
+comparison and hosted performance at twice current production volume remain
+post-release work; no billing savings are claimed from local timings.
 
 ## Current release — mail metrics and original theme, 2026-10-31
 

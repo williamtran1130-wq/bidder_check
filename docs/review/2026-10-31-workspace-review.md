@@ -72,10 +72,30 @@ reads, and made normalized retention pruning and the rollback switch operational
   points. Test-only servers were stopped after verification; unrelated existing
   processes and untracked user files were preserved.
 
+## Production release follow-up
+
+The authorized release applied migrations 001–004 and passed ten production
+acceptance checkpoints with temporary synthetic accounts. The real local
+publisher negotiated v2 and successfully sent a full snapshot followed by a
+metadata-only delta. All synthetic accounts were removed. Production summary
+reconciliation remained zero, 4,141 latest locations were preserved, redundant
+snapshot blobs were cleared, and only storage cleanup remains scheduled.
+
+Final local checks include 835 tests and 48 screenshot-list tests after separating
+slow shared-runner fixture setup from the unchanged query-test timeout. The prior
+Linux CI failure was that setup timeout, not a failed count or privacy assertion.
+
+The optional benchmark against existing customer accounts was not executed:
+automatic approval review rejected generating sessions for those accounts without
+specific authorization. Production acceptance used synthetic accounts instead.
+No hosted twice-volume, representative write-latency or billing-savings result is
+claimed. See the production release record in `docs/deployment.md`.
+
 ## Remaining measurements and opportunities
 
 - Hosted cold/warm concurrency, Vercel CPU, and seven-day post-release usage remain
-  release checks. No deployment or hosted mutation was performed locally.
+  follow-up checks. Production deployment and scoped synthetic acceptance were
+  completed during the subsequently authorized release.
 - Private screenshots keep existing compression, explicit opening, bounded signing
   and retention. Do not use public storage or long-lived URLs to chase cache hits.
 - The location helper currently projects authorized locations before the list's

@@ -197,3 +197,15 @@ it("intersects collection histories and fails closed for missing coverage", asyn
   await asUser(owner);
   expect((await report('dashboard_performance_v2')).totals.found).toBe(4);
 });
+
+it("clears legacy mail blobs after cutover without changing normalized counts or receipts", async () => {
+  await db.exec("begin; reset role");
+  await db.query("insert into public.mail_insights_state(client_id,workspace_id,last_revision,original_hash,mailboxes) values($1,$2,7,'receipt','[{\"email\":\"legacy@example.test\"}]'::jsonb)",[owner,w]);
+  await db.query("insert into private.mail_mailboxes values($1,'legacy@example.test','Legacy',now(),current_date)",[owner]);
+  await db.query("insert into private.mail_daily values($1,'legacy@example.test',current_date,'interview_invite',false,true,false,2)",[owner]);
+  const cleanup=readFileSync('supabase/migrations/202610310004_remove_legacy_mail_snapshot_blobs.sql','utf8');
+  await db.exec(cleanup);
+  await db.exec(cleanup);
+  expect((await db.query<{mailboxes:unknown[];last_revision:number;original_hash:string}>("select mailboxes,last_revision,original_hash from public.mail_insights_state where client_id=$1",[owner])).rows[0]).toEqual({mailboxes:[],last_revision:7,original_hash:'receipt'});
+  expect((await db.query<{n:number}>("select n::integer from private.mail_daily where client_id=$1",[owner])).rows[0].n).toBe(2);
+});

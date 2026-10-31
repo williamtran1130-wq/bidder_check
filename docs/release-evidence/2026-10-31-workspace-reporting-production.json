@@ -1,0 +1,17 @@
+{
+  "at": "2026-10-31T23:53:59.525Z",
+  "origin": "https://bidder-check.vercel.app",
+  "checks": [
+    "public connection config contains only expected public fields",
+    "unauthenticated uploads return JSON 401 without a login redirect",
+    "real local Python publisher signs in, exports metrics, uploads via production API and signs out",
+    "owner report returns complete aggregate cubes without message contents",
+    "other client and bidder projections enforce tenant and mailbox isolation",
+    "a valid token cannot substitute a different client ID",
+    "all production report bundles share first-applied denominator, invitation rate200%, dates and private headers",
+    "live authorization, tenant isolation, bidder financial denial and retired notification APIs",
+    "paginated country counts, unknown locations, tenant isolation and private location table permissions",
+    "production UI, sidebar, interview rate, notification redirect, zero notification/per-row IP traffic and SSR hydration"
+  ],
+  "synthetic_accounts_removed": 4
+}
