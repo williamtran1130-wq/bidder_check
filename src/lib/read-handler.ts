@@ -36,6 +36,7 @@ const reportInput = z.object({
   workspace: z.string().optional(),
   bidder: z.string().optional(),
   profile: z.string().optional(),
+  email: z.email().max(320).optional(),
   group: z.string().optional(),
 });
 const operations = new Set([

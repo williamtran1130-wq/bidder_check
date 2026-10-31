@@ -1,6 +1,6 @@
 import type { PeriodSelection } from "./calendar-period";
 
-export type ReportQuery = { period: PeriodSelection; workspace?: string; bidder?: string; profile?: string };
+export type ReportQuery = { period: PeriodSelection; workspace?: string; bidder?: string; profile?: string; email?: string };
 export type GroupedReportQuery = ReportQuery & { group: "profile" | "bidder" | "assignment" };
 export type ReportResult<T> = { data?: T; error?: string; code?: "temporarily_unavailable" | "unavailable" | "validation" | "forbidden" };
 export type ArrangementCounts = { found: number; foundApplied: number };

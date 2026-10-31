@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ArrowUpRight, BriefcaseBusiness, CalendarCheck2, CheckCheck, LoaderCircle, RefreshCw, Target, Wallet } from "lucide-react";
 import type { DashboardData } from "@/lib/data";
@@ -8,6 +8,7 @@ import { usd } from "@/lib/domain";
 import { applicationRate, dashboardDateLabel } from "@/lib/dashboard-report";
 import { resolveCalendarPeriod, type PeriodSelection } from "@/lib/calendar-period";
 import { Comparison } from "./dashboard-comparison";
+import { EmailInsights } from "./email-insights";
 import { getDashboardPerformance } from "@/lib/read-client";
 import { PageHeading } from "./common";
 import { PeriodSelector, useCalendarDay } from "./period-selector";
@@ -25,10 +26,12 @@ export function Dashboard({ data, initial }: { data: DashboardData; initial?: Re
   const [workspace, setWorkspace] = useState("");
   const [bidder, setBidder] = useState("");
   const [profile, setProfile] = useState("");
+  const [email, setEmail] = useState("");
   const day = useCalendarDay();
   const isManager = data.profile.role !== "bidder";
-  const request = useCallback(() => getDashboardPerformance({ period, workspace: workspace || undefined, bidder: bidder || undefined, profile: profile || undefined }), [period, workspace, bidder, profile]);
-  const queryKey = readKey(scope, "dashboard", { period, workspace: workspace || undefined, bidder: bidder || undefined, profile: profile || undefined }, day);
+  const query = useMemo(() => ({ period, workspace: workspace || undefined, bidder: bidder || undefined, profile: profile || undefined, ...(email ? { email } : {}) }), [period, workspace, bidder, profile, email]);
+  const request = useCallback(() => getDashboardPerformance(query), [query]);
+  const queryKey = readKey(scope, "dashboard", query, day);
   const { data: report, loading, error, refresh } = useReport(queryKey, request, initial);
   const range = resolveCalendarPeriod(period);
   const rate = report ? applicationRate(report.totals.found, report.totals.foundApplied) : null;
@@ -48,12 +51,12 @@ export function Dashboard({ data, initial }: { data: DashboardData; initial?: Re
     </PageHeading>
     <section className="panel mb-5 flex flex-wrap items-end gap-3 p-4" aria-label="Dashboard report filters">
       <PeriodSelector value={period} onChange={setPeriod} />
-      {isManager && (data.profile.role === "admin" || data.workspaces.length > 1) && <label className="space-y-1 text-xs text-muted-foreground"><span>Workspace</span><select className="native-select block text-foreground" value={workspace} onChange={(event) => { setWorkspace(event.target.value); setBidder(""); setProfile(""); }}><option value="">All workspaces</option>{data.workspaces.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>}
-      {isManager && <label className="space-y-1 text-xs text-muted-foreground"><span>Bidder</span><select className="native-select block text-foreground" value={bidder} onChange={(event) => setBidder(event.target.value)}><option value="">All bidders</option>{data.bidders.filter((row) => !row.archived && (!workspace || row.workspace_id === workspace)).map((row) => <option key={row.user_id} value={row.user_id}>{data.profiles.find((person) => person.id === row.user_id)?.display_name ?? "Bidder"}</option>)}</select></label>}
-      <label className="space-y-1 text-xs text-muted-foreground"><span>Candidate profile</span><select className="native-select block text-foreground" value={profile} onChange={(event) => setProfile(event.target.value)}><option value="">All profiles</option>{data.candidateProfiles.filter((row) => !row.archived && (!workspace || row.workspace_id === workspace)).map((row) => <option key={row.id} value={row.id}>{row.identifier}</option>)}</select></label>
+      {isManager && (data.profile.role === "admin" || data.workspaces.length > 1) && <label className="space-y-1 text-xs text-muted-foreground"><span>Workspace</span><select className="native-select block text-foreground" value={workspace} onChange={(event) => { setWorkspace(event.target.value); setBidder(""); setProfile(""); setEmail(""); }}><option value="">All workspaces</option>{data.workspaces.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>}
+      {isManager && <label className="space-y-1 text-xs text-muted-foreground"><span>Bidder</span><select className="native-select block text-foreground" value={bidder} onChange={(event) => { setBidder(event.target.value); setEmail(""); }}><option value="">All bidders</option>{data.bidders.filter((row) => !row.archived && (!workspace || row.workspace_id === workspace)).map((row) => <option key={row.user_id} value={row.user_id}>{data.profiles.find((person) => person.id === row.user_id)?.display_name ?? "Bidder"}</option>)}</select></label>}
+      <label className="space-y-1 text-xs text-muted-foreground"><span>Candidate profile</span><select className="native-select block text-foreground" value={profile} onChange={(event) => { setProfile(event.target.value); setEmail(""); }}><option value="">All profiles</option>{data.candidateProfiles.filter((row) => !row.archived && (!workspace || row.workspace_id === workspace)).map((row) => <option key={row.id} value={row.id}>{row.identifier}</option>)}</select></label>
       <span className="ml-auto pb-2 text-xs text-muted-foreground" role="status">{range.from ? `${range.from} – ${range.to} CT` : "All time · CT"}</span>
     </section>
-    {error && <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-4 py-3 text-sm" role="alert"><span>{error}{report ? " Showing the last successful results for these filters." : ""}</span><Button variant="outline" size="sm" onClick={refresh} disabled={loading}>Retry</Button></div>}
+    {error && <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-4 py-3 text-sm" role="alert" aria-label="Bid reporting error"><span>{error}{report ? " Showing the last successful results for these filters." : ""}</span><Button variant="outline" size="sm" onClick={refresh} disabled={loading}>Retry</Button></div>}
     <div className={`mb-5 grid gap-3 sm:grid-cols-2 ${isManager ? "xl:grid-cols-5" : "xl:grid-cols-4"}`}>
       {stats.map((stat) => <div className="panel p-4" key={stat.label}><div className="flex items-center justify-between gap-2"><span className="text-xs font-medium text-muted-foreground">{stat.label}</span><stat.icon size={16} className="shrink-0 text-primary" /></div><p className="mt-3 text-2xl font-semibold tracking-tight">{loading && !report ? <span className="inline-block h-7 w-20 animate-pulse rounded bg-muted" /> : stat.value}</p><p className="mt-1.5 text-[11px] text-muted-foreground">{stat.note}</p></div>)}
     </div>
@@ -65,6 +68,7 @@ export function Dashboard({ data, initial }: { data: DashboardData; initial?: Re
       <div className="mt-2 flex gap-4 text-xs text-muted-foreground"><span>● Found</span><span className="text-emerald-700 dark:text-emerald-400">● Applied activity</span></div>
       {!!report && <details className="mt-4 border-t pt-3 text-xs"><summary className="cursor-pointer font-medium">View activity values</summary><div className="mt-3 max-h-60 overflow-auto"><table className="w-full text-right"><caption className="sr-only">Activity values in Central Time</caption><thead><tr><th className="py-2 text-left">Period</th><th>Found</th><th>Applied from cohort</th><th>Applied activity</th></tr></thead><tbody>{series.map((row) => <tr key={row.from} className="border-t"><th className="py-2 text-left font-medium" scope="row">{row.tooltip}</th><td>{row.found}</td><td>{row.foundApplied}</td><td>{row.applied}</td></tr>)}</tbody></table></div></details>}
     </section>
+    <EmailInsights query={query} isManager={isManager} email={email} onEmailChange={setEmail} />
     <div className={`mb-5 grid gap-5 ${isManager ? "xl:grid-cols-2" : ""}`}>
       {isManager && <Comparison title="By bidder" rows={report?.comparisons.bidders ?? []} loading={loading} available={!!report} />}
       <Comparison title="By profile" rows={report?.comparisons.profiles ?? []} loading={loading} available={!!report} />

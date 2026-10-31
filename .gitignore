@@ -9,6 +9,7 @@ playwright-report/
 test-results/
 *.tsbuildinfo
 .superpowers/
+.superpowers-*.log
 .worktrees/
 supabase/.temp/
 supabase/.branches/

@@ -3,6 +3,7 @@ node_modules/
 .next/
 .env*
 .superpowers/
+.superpowers-*.log
 .worktrees/
 *.tsbuildinfo
 test-results/

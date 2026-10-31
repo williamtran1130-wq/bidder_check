@@ -73,7 +73,15 @@ Browser tests exercise real authentication pages and the workspace components us
 
 Current production verification uses `node --env-file=.env.local scripts/screenshot-retention-production.mjs --status` for read-only counts and `--smoke` for an explicitly scoped synthetic lifecycle whose accounts/files are removed afterward. Activation/draining is separate; see the [rollout guide](docs/screenshot-retention-deletion-rollout.md). Older staging-only scripts remain historical benchmark tools and are not required for deployment.
 
-## Vercel
+## Email Insights integration
+
+Overview includes stored mail-check metrics and a comparison of bidding activity with received email categories by assignment email, profile and bidder. Confirmation emails use mail-check's Application received classification. Figures compare date-range totals; they do not match individual emails to bids. Email groups follow current resume assignment addresses, and shared mailbox totals are deduplicated. Mail history is bounded to 90 Chicago calendar days; missing collection history remains unknown.
+
+In mail-check 0.5.0, open Settings → Bidder-check and sign in with your existing bidder-check client email/password. Choose one source for each mailbox and enable synchronization. The local Python backend stores its independent Auth session in Windows Credential Manager and sends aggregate-only snapshots using the client's JWT. Website reads apply live workspace/assignment authorization before any mailbox data is returned. Signing out or pausing the publisher preserves the last uploaded website metrics. A running local app is required for new uploads. The connection config endpoint exposes only the Supabase public URL/key and application origin; no service secret is installed on the laptop.
+
+Production acceptance: `node --env-file=.env.local scripts/mail-insights-production-smoke.mjs --production` creates isolated synthetic accounts, exercises the local Python publisher, production API and Overview, then removes only its own records. It sends no email.
+
+## Vercel deployment
 
 Import `DevTech06130324/bidder-check`, select Next.js, root `./`, build `npm run build`, default output directory, Node 22. Set the four environment variables in Production and set `APP_URL` to the trusted production origin. No staging setup is required. Follow the phased migration/application rollout above. Production branch is `main`.
 

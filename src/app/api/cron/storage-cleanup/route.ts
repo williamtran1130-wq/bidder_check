@@ -51,6 +51,11 @@ export async function GET(request: Request) {
       deadlineAt,
       signal: request.signal,
     });
+    phase = "mail-insights-retention";
+    const { data: mailInsights, error: mailError } = await run(() =>
+      admin.rpc("prune_mail_insights", { p_limit: 100 }),
+    );
+    if (mailError) throw Object.assign(new Error("Mail metric expiry pending"), { code: mailError.code });
     phase = "cleanup-status";
     const { data: cleanupStatus, error: statusError } = await run(() =>
       admin.rpc("retention_cleanup_status"),
@@ -60,7 +65,7 @@ export async function GET(request: Request) {
         code: statusError.code,
       });
     return Response.json(
-      { retention, screenshots, legacy, storageCleanup, cleanupStatus },
+      { retention, screenshots, legacy, storageCleanup, mailInsights, cleanupStatus },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {

@@ -83,7 +83,7 @@ test("failed refresh keeps only same-filter results and retries only when reques
   await expect(page.getByText("2026-10-12 – 2026-10-12 CT", { exact: true })).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "1");
   await page.getByRole("button", { name: "Refresh dashboard" }).click();
-  await expect(page.getByRole("alert")).toContainText("Showing the last successful results for these filters.");
+  await expect(page.getByRole("alert", { name: "Bid reporting error" })).toContainText("Showing the last successful results for these filters.");
   await expect(existing).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "2");
   await page.getByRole("button", { name: "Retry", exact: true }).click();
@@ -91,8 +91,8 @@ test("failed refresh keeps only same-filter results and retries only when reques
   await expect(existing).toBeVisible();
   await page.getByLabel("Period", { exact: true }).selectOption("yesterday");
   await expect(existing).toHaveCount(0);
-  await expect(page.getByRole("alert")).toContainText("This report is temporarily unavailable. Please retry.");
-  await expect(page.getByRole("alert")).not.toContainText("last successful");
+  await expect(page.getByRole("alert", { name: "Bid reporting error" })).toContainText("This report is temporarily unavailable. Please retry.");
+  await expect(page.getByRole("alert", { name: "Bid reporting error" })).not.toContainText("last successful");
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "4");
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "5");

@@ -42,6 +42,7 @@ const mockRetention = () => {
     })
     .mockResolvedValueOnce({ data: { deletedFiles: 0 }, error: null })
     .mockResolvedValueOnce({ data: { processed: 0 }, error: null })
+    .mockResolvedValueOnce({ data: 0, error: null })
     .mockResolvedValueOnce({
       data: { pending: 0, verificationPending: 0 },
       error: null,
@@ -75,6 +76,7 @@ it("requires the exact server secret and fails closed when unconfigured", async 
     ).status,
   ).toBe(200);
   expect(worker).toHaveBeenCalledOnce();
+  expect(adminRpc).toHaveBeenCalledWith("prune_mail_insights", { p_limit: 100 });
 });
 it("drains multiple batches within the function limit and reports a pending retry on failure", async () => {
   vi.stubEnv("CRON_SECRET", "a-secret");

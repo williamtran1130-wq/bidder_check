@@ -52,12 +52,15 @@ export function createReportReader(
           error: "This report is available to workspace managers.",
           code: "forbidden",
         };
-      const { data, error } = await supabase.rpc(operation, {
+      const args = {
         p_from: range.from ?? null,
         p_to: range.to ?? null,
         ...filters,
         ...(grouping ? { p_group: grouping } : {}),
-      });
+      };
+      const { data, error } = input.email && operation === "dashboard_performance_v2"
+        ? await supabase.rpc("dashboard_email_performance", { ...args, p_email: z.email().max(320).parse(input.email).trim().toLowerCase() })
+        : await supabase.rpc(operation, args);
       if (error) {
         errorCode = error.code || "unknown";
         throw new Error("Report request failed");
