@@ -19,7 +19,7 @@ test("paired arrangement bars reconcile with every exact count and completion", 
   expect(appliedSegments.reduce((sum, width) => sum + width, 0) / foundSegments.reduce((sum, width) => sum + width, 0)).toBeCloseTo(0.6, 1);
   await comparison.getByText("View all comparison values", { exact: true }).click();
   const table = comparison.getByRole("table", { name: "By profile values" });
-  await expect(table.getByRole("row").nth(1).getByRole("cell")).toHaveText(["10", "6", "60.0%"]);
+  await expect(table.getByRole("row").nth(1).getByRole("cell")).toHaveText(["10", "6", "—", "60.0%"]);
   await expect(table.getByRole("row").nth(2).getByRole("cell")).toHaveText(["5", "3", "60.0%"]);
   await expect(table.getByRole("row").nth(3).getByRole("cell")).toHaveText(["3", "2", "66.7%"]);
   await expect(table.getByRole("row").nth(4).getByRole("cell")).toHaveText(["2", "1", "50.0%"]);
@@ -37,7 +37,7 @@ test("missing breakdown preserves totals without inventing arrangement zeroes", 
   await expect(comparison.getByRole("img", { name: /Remote/ })).toHaveCount(0);
   await comparison.getByText("View all comparison values", { exact: true }).click();
   const table = comparison.getByRole("table", { name: "By profile values" });
-  await expect(table.getByRole("row").nth(1).getByRole("cell")).toHaveText(["10", "6", "60.0%"]);
+  await expect(table.getByRole("row").nth(1).getByRole("cell")).toHaveText(["10", "6", "—", "60.0%"]);
   await expect(table).toContainText("Breakdown unavailable");
   await expect(table.getByRole("row")).toHaveCount(2);
 });

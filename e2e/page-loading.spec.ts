@@ -77,10 +77,10 @@ test("a failed read replaces the loading bar with the existing error and Retry r
   await expect(status).toBeVisible();
   await releaseRead(page, true);
   await expect(status).toHaveCount(0);
-  await expect(page.getByRole("alert")).toContainText("Fixture report unavailable");
+  await expect(page.getByRole("alert", { name: "Earnings reporting error" })).toContainText("Fixture report unavailable");
   await releaseRead(page);
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.getByRole("table")).toContainText("$10.00");
-  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("alert", { name: "Earnings reporting error" })).toHaveCount(0);
   await expect(page.locator("html")).toHaveAttribute("data-page-loading-reads", "2");
 });

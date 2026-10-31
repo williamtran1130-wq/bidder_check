@@ -96,7 +96,7 @@ export function Earnings({
       </div>
       <MailReportNotice mail={mail} />
       <section className="panel p-5">
-        {error && <p role="alert" className="mb-4 text-sm text-destructive">{error}{report ? " Showing the last successful results for these filters." : ""} <Button size="sm" variant="outline" disabled={loading} onClick={refresh}>Retry</Button></p>}
+        {error && <p role="alert" aria-label="Earnings reporting error" className="mb-4 text-sm text-destructive">{error}{report ? " Showing the last successful results for these filters." : ""} <Button size="sm" variant="outline" disabled={loading} onClick={refresh}>Retry</Button></p>}
         {loading && <PageLoading label="Loading earnings…" size="section" />}
         {!loading && report && !groups.length ? (
           <EmptyState

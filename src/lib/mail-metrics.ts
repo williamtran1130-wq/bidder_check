@@ -1,4 +1,5 @@
 import { aggregateMailInsights, type MailGroup, type MailInsightsReport } from "./mail-insights-report";
+import { formatInTimeZone } from "date-fns-tz";
 
 export type MailMetricStatus = "ready" | "partial" | "not_synced" | "outside_retention" | "unavailable";
 export type MailMetric = { confirmations: number | null; invitations: number | null; status: MailMetricStatus; shared?: boolean };
@@ -18,7 +19,9 @@ export function projectMailMetrics(report: MailInsightsReport | undefined, group
     if (report.status !== "ready" || !emails.some(email => mailboxes.has(email))) return "not_synced";
     if (from < report.range.from || to > report.range.to || emails.some(email => {
       const mailbox = mailboxes.get(email);
-      return !mailbox?.collected_at || !mailbox.coverage_start || mailbox.coverage_start > from;
+      const collected = mailbox?.collected_at;
+      return !collected || !Number.isFinite(Date.parse(collected)) || !mailbox?.coverage_start || mailbox.coverage_start > from ||
+        formatInTimeZone(collected, "America/Chicago", "yyyy-MM-dd") < to;
     })) return "partial";
     return "ready";
   };
