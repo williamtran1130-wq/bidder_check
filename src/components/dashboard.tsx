@@ -2,10 +2,10 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ArrowUpRight, BriefcaseBusiness, CalendarCheck2, CheckCheck, LoaderCircle, RefreshCw, Target, Wallet } from "lucide-react";
+import { ArrowUpRight, BriefcaseBusiness, CalendarCheck2, CheckCheck, LoaderCircle, Mail, RefreshCw, Wallet } from "lucide-react";
 import type { DashboardData } from "@/lib/data";
 import { usd } from "@/lib/domain";
-import { applicationRate, dashboardDateLabel } from "@/lib/dashboard-report";
+import { dashboardDateLabel } from "@/lib/dashboard-report";
 import { resolveCalendarPeriod, type PeriodSelection } from "@/lib/calendar-period";
 import { Comparison } from "./dashboard-comparison";
 import { EmailInsights } from "./email-insights";
@@ -37,13 +37,11 @@ export function Dashboard({ data, initial }: { data: DashboardData; initial?: Re
   const profileRows = mergeMailGroups(report?.comparisons.profiles ?? [], mailProfiles.groups, row => ({ id: row.id, label: row.label, found: 0, foundApplied: 0 }));
   const confirmationSeries = confirmationBuckets(mailReport, report?.series ?? []);
   const range = resolveCalendarPeriod(period);
-  const rate = report ? applicationRate(report.totals.found, report.totals.foundApplied) : null;
-  const interviewRate = bundle.data?.interview.rate ?? null;
   const stats = [
     { label: "Bids found", value: report?.totals.found.toLocaleString() ?? "—", note: "Found in this period", icon: BriefcaseBusiness },
-    { label: "Applied from cohort", value: report?.totals.foundApplied.toLocaleString() ?? "—", note: rate === null ? "Of bids found in this period" : `${rate.toFixed(1)}% of bids found`, icon: CheckCheck },
-    { label: "Application activity", value: report?.totals.appliedActivity.toLocaleString() ?? "—", note: "By latest applied date", icon: Target },
-    { label: "Interview rate", value: interviewRate === null ? "—" : `${interviewRate.toFixed(1)}%`, note: bundle.data?.interviewPeriod ? `${bundle.data.interviewPeriod.from} – ${bundle.data.interviewPeriod.to} CT` : "Collection unavailable", icon: CalendarCheck2 },
+    { label: "Bids applied", value: report?.totals.appliedActivity.toLocaleString() ?? "—", note: "By latest applied date", icon: CheckCheck },
+    { label: "Confirmation email", value: mailProfiles.total.confirmations?.toLocaleString() ?? "—", note: "From Mail Check", icon: Mail },
+    { label: "Interview invites", value: mailProfiles.total.invitations?.toLocaleString() ?? "—", note: "From Mail Check", icon: CalendarCheck2 },
     ...(isManager ? [{ label: "Earned", value: report?.financial ? usd(report.financial.earningsCents) : "—", note: "By first applied date", icon: Wallet }] : []),
   ];
   const series = report?.series.map((row, index) => ({ ...row, ...confirmationSeries[index], label: dashboardDateLabel(row.from), tooltip: `${row.from === row.to ? dashboardDateLabel(row.from) : `${dashboardDateLabel(row.from)} – ${dashboardDateLabel(row.to)}`} CT` })) ?? [];
@@ -60,9 +58,9 @@ export function Dashboard({ data, initial }: { data: DashboardData; initial?: Re
       <span className="ml-auto pb-2 text-xs text-muted-foreground" role="status">{range.from ? `${range.from} – ${range.to} CT` : "All time · CT"}</span>
     </section>
     {error && <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-4 py-3 text-sm" role="alert" aria-label="Bid reporting error"><span>{error}{report ? " Showing the last successful results for these filters." : ""}</span><Button variant="outline" size="sm" onClick={refresh} disabled={loading}>Retry</Button></div>}
-    <div className={`mb-5 grid gap-3 sm:grid-cols-2 ${isManager ? "xl:grid-cols-5" : "xl:grid-cols-4"}`}>
-      {stats.map((stat) => <div className="panel p-4" key={stat.label}><div className="flex items-center justify-between gap-2"><span className="text-xs font-medium text-muted-foreground">{stat.label}</span><stat.icon size={16} className="shrink-0 text-primary" /></div><p className="mt-3 text-2xl font-semibold tracking-tight">{loading && !report ? <span className="inline-block h-7 w-20 animate-pulse rounded bg-muted" /> : stat.value}</p><p className="mt-1.5 text-[11px] text-muted-foreground">{stat.note}</p></div>)}
-    </div>
+    <section aria-label="Dashboard summary" className={`mb-5 grid gap-3 sm:grid-cols-2 ${isManager ? "xl:grid-cols-5" : "xl:grid-cols-4"}`}>
+      {stats.map((stat) => <div role="group" aria-label={stat.label} className="panel p-4" key={stat.label}><div className="flex items-center justify-between gap-2"><span className="text-xs font-medium text-muted-foreground">{stat.label}</span><stat.icon size={16} className="shrink-0 text-primary" /></div><p className="mt-3 text-2xl font-semibold tracking-tight">{loading && !report ? <span className="inline-block h-7 w-20 animate-pulse rounded bg-muted" /> : stat.value}</p><p className="mt-1.5 text-[11px] text-muted-foreground">{stat.note}</p></div>)}
+    </section>
     <section className="panel mb-5 min-w-0 p-5" aria-label="Application activity">
       <h2 className="font-semibold">Application activity</h2><p className="mt-1 text-xs text-muted-foreground">Bids found and latest application activity by {report?.range.bucketUnit ?? "day"}, in CT.</p>
       <div className="mt-5 h-64 min-w-0" role="img" aria-label={report ? `Activity chart: ${report.totals.found} found, ${report.totals.appliedActivity} applications, ${mailProfiles.total.confirmations ?? "unavailable"} confirmation emails, ${mailProfiles.total.invitations ?? "unavailable"} interview invites.` : "Activity chart loading or unavailable"}>

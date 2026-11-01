@@ -18,6 +18,11 @@ test("activity collapse persists, main counts ignore section filters and only on
   let reads = 0;
   page.on("request", request => { if (request.url().includes("/api/mail-insights/report")) reads++; });
   await page.goto("/dashboard");
+  const summary = page.getByRole("region", { name: "Dashboard summary", exact: true });
+  await expect(summary.getByRole("group")).toHaveCount(5);
+  expect(await summary.getByRole("group").evaluateAll(cards => cards.map(card => card.getAttribute("aria-label")))).toEqual(["Bids found", "Bids applied", "Confirmation email", "Interview invites", "Earned"]);
+  await expect(summary.getByRole("group", { name: "Confirmation email", exact: true }).locator("p").first()).toHaveText("3");
+  await expect(summary.getByRole("group", { name: "Interview invites", exact: true }).locator("p").first()).toHaveText("2");
   const toggle = page.getByRole("button", { name: "Bids and email activity", exact: true });
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
   await expect(page.getByRole("tabpanel", { name: "Activity by email" })).toBeHidden();
@@ -27,12 +32,23 @@ test("activity collapse persists, main counts ignore section filters and only on
   await expect.poll(() => reads).toBe(1);
   await page.getByRole("combobox", { name: "Mail category", exact: true }).selectOption("interview_invite");
   await expect(page.getByRole("region", { name: "By profile", exact: true }).getByLabel("FULLSTACK-02 Confirmations: 3", { exact: true })).toBeVisible();
+  await expect(summary.getByRole("group", { name: "Confirmation email", exact: true }).locator("p").first()).toHaveText("3");
+  await expect(summary.getByRole("group", { name: "Interview invites", exact: true }).locator("p").first()).toHaveText("2");
   expect(reads).toBe(1);
   await page.reload();
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
   await toggle.click();
   await page.reload();
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
+});
+
+test("bidder summary shows bid and email counts without an earnings card", async ({ page }) => {
+  await page.goto("/dashboard?role=bidder");
+  const summary = page.getByRole("region", { name: "Dashboard summary", exact: true });
+  await expect(summary.getByRole("group")).toHaveCount(4);
+  await expect(summary.getByRole("group", { name: "Earned", exact: true })).toHaveCount(0);
+  await expect(summary.getByRole("group", { name: "Confirmation email", exact: true }).locator("p").first()).toHaveText("3");
+  await expect(summary.getByRole("group", { name: "Interview invites", exact: true }).locator("p").first()).toHaveText("2");
 });
 test("Earnings preserves money and Interviews uses invitations over the available application cohort", async ({ page }) => {
   await page.goto("/earnings");
