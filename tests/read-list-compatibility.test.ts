@@ -16,3 +16,16 @@ it('does not request bidder money and performs no fallback after a timeout',asyn
  expect((await getBidRows('all','','',false,undefined,query)).data?.rows[0]).not.toHaveProperty('rate_cents');expect(h.rpc).toHaveBeenCalledTimes(1);
  h.rpc.mockReset().mockResolvedValue({error:{code:'57014'}});expect(await getBidRows('all','','',false,undefined,query)).toMatchObject({code:'statement_timeout'});expect(h.rpc).toHaveBeenCalledTimes(1);
 });
+it.each([
+ ['bidder','today',false,true],
+ ['bidder','today',true,false],
+ ['client','today',false,false],
+ ['admin','today',false,false],
+ ...['yesterday','this_week','last_week','this_month','last_month','all','custom'].map(mode=>['bidder',mode,false,false] as const),
+] as const)('includes the older backlog only for bidder Today: %s %s trash=%s',async(role,mode,trash,enabled)=>{
+ h.role=role;
+ h.rpc.mockResolvedValue({data:{rows:[],total:0,sources:[],countryOptions:[],statusCounts:{}},error:null});
+ const result=await getBidRows(mode,'2026-10-01','2026-10-31',trash,undefined,query);
+ expect(result.error).toBeUndefined();
+ expect(h.rpc.mock.calls[0][1].p_query).toMatchObject({includeOlderUnapplied:enabled,trash,pageIndex:2,pageSize:25});
+});

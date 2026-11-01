@@ -93,6 +93,7 @@ async function explainListing(canViewSizes: boolean, sort: string) {
     bidder_matches: "'{}'::uuid[]",
     resume_matches: "'{}'::uuid[]",
     can_view_sizes: String(canViewSizes),
+    include_older_unapplied: "false",
   };
   for (const [variable, value] of Object.entries(locals))
     statement = statement.replace(new RegExp(`\\b${variable}\\b`, "g"), value);

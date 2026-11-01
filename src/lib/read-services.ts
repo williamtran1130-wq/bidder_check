@@ -246,6 +246,8 @@ export function createReadServices(
           pageSize: z.number().int().min(1).max(100).parse(query.pageSize),
           rangeFrom: bounds.from ?? null,
           rangeTo: bounds.to ?? null,
+          includeOlderUnapplied:
+            profile.role === "bidder" && mode === "today" && !trash,
           trash,
           scopeBidderId: bidderId ? z.uuid().parse(bidderId) : null,
         },

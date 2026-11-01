@@ -263,8 +263,14 @@ export async function getBidRows(
         (fixture.profile.role !== "bidder" ||
           b.bidder_id === fixture.profile.id) &&
         (!bidderId || b.bidder_id === bidderId) &&
-        (!bounds.from || b.found_at >= bounds.from) &&
-        (!bounds.to || b.found_at < bounds.to) &&
+        (((!bounds.from || b.found_at >= bounds.from) &&
+          (!bounds.to || b.found_at < bounds.to)) ||
+          (fixture.profile.role === "bidder" &&
+            mode === "today" &&
+            !trash &&
+            !b.applied &&
+            !!bounds.from &&
+            b.found_at < bounds.from)) &&
         (query.bidder === "all" || b.bidder_id === query.bidder) &&
         (query.resume === "all" || b.resume_id === query.resume) &&
         (query.source === "all" || b.source === query.source) &&

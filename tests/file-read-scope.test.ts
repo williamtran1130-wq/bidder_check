@@ -153,6 +153,7 @@ async function listingPlan() {
     bidder_matches: "'{}'::uuid[]",
     resume_matches: "'{}'::uuid[]",
     can_view_sizes: "true",
+    include_older_unapplied: "false",
   };
   for (const [variable, value] of Object.entries(locals))
     statement = statement.replace(new RegExp(`\\b${variable}\\b`, "g"), value);
