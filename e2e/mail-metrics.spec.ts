@@ -111,7 +111,10 @@ test("a seeded report performs one read and stays fresh through 269 seconds of f
   await page.goto("/dashboard?report-seed&report-strict");
   await expect(page.getByRole("img", { name: /Activity chart: .*2 interview invites\./ })).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-report-reads", "1");
-  await page.clock.fastForward(269000);
+  // Count freshness from receipt, independently of shared-runner startup time.
+  await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now()) + 5000));
+  const seedAge = await page.evaluate(() => Date.now() - Number(document.documentElement.dataset.reportSeedAt));
+  await page.clock.fastForward(269000 - seedAge);
   await page.evaluate(() => { window.dispatchEvent(new Event("focus")); document.dispatchEvent(new Event("visibilitychange")); });
   await page.clock.runFor(10);
   expect(reads).toBe(1);

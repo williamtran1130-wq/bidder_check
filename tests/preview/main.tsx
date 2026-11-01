@@ -46,7 +46,9 @@ const overviewQuery = { period: { preset: "this_week" as const }, workspace: und
 const reportSeed = parameters.has("report-seed") ? {
   key: readKey(workspaceActorScope(fixture.profile, fixture.workspaces), "bundle-overview", overviewQuery, calendarToday()),
   result: await fetchReportBundle("overview", overviewQuery),
+    receivedAt: Date.now(),
 } : undefined;
+  if (reportSeed) document.documentElement.dataset.reportSeedAt = String(reportSeed.receivedAt);
 window.addEventListener("fixture-change-bid", (event) => {
   const change = (
     event as CustomEvent<{
