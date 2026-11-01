@@ -405,7 +405,7 @@ it("keeps surviving import IDs aligned with source rows on a lost-response repla
       await db.query<{
         result: { ids: string[]; sourceRows: number[]; purgedCount?: number };
       }>(
-        "select public.import_bids_reviewed($1,current_date,$2::jsonb,array[10,20],$3) result",
+        "select public.import_bids_reviewed($1,(current_timestamp at time zone 'America/Chicago')::date,$2::jsonb,array[10,20],$3) result",
         [resume, rows, request],
       )
     ).rows[0].result;
@@ -502,7 +502,7 @@ it("scrubs imported IDs when monthly retention deletes applications through its 
   ]);
   const request = "40000000-0000-4000-8000-000000000098";
   await db.query(
-    "select public.import_bids_reviewed($1,current_date,$2::jsonb,array[7],$3)",
+    "select public.import_bids_reviewed($1,(current_timestamp at time zone 'America/Chicago')::date,$2::jsonb,array[7],$3)",
     [resume, row, request],
   );
   await service();

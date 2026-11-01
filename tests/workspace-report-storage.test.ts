@@ -146,7 +146,8 @@ it("bundles a bounded interview denominator and denies cross-tenant report acces
 });
 it("reads private normalized mail cubes and accepts metadata-only deltas idempotently", async () => {
   await db.exec("begin");
-  const now=new Date().toISOString(); const day=now.slice(0,10);
+  const now=new Date().toISOString();
+  const day=(await db.query<{day:string}>("select (current_timestamp at time zone 'America/Chicago')::date::text as day")).rows[0].day;
   const full={schema_version:2,mode:"full",client_id:owner,revision:1,generated_at:now,timezone:"America/Chicago",removed_mailboxes:[],mailboxes:[{email:"report@example.test",account_label:"Report",collected_at:now,coverage_start:day,rows:[{date:day,category:"interview_invite",handled:false,action_required:true,retryable:false,count:3}]}]};
   const ingest=async (value:unknown)=>(await db.query<{value:Record<string,unknown>}>("select public.ingest_mail_insights($1::jsonb) value",[JSON.stringify(value)])).rows[0].value;
   expect(await ingest(full)).toMatchObject({ok:true,revision:1});
@@ -201,8 +202,8 @@ it("intersects collection histories and fails closed for missing coverage", asyn
 it("clears legacy mail blobs after cutover without changing normalized counts or receipts", async () => {
   await db.exec("begin; reset role");
   await db.query("insert into public.mail_insights_state(client_id,workspace_id,last_revision,original_hash,mailboxes) values($1,$2,7,'receipt','[{\"email\":\"legacy@example.test\"}]'::jsonb)",[owner,w]);
-  await db.query("insert into private.mail_mailboxes values($1,'legacy@example.test','Legacy',now(),current_date)",[owner]);
-  await db.query("insert into private.mail_daily values($1,'legacy@example.test',current_date,'interview_invite',false,true,false,2)",[owner]);
+  await db.query("insert into private.mail_mailboxes values($1,'legacy@example.test','Legacy',now(),(current_timestamp at time zone 'America/Chicago')::date)",[owner]);
+  await db.query("insert into private.mail_daily values($1,'legacy@example.test',(current_timestamp at time zone 'America/Chicago')::date,'interview_invite',false,true,false,2)",[owner]);
   const cleanup=readFileSync('supabase/migrations/202610310004_remove_legacy_mail_snapshot_blobs.sql','utf8');
   await db.exec(cleanup);
   await db.exec(cleanup);
