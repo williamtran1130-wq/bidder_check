@@ -28,6 +28,21 @@ export type MailInsightsReport = {
 export type MailFilters = { categories?: string[]; status?: "all" | "pending" | "done"; action?: "all" | "yes" | "no" };
 export type MailGroup = "email" | "profile" | "bidder" | "assignment";
 export type MailCombinedRow = { id: string; label: string; emails: string[]; assignments: MailAssignment[]; shared: boolean; unassigned: boolean; syncStatus: "ready" | "partial" | "not_synced" | "unavailable"; found: number; applied: number; categories: CategoryCounts | null };
+/** Display-only projection; historical counters and deduplicated totals stay intact. */
+export function visibleMailGroups(groups: MailCombinedRow[]): MailCombinedRow[] {
+  return groups.filter(row => row.unassigned || row.assignments.some(assignment => !assignment.archived))
+    .map(row => ({ ...row, assignments: row.assignments.filter(assignment => !assignment.archived) }));
+}
+export function selectableMailboxes(report: MailInsightsReport | undefined, includeUnassigned: boolean): string[] {
+  if (!report) return [];
+  const assigned = new Set(report.assignments.map(row => normalizeEmail(row.email)));
+  const active = new Set(report.assignments.filter(row => !row.archived).map(row => normalizeEmail(row.email)));
+  if (includeUnassigned) for (const row of report.mailboxes) {
+    const email = normalizeEmail(row.email);
+    if (!assigned.has(email)) active.add(email);
+  }
+  return [...active].sort();
+}
 const attention = new Set(["interview_invite", "assessment", "offer", "info_request", "recruiter_outreach", "unclassified"]);
 const normalizeEmail = (value: string) => value.trim().toLowerCase();
 const emptyCounts = (): CategoryCounts => Object.fromEntries(MAIL_CATEGORIES.map(({ id }) => [id, 0])) as CategoryCounts;

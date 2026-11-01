@@ -315,3 +315,20 @@ if (new URLSearchParams(window.location.search).has("upload-context")) {
     }};
   });
 }
+
+// Comparison scenarios use real active identities so the normal visibility
+// checks run in browser tests as they do against the authorized server bundle.
+const arrangementScenario = new URLSearchParams(window.location.search).get("arrangements");
+if (arrangementScenario) {
+  const rows = comparisonFixtures(arrangementScenario);
+  for (const row of rows) {
+    fixture.profiles.push({ ...people[0], id: row.id, display_name: row.label });
+    fixture.bidders.push({ ...bidders[0], user_id: row.id });
+    fixture.candidateProfiles.push({ ...candidateProfiles[0], id: row.id, identifier: row.label });
+    fixture.resumes.push({ ...resumes[0], id: `assignment-${row.id}`, bidder_id: row.id, profile_id: row.id });
+  }
+}
+if (new URLSearchParams(window.location.search).has("inactive-items")) {
+  fixture.profiles = fixture.profiles.map(row => row.id === "bidder-0" ? { ...row, archived: true } : row);
+  fixture.candidateProfiles = fixture.candidateProfiles.map(row => row.id === "profile-bidder-1" ? { ...row, archived: true } : row);
+}

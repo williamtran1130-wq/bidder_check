@@ -14,7 +14,8 @@ export function CollectionStatusPanel({ scope, role, workspaces, initial, receiv
   scope: string; role: string; workspaces: { id: string; name?: string }[];
   initial?: ReportResult<CollectionStatus>; receivedAt?: number; collapsed?: boolean;
 }) {
-  const [workspace, setWorkspace] = useState(workspaces[0]?.id ?? "");
+  const [workspaceSelection, setWorkspace] = useState(workspaces[0]?.id ?? "");
+  const workspace = workspaces.some(row => row.id === workspaceSelection) ? workspaceSelection : workspaces[0]?.id ?? "";
   const [published, setPublished] = useState<{ key: string; value: CollectionStatus; receivedAt: number }>();
   const day = useCalendarDay();
   const key = readKey(scope, "collection-status", workspace, day);

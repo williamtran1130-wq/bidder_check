@@ -43,8 +43,10 @@ test("editing an assignment with bid history keeps its locked IDs in the save pa
   await details.getByRole("button", { name: "Edit assignment" }).click();
   const editor = page.getByRole("dialog").last();
   await expect(editor.getByText(/locked because this assignment has bid history/i)).toBeVisible();
-  await expect(editor.getByLabel("Assigned bidder")).toBeDisabled();
-  await expect(editor.getByLabel("Candidate profile")).toBeDisabled();
+  await expect(editor.getByLabel("Assigned bidder")).toHaveCount(0);
+  await expect(editor.getByLabel("Candidate profile")).toHaveCount(0);
+  await expect(editor.locator('input[name="bidder_id"]')).toHaveValue("bidder-0");
+  await expect(editor.locator('input[name="profile_id"]')).toHaveValue("profile-bidder-0");
   await editor.getByLabel("Email address").fill("updated@example.test");
   await page.evaluate(() => {
     document.body.dataset.assignmentPayload = "";

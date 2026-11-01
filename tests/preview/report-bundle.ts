@@ -7,6 +7,7 @@ import { buildMailInsightsUrl } from "../../src/lib/mail-insights-report";
 import { calendarToday, resolveCalendarPeriod, shiftCalendarDate } from "../../src/lib/calendar-period";
 import { getDashboardPerformance, getEarningsPerformance, getInterviewPerformance } from "./actions";
 import { fixture } from "./sample-data";
+import { activeResumes } from "../../src/lib/active-items";
 
 export { bundleUrl } from "../../src/lib/report-bundle";
 export type { CollectionStatus, KindReport, ReportBundle, ReportKind, InterviewValue } from "../../src/lib/report-bundle";
@@ -84,5 +85,17 @@ export async function fetchReportBundle<K extends ReportKind>(kind: K, query: Re
     }
     if (kind === "interviews") mail = { ...mail, range: { ...interviewPeriod, clipped: false } };
   }
-  return { data: { report: (kind === "interviews" ? cohort : base.data) as KindReport[K], mail, collection, interviewPeriod, interview } };
+  // Mirror the final display projection in workspace_report_bundle, after all
+  // historical totals, coverage, and rate calculations have completed.
+  const assignments = activeResumes(fixture);
+  const activeIds = (dimension: string) => new Set(assignments.map(row => dimension === "bidder" ? row.bidder_id : dimension === "profile" ? row.profile_id : row.id));
+  const source = (kind === "interviews" ? cohort : base.data) as KindReport[K];
+  const report = "comparisons" in source ? { ...source, comparisons: {
+    bidders: source.comparisons.bidders.filter(row => activeIds("bidder").has(row.id)),
+    profiles: source.comparisons.profiles.filter(row => activeIds("profile").has(row.id)),
+  } } : { ...source, groups: source.groups.filter(row => activeIds(group).has(row.id)) };
+  // Some transport tests supply their own independent authorized identities.
+  // Apply fixture mutations only to fixture-owned rows; retain those mocks' flags.
+  if (mail) mail = { ...mail, assignments: mail.assignments.map(row => ({ ...row, archived: row.archived || (fixture.resumes.some(assignment => assignment.id === row.id) && !activeIds("assignment").has(row.id)) })) };
+  return { data: { report: report as KindReport[K], mail, collection, interviewPeriod, interview } };
 }

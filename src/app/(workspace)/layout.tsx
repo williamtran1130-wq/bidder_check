@@ -5,18 +5,22 @@ import { readCollectionStatus } from "@/lib/report-bundle-server";
 import { Shell } from "@/components/shell";
 export const dynamic = "force-dynamic";
 async function Content({ children }: { children: React.ReactNode }) {
-  const { profile, workspaces } = await getContext();
-  const initialCollection = await readCollectionStatus(workspaces[0]?.id);
+  const { profile, workspaces, selectableWorkspaces } = await getContext();
+  const visibleWorkspaces = selectableWorkspaces ?? workspaces;
+  const initialCollection: Awaited<ReturnType<typeof readCollectionStatus>> = visibleWorkspaces.length
+    ? await readCollectionStatus(visibleWorkspaces[0]?.id)
+    : { data: { status: "not_synced", updatedAt: null, from: null, to: null } };
   return (
     <Shell
       profile={profile}
       workspaces={workspaces}
+      collectionWorkspaces={visibleWorkspaces}
       initialCollection={initialCollection}
       collectionReceivedAt={initialCollection.receivedAt}
       workspace={
         profile.role === "admin"
           ? "Platform overview"
-          : (workspaces[0]?.name ?? "Workspace")
+          : (visibleWorkspaces[0]?.name ?? "Workspace")
       }
     >
       {children}

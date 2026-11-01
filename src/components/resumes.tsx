@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Plus, FileText, Search, Mail, Phone, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { WorkspaceData } from "@/lib/data";
+import { activeBidders, activeCandidateProfiles, activeResumes } from "@/lib/active-items";
 import type { ResumeRow } from "@/lib/workspace-types";
 import { usd, effectiveRate, validateUpload } from "@/lib/domain";
 import { saveResumeAssignment, deleteResumeAssignment } from "@/app/(workspace)/actions";
@@ -17,10 +18,12 @@ import { PageHeading, Field, SelectField, SaveButton, EmptyState, FileButton } f
 import { FileUpload, uploadVerifiedFile } from "./file-upload";
 
 export function ResumeDialog({ data, resume, bidderId }: { data: WorkspaceData; resume?: ResumeRow; bidderId?: string }) {
+  const bidders = activeBidders(data);
+  const candidates = activeCandidateProfiles(data);
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
-  const [bidder, setBidder] = useState(resume?.bidder_id ?? bidderId ?? data.bidders.find((b) => !b.archived)?.user_id ?? "");
-  const [profileId, setProfileId] = useState(resume?.profile_id ?? "");
+  const [selectedBidder, setBidder] = useState(resume?.bidder_id ?? bidderId ?? bidders[0]?.user_id ?? "");
+  const [selectedProfileId, setProfileId] = useState(resume?.profile_id ?? "");
   const [savedAssignment, setSavedAssignment] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -28,17 +31,21 @@ export function ResumeDialog({ data, resume, bidderId }: { data: WorkspaceData; 
   const [uploadProgress, setUploadProgress] = useState<{ phase: string; value: number } | null>(null);
   const [uploadError, setUploadError] = useState("");
   const router = useRouter();
-  const membership = data.bidders.find((b) => b.user_id === bidder);
-  const selectedProfile = data.candidateProfiles.find((p) => p.id === profileId);
   const hasBidHistory = !!resume && (data.bidCounts[resume.id] ?? 0) > 0;
+  const bidder = hasBidHistory ? resume.bidder_id : bidders.some((b) => b.user_id === selectedBidder) ? selectedBidder : "";
+  const membership = bidders.find((b) => b.user_id === bidder);
+  const profiles = candidates.filter((p) => p.workspace_id === membership?.workspace_id);
+  const profileId = hasBidHistory ? resume.profile_id ?? "" : profiles.some((p) => p.id === selectedProfileId) ? selectedProfileId : "";
+  const selectedProfile = data.candidateProfiles.find((p) => p.id === profileId);
+  const available = !!membership && profiles.some((p) => p.id === profileId);
   const needsNewPdf = !resume?.file_id || resume.bidder_id !== bidder;
-  const profiles = data.candidateProfiles.filter((p) => (!p.archived || p.id === resume?.profile_id) && (!membership || p.workspace_id === membership.workspace_id));
   return <Dialog open={open} onOpenChange={(next) => { if (pending || uploading) return; setOpen(next); if (!next) { setSavedAssignment(""); setFile(null); setUploadError(""); } }}>
-    <DialogTrigger asChild><Button variant={resume ? "outline" : "default"} size={resume ? "sm" : "default"} disabled={pending || uploading || !data.bidders.some((b) => !b.archived) || !data.candidateProfiles.some((p) => !p.archived)}>{!resume && <Plus size={16} />} {resume ? "Edit assignment" : "Assign profile"}</Button></DialogTrigger>
+    <DialogTrigger asChild><Button variant={resume ? "outline" : "default"} size={resume ? "sm" : "default"} disabled={pending || uploading || (!resume && (!bidders.length || !candidates.length))}>{!resume && <Plus size={16} />} {resume ? "Edit assignment" : "Assign profile"}</Button></DialogTrigger>
     <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
       <DialogHeader><DialogTitle>{resume ? "Edit bidder assignment" : "Assign a profile to a bidder"}</DialogTitle><DialogDescription>Shared candidate details live in Profiles. Each bidder assignment has its own contact details and private PDF.</DialogDescription></DialogHeader>
       <form className="space-y-4" onSubmit={(event) => {
         event.preventDefault();
+        if (!hasBidHistory && !available) { setUploadError("Choose an active bidder and profile before saving."); return; }
         const form = new FormData(event.currentTarget);
         start(async () => {
         setUploadError("");
@@ -82,14 +89,16 @@ export function ResumeDialog({ data, resume, bidderId }: { data: WorkspaceData; 
         });
       }}>
         <input type="hidden" name="id" value={savedAssignment || resume?.id || ""} />
+        {hasBidHistory ? <><input type="hidden" name="bidder_id" value={resume.bidder_id} /><input type="hidden" name="profile_id" value={resume.profile_id ?? ""} /><p className="rounded-lg bg-muted p-3 text-xs">{data.profiles.find((p) => p.id === resume.bidder_id)?.display_name ?? "Historical bidder"} &middot; {selectedProfile?.identifier ?? "Historical profile"}</p></> : <>
         <SelectField label="Assigned bidder" name="bidder_id" value={bidder} disabled={hasBidHistory} onChange={(e) => { setBidder(e.target.value); setProfileId(""); }} required>
           <option value="" disabled>Choose a bidder</option>
-          {data.bidders.filter((b) => !b.archived || b.user_id === bidder).map((b) => <option key={b.user_id} value={b.user_id}>{data.profiles.find((p) => p.id === b.user_id)?.display_name ?? "Bidder"}</option>)}
+          {bidders.map((b) => <option key={b.user_id} value={b.user_id}>{data.profiles.find((p) => p.id === b.user_id)?.display_name ?? "Bidder"}</option>)}
         </SelectField>
         <SelectField label="Candidate profile" name="profile_id" value={profileId} disabled={hasBidHistory} onChange={(e) => setProfileId(e.target.value)} required>
           <option value="" disabled>Choose a shared profile</option>
           {profiles.map((p) => <option key={p.id} value={p.id}>{p.identifier} · {p.candidate_name}</option>)}
         </SelectField>
+        </>}
         {hasBidHistory && <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">Profile and bidder are locked because this assignment has bid history, including applications in Trash. Contact details, rate, and PDF can still be updated.</p>}
         {resume && resume.bidder_id !== bidder && <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">Changing the assigned bidder clears the previous bidder’s PDF. Upload a PDF for the new bidder to complete this assignment.</p>}
         {selectedProfile && <p className="rounded-lg bg-muted p-3 text-xs text-muted-foreground">Shared profile: {selectedProfile.candidate_name}. Address, links, and instructions are managed on the Profiles page.</p>}
@@ -107,7 +116,7 @@ export function ResumeDialog({ data, resume, bidderId }: { data: WorkspaceData; 
           {uploadProgress && <div role="status" className="text-xs">{uploadProgress.phase}… {uploadProgress.value}%</div>}
           {uploadError && <p role="alert" className="text-xs text-destructive">{uploadError}</p>}
         </div>
-        <div className="flex justify-end"><SaveButton pending={pending || uploading} label={file ? "Assign profile and upload PDF" : needsNewPdf ? "Choose a PDF to continue" : "Save assignment"} /></div>
+        <fieldset className="flex justify-end" disabled={!hasBidHistory && !available}><SaveButton pending={pending || uploading} label={file ? "Assign profile and upload PDF" : needsNewPdf ? "Choose a PDF to continue" : "Save assignment"} /></fieldset>
       </form>
     </DialogContent>
   </Dialog>;
@@ -119,11 +128,12 @@ export function ResumeLibrary({ data, bidderId, embedded = false }: { data: Work
   const [pending, start] = useTransition();
   const router = useRouter();
   const canEdit = data.profile.role !== "bidder";
-  const list = data.resumes.filter((r) => {
+  const resumes = activeResumes(data);
+  const list = resumes.filter((r) => {
     const candidate = data.candidateProfiles.find((p) => p.id === r.profile_id);
     return (!bidderId || r.bidder_id === bidderId) && (!r.archived && !candidate?.archived) && `${candidate?.identifier ?? ""} ${candidate?.candidate_name ?? ""} ${r.email}`.toLowerCase().includes(search.toLowerCase());
   });
-  const active = data.resumes.find((r) => r.id === selected);
+  const active = resumes.find((r) => r.id === selected && (!bidderId || r.bidder_id === bidderId));
   const candidate = active && data.candidateProfiles.find((p) => p.id === active.profile_id);
   return <>
     {!embedded && <PageHeading eyebrow="BIDDER SPECIFIC RESUME ASSIGNMENTS" title="Your resume library." description="Assign shared candidate profiles to bidders with individual contact details and private resumes.">{canEdit && <ResumeDialog data={data} bidderId={bidderId} />}</PageHeading>}

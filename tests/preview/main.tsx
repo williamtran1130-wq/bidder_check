@@ -20,6 +20,7 @@ import { calendarToday } from "@/lib/calendar-period";
 import { fetchReportBundle } from "@/lib/report-bundle";
 import { readKey } from "@/lib/read-state";
 import { workspaceActorScope } from "@/lib/actor-scope";
+import { activeWorkspaces } from "@/lib/active-items";
 import "@/app/globals.css";
 const parameters = new URLSearchParams(location.search);
 const seedQuery = initialBidQuery(parameters.get("review") === "pending");
@@ -182,6 +183,7 @@ createRoot(document.getElementById("root")!).render(<FixtureMode>
     <Shell
       profile={fixture.profile}
       workspaces={fixture.workspaces}
+      collectionWorkspaces={activeWorkspaces(fixture)}
       initialCollection={reportSeed?.result.data ? { data: reportSeed.result.data.collection } : undefined}
       workspace={
         new URLSearchParams(window.location.search).has("long-workspace")

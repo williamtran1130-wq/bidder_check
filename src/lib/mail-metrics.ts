@@ -1,4 +1,4 @@
-import { aggregateMailInsights, type MailGroup, type MailInsightsReport } from "./mail-insights-report";
+import { aggregateMailInsights, visibleMailGroups, type MailGroup, type MailInsightsReport } from "./mail-insights-report";
 import { formatInTimeZone } from "date-fns-tz";
 
 export type MailMetricStatus = "ready" | "partial" | "not_synced" | "outside_retention" | "unavailable";
@@ -30,7 +30,7 @@ export function projectMailMetrics(report: MailInsightsReport | undefined, group
     const available = state === "ready" || state === "partial";
     return { confirmations: available ? confirmations : null, invitations: available ? invitations : null, status: state };
   };
-  for (const row of aggregated.groups) groups.set(row.id, { id: row.id, label: row.label, metric: { ...metric(row.emails, row.categories?.application_ack ?? 0, row.categories?.interview_invite ?? 0), shared: row.shared } });
+  for (const row of visibleMailGroups(aggregated.groups)) groups.set(row.id, { id: row.id, label: row.label, metric: { ...metric(row.emails, row.categories?.application_ack ?? 0, row.categories?.interview_invite ?? 0), shared: row.shared } });
   return {
     total: metric(assignedEmails, aggregated.categories.application_ack, aggregated.categories.interview_invite), groups,
     daily: aggregated.daily.map(row => ({ date: row.date, metric: metric(assignedEmails, row.application_ack, row.interview_invite, row.date, row.date) })),

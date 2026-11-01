@@ -7,8 +7,8 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock("../src/lib/auth", () => ({
   getContext: async () => ({
-    profile: { id: "viewer", role: state.role },
-    workspaces: [],
+    profile: { id: "viewer", role: state.role, archived: false },
+    workspaces: [{ id: "own", owner_id: "viewer", name: "Workspace" }],
     supabase: {
       from(table: string) {
         let columns = "*",
@@ -122,6 +122,6 @@ it('does not enrich unused manager assignment rates on bids or dashboard, retain
 });
 it('uses typed narrow dashboard filter projections and no manager enrichment',async()=>{
  const api=await import('../src/lib/data');expect(api).toHaveProperty('getDashboardData');
- state.role='client';state.records.profiles=[{id:'selected',display_name:'Bidder',email:'private@test',approval_reason:'private'}];state.records.bidders=[{user_id:'selected',workspace_id:'own',archived:false}];state.records.candidate_profiles=[{id:'candidate',workspace_id:'own',identifier:'ENG',archived:false,instructions:'private'}];
- const data=await api.getDashboardData();expect(data.profiles[0]).toEqual({id:'selected',display_name:'Bidder'});expect(data.candidateProfiles[0]).not.toHaveProperty('instructions');expect(state.moneyCalls).toBe(0);
+ state.role='client';state.records.profiles=[{id:'selected',display_name:'Bidder',archived:false,role:'bidder',email:'private@test',approval_reason:'private'}];state.records.bidders=[{user_id:'selected',workspace_id:'own',archived:false}];state.records.candidate_profiles=[{id:'candidate',workspace_id:'own',identifier:'ENG',archived:false,instructions:'private'}];
+ const data=await api.getDashboardData();expect(data.profiles[0]).toEqual({id:'selected',display_name:'Bidder',archived:false,role:'bidder'});expect(data.candidateProfiles[0]).not.toHaveProperty('instructions');expect(state.moneyCalls).toBe(0);
 });

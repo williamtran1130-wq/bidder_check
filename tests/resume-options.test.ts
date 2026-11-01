@@ -27,20 +27,31 @@ describe("resume assignment choices", () => {
     expect(options.get("abcdefgh-1")?.label).not.toBe(options.get("abcdefgh-2")?.label);
     expect(options.get("resume-2")?.label).not.toContain("Northstar Studio");
   });
-  it("searches all loaded assignments, including archived, and preserves compatible UUID selections", () => {
+  it("keeps historical labels but excludes archived assignments from search and selection", () => {
     const data = structuredClone(fixture);
     data.resumes = Array.from({ length: 1205 }, (_, i) => ({ ...data.resumes[0], id: `assignment-${i}`, email: `person${i}@example.test`, archived: i === 1204 }));
     const options = [...buildResumeOptions(data).values()];
-    expect(filterResumeOptions(options, "person1204")).toHaveLength(1);
-    expect(filterResumeOptions(options, "person1204")[0].label).toContain("Archived");
-    expect(compatibleResume(options, "assignment-1204", "bidder-0")).toBe("assignment-1204");
+    expect(filterResumeOptions(options, "person1204")).toHaveLength(0);
+    expect(options.at(-1)?.label).toContain("Archived");
+    expect(compatibleResume(options, "assignment-1204", "bidder-0")).toBe("all");
+    expect(compatibleResume(options, "assignment-1203", "bidder-0")).toBe("assignment-1203");
     expect(compatibleResume(options, "assignment-1204", "bidder-1")).toBe("all");
     expect(compatibleResume(options, "missing", "all")).toBe("all");
-    expect(filterResumeOptions(options, "PERSON1204")).toHaveLength(1);
+    expect(filterResumeOptions(options, "PERSON1203")).toHaveLength(1);
   });
   it("labels historical assignments of archived bidders", () => {
     const data = structuredClone(fixture);
     data.profiles.find((profile) => profile.id === "bidder-0")!.archived = true;
     expect(buildResumeOptions(data).get("resume-0")?.label).toContain("Archived");
+  });
+  it.each(["account", "membership", "candidate", "workspace"])("does not offer assignments with a removed %s", (ancestor) => {
+    const data = structuredClone(fixture);
+    if (ancestor === "account") data.profiles = data.profiles.filter((p) => p.id !== "bidder-0");
+    if (ancestor === "membership") data.bidders = data.bidders.filter((p) => p.user_id !== "bidder-0");
+    if (ancestor === "candidate") data.candidateProfiles = data.candidateProfiles.filter((p) => p.id !== data.resumes[0].profile_id);
+    if (ancestor === "workspace") data.workspaces = [];
+    const labels = buildResumeOptions(data);
+    expect(labels.has("resume-0")).toBe(true);
+    expect(filterResumeOptions([...labels.values()], "bidder0@example.test")).toEqual([]);
   });
 });

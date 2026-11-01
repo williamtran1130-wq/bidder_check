@@ -18,7 +18,7 @@ async function Content() {
   const result = await readReportBundle("earnings", query);
   return (
     <Earnings
-      mailContext={{ role: context.profile.role, workspaces: context.workspaces.map(({ id, name }) => ({ id, name })) }}
+      mailContext={{ role: context.profile.role, workspaces: context.selectableWorkspaces.map(({ id, name }) => ({ id, name })) }}
       initial={{
         receivedAt: result.receivedAt,
         key: readKey(actorReadScope(context), "bundle-earnings", query, day),

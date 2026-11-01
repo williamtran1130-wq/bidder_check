@@ -54,6 +54,7 @@ export function Shell({
   profile,
   workspace,
   workspaces = [],
+  collectionWorkspaces = workspaces,
   initialCollection,
   collectionReceivedAt,
 }: {
@@ -61,6 +62,7 @@ export function Shell({
   profile: Row<"profiles">;
   workspace: string;
   workspaces?: (WorkspaceMembership & { name?: string })[];
+  collectionWorkspaces?: (WorkspaceMembership & { name?: string })[];
   initialCollection?: ReportResult<CollectionStatus>;
   collectionReceivedAt?: number;
 }) {
@@ -115,7 +117,7 @@ export function Shell({
           </div>
         )}
       </div>
-      <CollectionStatusPanel scope={actorScope} role={profile.role} workspaces={workspaces} initial={initialCollection} receivedAt={collectionReceivedAt} collapsed={small} />
+      <CollectionStatusPanel scope={actorScope} role={profile.role} workspaces={collectionWorkspaces} initial={initialCollection} receivedAt={collectionReceivedAt} collapsed={small} />
       {!small && <p className="eyebrow px-6 pb-3">WORKSPACE</p>}
       <nav className="space-y-1 px-3">
         {links

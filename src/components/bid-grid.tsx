@@ -10,6 +10,7 @@ import { toTsv } from "@/lib/sheets";
 import { updateBidCell } from "@/app/(workspace)/actions";
 import { Button } from "./ui/button";
 import { buildResumeOptions } from "@/lib/resume-options";
+import { activeResumes } from "@/lib/active-items";
 type Bid = BidRow;
 type Point = { r: number; c: number; rowId?: string; columnId?: string };
 type Edit = {
@@ -54,6 +55,7 @@ export function BidGrid({
   emptyMessage: ReactNode;
 }) {
   const assignmentLabels = useMemo(() => buildResumeOptions(data), [data]);
+  const activeAssignments = useMemo(() => activeResumes(data), [data]);
   const [storedSelection, setSelection] = useState<{
     anchor: Point;
     end: Point;
@@ -150,7 +152,7 @@ export function BidGrid({
     }
     if (
       !fields.includes(field) ||
-      (field === "resume_id" && bid.first_applied_at)
+      (field === "resume_id" && (bid.first_applied_at || !activeAssignments.some(row => row.id === bid.resume_id)))
     )
       return;
     setSaved("");
@@ -438,7 +440,7 @@ export function BidGrid({
                       !!row.original.deleted_at ||
                       !fields.includes(cell.column.id) ||
                       (cell.column.id === "resume_id" &&
-                        !!row.original.first_applied_at)
+                        (!!row.original.first_applied_at || !activeAssignments.some(assignment => assignment.id === row.original.resume_id)))
                     }
                     key={cell.id}
                     data-grid-r={r}
@@ -549,11 +551,10 @@ export function BidGrid({
                           >
                             {options
                               ? options.map((v) => <option key={v}>{v}</option>)
-                              : data.resumes
+                              : activeAssignments
                                   .filter(
                                     (v) =>
                                       v.bidder_id === row.original.bidder_id &&
-                                      !v.archived &&
                                       !!v.file_id,
                                   )
                                   .map((v) => (

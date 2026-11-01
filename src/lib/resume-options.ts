@@ -1,4 +1,5 @@
 import type { WorkspaceData } from "./data";
+import { activeResumes } from "./active-items";
 
 export type ResumeOption = {
   id: string;
@@ -11,7 +12,8 @@ export type ResumeOption = {
 };
 
 // Labels describe an assignment, not a PDF version. Never use copied profile names.
-export function buildResumeOptions(data: Pick<WorkspaceData, "profile" | "resumes" | "candidateProfiles" | "profiles" | "workspaces">): Map<string, ResumeOption> {
+export function buildResumeOptions(data: Pick<WorkspaceData, "profile" | "resumes" | "candidateProfiles" | "profiles" | "workspaces" | "bidders">): Map<string, ResumeOption> {
+  const available = new Set(activeResumes(data).map((resume) => resume.id));
   const profiles = new Map(data.candidateProfiles.map((profile) => [profile.id, profile]));
   const people = new Map(data.profiles.map((profile) => [profile.id, profile]));
   const workspaces = new Map(data.workspaces.map((workspace) => [workspace.id, workspace.name]));
@@ -44,7 +46,7 @@ export function buildResumeOptions(data: Pick<WorkspaceData, "profile" | "resume
       while (length < resume.id.length && peers.some((id) => id !== resume.id && id.slice(0, length) === resume.id.slice(0, length))) length++;
       suffix = ` · ${resume.id.slice(0, length)}`;
     }
-    const archived = resume.archived || !!profiles.get(resume.profile_id ?? "")?.archived || !!people.get(resume.bidder_id)?.archived;
+    const archived = !available.has(resume.id);
     const detail = secondary + suffix + (archived ? " · Archived" : "");
     return [resume.id, { id: resume.id, bidderId: resume.bidder_id, groupId: resume.profile_id ?? resume.id, primary, secondary: detail, label: `${primary} — ${detail}`, archived }];
   }));
@@ -52,9 +54,9 @@ export function buildResumeOptions(data: Pick<WorkspaceData, "profile" | "resume
 
 export function filterResumeOptions(options: ResumeOption[], search: string, bidder = "all") {
   const terms = search.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  return options.filter((option) => (bidder === "all" || option.bidderId === bidder) && terms.every((term) => option.label.toLocaleLowerCase().includes(term)));
+  return options.filter((option) => !option.archived && (bidder === "all" || option.bidderId === bidder) && terms.every((term) => option.label.toLocaleLowerCase().includes(term)));
 }
 
 export function compatibleResume(options: ResumeOption[], selected: string, bidder: string) {
-  return options.some((option) => option.id === selected && (bidder === "all" || option.bidderId === bidder)) ? selected : "all";
+  return options.some((option) => !option.archived && option.id === selected && (bidder === "all" || option.bidderId === bidder)) ? selected : "all";
 }

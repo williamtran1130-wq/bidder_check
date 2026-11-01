@@ -27,7 +27,8 @@ export function Earnings({
 }) {
   const [period, setPeriod] = useState<PeriodSelection>({ preset: "this_week" });
   const [group, setGroup] = useState("bidder");
-  const [workspace, setWorkspace] = useState(mailContext.workspaceId ?? "");
+  const [workspaceSelection, setWorkspace] = useState(mailContext.workspaceId ?? "");
+  const workspace = mailContext.workspaceId ?? (mailContext.workspaces?.some(row => row.id === workspaceSelection) ? workspaceSelection : "");
   const query = useMemo(() => ({ period, bidder: bidderId, group: group === "bidder" ? "bidder" as const : "assignment" as const, ...(workspace ? { workspace } : {}) }), [period, bidderId, group, workspace]);
   const bundle = useReportBundle("earnings", query, initial);
   const { report, loading, error, refresh, mail } = bundle;
@@ -96,8 +97,8 @@ export function Earnings({
         {loading && <PageLoading label="Loading earnings…" size="section" />}
         {!loading && report && !groups.length ? (
           <EmptyState
-            title="Progress you can put a number on"
-            description="Once an application is marked applied, its earnings will appear here."
+            title="No active earnings rows"
+            description="No active assignments have earnings in this period."
           />
         ) : !loading && total ? (
           <div className="overflow-x-auto">

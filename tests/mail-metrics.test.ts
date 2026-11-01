@@ -2,6 +2,14 @@ import { expect, it } from "vitest";
 import { sample } from "./mail-insights-report.test";
 import { projectMailMetrics, confirmationBuckets, invitationRate } from "@/lib/mail-metrics";
 
+it("hides inactive named mail groups without changing historical totals or daily counts",()=>{
+  const before=projectMailMetrics(sample,"assignment");
+  const after=projectMailMetrics({...sample,assignments:sample.assignments.map(row=>({...row,archived:true}))},"assignment");
+  expect(after.total).toEqual(before.total);
+  expect(after.daily).toEqual(before.daily);
+  expect([...after.groups]).toEqual([]);
+});
+
 it("deduplicates assigned mailboxes and marks incomplete groups without changing the available counts", () => {
   const metrics = projectMailMetrics(sample, "bidder");
   expect(metrics.total).toMatchObject({ confirmations: 3, invitations: 2, status: "partial" });

@@ -20,7 +20,7 @@ export function ResumeSelector({ options, value, onChange, disabled = false }: {
   const [limit, setLimit] = useState(50);
   const [active, setActive] = useState("all");
   const matches = useMemo(() => filterResumeOptions(options, search).sort((a, b) => a.primary.localeCompare(b.primary) || a.groupId.localeCompare(b.groupId) || a.secondary.localeCompare(b.secondary) || a.id.localeCompare(b.id)), [options, search]);
-  const selected = options.find((option) => option.id === value);
+  const selected = options.find((option) => !option.archived && option.id === value);
   const page = matches.slice(0, limit);
   const pinned = selected && !page.some((option) => option.id === selected.id) ? selected : undefined;
   const visible = pinned ? [pinned, ...page] : page;

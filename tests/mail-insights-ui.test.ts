@@ -15,6 +15,14 @@ const report: MailInsightsReport = {
 };
 const noop = () => {};
 const props = { report, loading: false, isManager: true, email: "", onEmailChange: noop, filters: {}, onFiltersChange: noop, group: "email" as const, onGroupChange: noop, onRefresh: noop };
+it("omits archived assignment names and their exclusive email choices while retaining collected totals",()=>{
+  const html=renderToStaticMarkup(createElement(EmailInsightsView,{...props,report:{...report,assignments:report.assignments.map(row=>({...row,archived:true}))}}));
+  expect(html).not.toContain("Alex");expect(html).not.toContain("Blair");expect(html).not.toContain("Missing profile");
+  expect(html).not.toContain('value="team@example.test"');
+  expect(html).toContain('value="spare@example.test"');
+  expect(html).toContain("Messages collected");
+  expect(html).toContain('>3</p>');
+});
 it("renders all ten category totals, four mail cards, shared current assignments and missing sync distinctly", () => {
   const html = renderToStaticMarkup(createElement(EmailInsightsView, props));
   expect(html).toContain("Confirmation emails");
@@ -59,9 +67,9 @@ it("shows unavailable retained metrics instead of zero for a clipped range with 
   expect(html).toContain("No retained email data overlaps this period");
   expect(html).not.toContain("Email category chart: 0 messages");
 });
-it("labels authorized archived assignments and retains their table activity", () => {
+it("hides archived assignment rows and retains historical table totals", () => {
   const html = renderToStaticMarkup(createElement(EmailInsightsView, { ...props, report: { ...report, assignments: report.assignments.map(row => ({ ...row, archived: true })) } }));
-  expect(html).toContain("Archived assignment");
-  expect(html).toContain("missing@example.test");
+  expect(html).not.toContain("Archived assignment");
+  expect(html).not.toContain("missing@example.test");
   expect(html).toContain(">7</td>");
 });

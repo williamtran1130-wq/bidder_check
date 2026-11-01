@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { formatInTimeZone } from "date-fns-tz";
 import type { WorkspaceData } from "@/lib/data";
+import { activeBidders, activeResumes, activeWorkspaces } from "@/lib/active-items";
 import { BID_TIMEZONE } from "@/lib/domain";
 import {
   parseSheet,
@@ -48,17 +49,20 @@ export function SheetsImport({
   onClose: () => void;
   onSuccess: (result: ImportResult) => void;
 }) {
+  const workspaces = activeWorkspaces(data);
+  const memberships = activeBidders(data);
+  const availableResumes = activeResumes(data);
   const assignmentLabels = useMemo(() => buildResumeOptions(data), [data]);
   const [text, setText] = useState(initialText);
-  const [workspace, setWorkspace] = useState(
-    data.bidders.find((b) => b.user_id === bidderId)?.workspace_id ??
-      data.workspaces[0]?.id ??
+  const [selectedWorkspace, setWorkspace] = useState(
+    memberships.find((b) => b.user_id === bidderId)?.workspace_id ??
+      workspaces[0]?.id ??
       "",
   );
-  const [bidder, setBidder] = useState(
+  const [selectedBidder, setBidder] = useState(
     bidderId ?? (data.profile.role === "bidder" ? data.profile.id : ""),
   );
-  const [resume, setResume] = useState(""),
+  const [selectedResume, setResume] = useState(""),
     [date, setDate] = useState(() =>
       formatInTimeZone(new Date(), BID_TIMEZONE, "yyyy-MM-dd"),
     );
@@ -103,15 +107,13 @@ export function SheetsImport({
         : [],
     [rows, sourceRows],
   );
-  const bidders = data.bidders.filter(
-    (b) =>
-      !b.archived &&
-      (data.profile.role !== "admin" || b.workspace_id === workspace) &&
-      (!bidderId || b.user_id === bidderId),
+  const workspace = workspaces.some((item) => item.id === selectedWorkspace) ? selectedWorkspace : "";
+  const bidders = memberships.filter((bidder) =>
+    (data.profile.role !== "admin" || bidder.workspace_id === workspace) && (!bidderId || bidder.user_id === bidderId),
   );
-  const resumes = data.resumes.filter(
-    (r) => !r.archived && r.file_id && r.bidder_id === bidder,
-  );
+  const bidder = bidders.some((item) => item.user_id === selectedBidder) ? selectedBidder : "";
+  const resumes = availableResumes.filter((resume) => !!resume.file_id && resume.bidder_id === bidder);
+  const resume = resumes.some((item) => item.id === selectedResume) ? selectedResume : "";
   useEffect(() => {
     if (!rows || !rows.length || !resume || !date) return;
     let cancelled = false;
@@ -187,7 +189,7 @@ export function SheetsImport({
     }
   }
   async function submit() {
-    if (!rows || busy || (!uncertain && (checking || !validated || !!error)))
+    if (!rows || busy || (!uncertain && (!resume || checking || !validated || !!error)))
       return;
     let payload = frozen.current;
     const reviewedSourceRows = approvedSourceRows ?? [];
@@ -345,7 +347,8 @@ export function SheetsImport({
                     setResume("");
                   }}
                 >
-                  {data.workspaces.map((w) => (
+                  <option value="" disabled>Choose a workspace</option>
+                  {workspaces.map((w) => (
                     <option key={w.id} value={w.id}>
                       {w.name}
                     </option>
@@ -547,7 +550,7 @@ export function SheetsImport({
               </Button>
               <Button
                 disabled={
-                  busy || (!uncertain && (checking || !validated || !!error))
+                  busy || (!uncertain && (!resume || checking || !validated || !!error))
                 }
                 onClick={submit}
               >

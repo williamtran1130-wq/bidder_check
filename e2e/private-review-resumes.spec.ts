@@ -64,12 +64,15 @@ test("resume search covers over 1000 assignments with grouped labels and compati
   await expect(page.getByRole("listbox", { name: "Resume assignments" }).getByRole("option")).toHaveCount(101);
   await expect(page.getByRole("combobox", { name: "Search resume assignments" })).toBeFocused();
   await page.getByRole("combobox", { name: "Search resume assignments" }).fill("assignment1099");
-  await expect(page.getByRole("option", { name: /ENG-01 · Jordan Lee — Jamie Parker · assignment1099@example.test · Archived/ })).toBeVisible();
+  await expect(page.getByRole("option", { name: /assignment1099@example.test/ })).toHaveCount(0);
+  await expect(page.getByText("No matching resume assignments.", { exact: true })).toBeVisible();
+  await page.getByRole("combobox", { name: "Search resume assignments" }).fill("assignment1098");
+  await expect(page.getByRole("option", { name: /ENG-01 · Jordan Lee — Jamie Parker · assignment1098@example.test/ })).toBeVisible();
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
-  await expect(selector).toContainText("assignment1099@example.test · Archived");
+  await expect(selector).toContainText("assignment1098@example.test");
   await selector.click();
-  await expect(page.getByRole("option", { name: /assignment1099@example.test · Archived/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("option", { name: /assignment1098@example.test/ })).toHaveAttribute("aria-selected", "true");
   const renderedOptions = page.getByRole("listbox", { name: "Resume assignments" }).getByRole("option");
   const selectedIndex = await renderedOptions.evaluateAll((elements) => elements.findIndex((element) => element.getAttribute("aria-selected") === "true"));
   const nextId = await renderedOptions.nth(selectedIndex + 1).getAttribute("id");
@@ -77,7 +80,7 @@ test("resume search covers over 1000 assignments with grouped labels and compati
   await expect(page.getByRole("combobox", { name: "Search resume assignments" })).toHaveAttribute("aria-activedescendant", nextId!);
   await page.keyboard.press("Escape");
   await page.getByLabel("Bidder", { exact: true }).selectOption("bidder-0");
-  await expect(selector).toContainText("assignment1099@example.test");
+  await expect(selector).toContainText("assignment1098@example.test");
   await page.getByLabel("Bidder", { exact: true }).selectOption("bidder-1");
   await expect(selector).toHaveText("All resumes");
   await selector.click();
@@ -90,6 +93,11 @@ test("resume search covers over 1000 assignments with grouped labels and compati
   }
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Add bid", exact: true }).click();
-  await expect(page.getByLabel("Resume profile").locator("option")).toHaveCount(1);
-  await expect(page.getByLabel("Resume profile").locator("option")).toContainText("Taylor Reed · bidder1@example.test");
+  const assignmentPicker = page.getByLabel("Resume profile");
+  await expect(assignmentPicker.locator("option:not([disabled])")).toHaveCount(1);
+  await expect(assignmentPicker.locator("option:not([disabled])")).toContainText("Taylor Reed · bidder1@example.test");
+  await expect(assignmentPicker.locator("option").filter({ hasText: "assignment1099@example.test" })).toHaveCount(0);
+  await expect(assignmentPicker).toHaveValue("");
+  await assignmentPicker.selectOption("resume-1");
+  await expect(assignmentPicker).toHaveValue("resume-1");
 });

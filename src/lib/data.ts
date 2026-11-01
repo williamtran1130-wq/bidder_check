@@ -9,6 +9,7 @@ import {
   type BidRow,
 } from "./workspace-types";
 import { getManagerFinancialValues } from "./financial-data";
+import { activeBidders, activeCandidateProfiles } from "./active-items";
 type LoadableTable =
   "profiles" | "bidders" | "resumes" | "candidate_profiles" | "invitations";
 type LoadedRow<T extends LoadableTable> = T extends "bidders"
@@ -19,6 +20,7 @@ type LoadedRow<T extends LoadableTable> = T extends "bidders"
 export type WorkspaceData = {
   profile: Row<"profiles">;
   workspaces: Row<"workspaces">[];
+  selectableWorkspaces?: Row<"workspaces">[];
   profiles: Row<"profiles">[];
   bidders: BidderRow[];
   resumes: ResumeRow[];
@@ -43,7 +45,7 @@ export async function getWorkspaceData(
     bidderId?: string;
   } = {},
 ): Promise<WorkspaceData> {
-  const { supabase, profile, workspaces } = await getContext();
+  const { supabase, profile, workspaces, selectableWorkspaces } = await getContext();
   const scope = options.scope ?? "full";
   const needsProfiles = [
     "full",
@@ -190,6 +192,7 @@ export async function getWorkspaceData(
   return {
     profile,
     workspaces,
+    selectableWorkspaces,
     profiles,
     bidders: safeBidders,
     resumes: safeResumes,
@@ -202,8 +205,8 @@ export async function getWorkspaceData(
 }
 
 /** Dashboard filters need labels and membership, never assignment/contact/rule payloads. */
-export type DashboardData = Pick<WorkspaceData, "profile" | "workspaces"> & {
-  profiles: Pick<Row<"profiles">, "id" | "display_name">[];
+export type DashboardData = Pick<WorkspaceData, "profile" | "workspaces" | "selectableWorkspaces"> & {
+  profiles: Pick<Row<"profiles">, "id" | "display_name" | "archived" | "role">[];
   bidders: Pick<BidderRow, "user_id" | "workspace_id" | "archived">[];
   candidateProfiles: Pick<
     Row<"candidate_profiles">,
@@ -211,14 +214,14 @@ export type DashboardData = Pick<WorkspaceData, "profile" | "workspaces"> & {
   >[];
 };
 export async function getDashboardData(): Promise<DashboardData> {
-  const { supabase, profile, workspaces } = await getContext();
+  const { supabase, profile, workspaces, selectableWorkspaces } = await getContext();
   // Each reader retains its concrete projection type; never cast a partial row to a full DTO.
   async function people() {
     const rows: DashboardData["profiles"] = [];
     for (let offset = 0; ; offset += 1000) {
       const result = await supabase
         .from("profiles")
-        .select("id,display_name")
+        .select("id,display_name,archived,role")
         .order("id")
         .range(offset, offset + 999);
       if (result.error) throw result.error;
@@ -260,8 +263,9 @@ export async function getDashboardData(): Promise<DashboardData> {
   return {
     profile,
     workspaces,
+    selectableWorkspaces,
     profiles,
-    bidders: memberships,
-    candidateProfiles,
+    bidders: activeBidders({ profile, workspaces, selectableWorkspaces, profiles, bidders: memberships }),
+    candidateProfiles: activeCandidateProfiles({ profile, workspaces, selectableWorkspaces, profiles, candidateProfiles }),
   };
 }

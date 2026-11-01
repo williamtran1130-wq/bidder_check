@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Trash2, MapPin, Plus } from "lucide-react";
 import { toast } from "sonner";
 import type { WorkspaceData } from "@/lib/data";
+import { activeCandidateProfiles, activeResumes, activeWorkspaces } from "@/lib/active-items";
 import type { Row } from "@/lib/database.types";
 import {
   deleteCandidateProfile,
@@ -41,10 +42,13 @@ function CandidateProfileDialog({
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
   const router = useRouter();
+  const workspaces = activeWorkspaces(data);
+  const [selectedWorkspace, setWorkspace] = useState(candidate?.workspace_id ?? workspaces[0]?.id ?? "");
+  const workspace = workspaces.some((item) => item.id === selectedWorkspace) ? selectedWorkspace : "";
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant={candidate ? "outline" : "default"}>
+        <Button variant={candidate ? "outline" : "default"} disabled={!workspaces.length}>
           {!candidate && <Plus size={16} />}
           {candidate ? "Edit profile details" : "New candidate profile"}
         </Button>
@@ -65,6 +69,7 @@ function CandidateProfileDialog({
           className="space-y-4"
           action={(form) =>
             start(async () => {
+              if (!workspace) { toast.error("Choose an active workspace."); return; }
               const result = await saveCandidateProfile(form);
               if (result.error) toast.error(result.error);
               else {
@@ -80,10 +85,12 @@ function CandidateProfileDialog({
             <SelectField
               label="Client workspace"
               name="workspace_id"
-              defaultValue={candidate?.workspace_id ?? data.workspaces[0]?.id}
+              value={workspace}
+              onChange={(event) => setWorkspace(event.target.value)}
               required
             >
-              {data.workspaces.map((workspace) => (
+              <option value="" disabled>Choose a workspace</option>
+              {workspaces.map((workspace) => (
                 <option key={workspace.id} value={workspace.id}>
                   {workspace.name}
                 </option>
@@ -303,7 +310,8 @@ export function CandidateProfileLibrary({ data }: { data: WorkspaceData }) {
   const [pending, start] = useTransition();
   const router = useRouter();
   const managers = data.profile.role !== "bidder";
-  const list = data.candidateProfiles.filter((candidate) => {
+  const resumes = activeResumes(data);
+  const list = activeCandidateProfiles(data).filter((candidate) => {
     const workspace = data.workspaces.find(
       (w) => w.id === candidate.workspace_id,
     );
@@ -332,7 +340,7 @@ export function CandidateProfileLibrary({ data }: { data: WorkspaceData }) {
       ) : (
         <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           {list.map((candidate) => {
-            const assignments = data.resumes.filter(
+            const assignments = resumes.filter(
               (resume) => resume.profile_id === candidate.id,
             );
             return (
@@ -424,7 +432,7 @@ export function CandidateProfileLibrary({ data }: { data: WorkspaceData }) {
                 <div className="border-t pt-4">
                   <h3 className="mb-3 font-semibold">Bidder assignments</h3>
                   <div className="divide-y">
-                    {data.resumes
+                    {resumes
                       .filter((resume) => resume.profile_id === active.id)
                       .map((assignment) => (
                         <div

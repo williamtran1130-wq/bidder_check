@@ -17,24 +17,31 @@ import { type ReadSeed } from "@/lib/read-state";
 import type { DashboardReport as SeedReport } from "@/lib/report-types";
 import { Button } from "./ui/button";
 import { confirmationBuckets, mergeMailGroups, projectMailMetrics } from "@/lib/mail-metrics";
+import { activeBidders, activeCandidateProfiles, activeWorkspaces } from "@/lib/active-items";
 
 const chartStyle = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: 10, fontSize: 12 };
 const tick = { fontSize: 11, fill: "var(--muted)" };
 export function Dashboard({ data, initial }: { data: DashboardData; initial?: ReadSeed<ReportBundle<SeedReport>> }) {
   const [period, setPeriod] = useState<PeriodSelection>({ preset: "this_week" });
-  const [workspace, setWorkspace] = useState("");
-  const [bidder, setBidder] = useState("");
-  const [profile, setProfile] = useState("");
+  const [workspaceSelection, setWorkspace] = useState("");
+  const [bidderSelection, setBidder] = useState("");
+  const [profileSelection, setProfile] = useState("");
   const [email, setEmail] = useState("");
   const isManager = data.profile.role !== "bidder";
+  const workspaces = activeWorkspaces(data);
+  const workspace = workspaces.some(row => row.id === workspaceSelection) ? workspaceSelection : "";
+  const bidders = activeBidders(data).filter(row => !workspace || row.workspace_id === workspace);
+  const candidates = activeCandidateProfiles(data).filter(row => !workspace || row.workspace_id === workspace);
+  const bidder = bidders.some(row => row.user_id === bidderSelection) ? bidderSelection : "";
+  const profile = candidates.some(row => row.id === profileSelection) ? profileSelection : "";
   const query = useMemo(() => ({ period, workspace: workspace || undefined, bidder: bidder || undefined, profile: profile || undefined, ...(email ? { email } : {}) }), [period, workspace, bidder, profile, email]);
   const bundle = useReportBundle("overview", query, initial);
   const { report, loading, error, refresh, mail } = bundle;
   const mailReport = mail.error ? undefined : mail.data;
   const mailBidders = projectMailMetrics(mailReport, "bidder");
   const mailProfiles = projectMailMetrics(mailReport, "profile");
-  const bidderRows = mergeMailGroups(report?.comparisons.bidders ?? [], mailBidders.groups, row => ({ id: row.id, label: row.label, found: 0, foundApplied: 0 }));
-  const profileRows = mergeMailGroups(report?.comparisons.profiles ?? [], mailProfiles.groups, row => ({ id: row.id, label: row.label, found: 0, foundApplied: 0 }));
+  const bidderRows = mergeMailGroups(report?.comparisons.bidders ?? [], mailBidders.groups, row => ({ id: row.id, label: row.label, found: 0, foundApplied: 0 })).filter(row => bidders.some(bidder => bidder.user_id === row.id));
+  const profileRows = mergeMailGroups(report?.comparisons.profiles ?? [], mailProfiles.groups, row => ({ id: row.id, label: row.label, found: 0, foundApplied: 0 })).filter(row => candidates.some(candidate => candidate.id === row.id));
   const confirmationSeries = confirmationBuckets(mailReport, report?.series ?? []);
   const range = resolveCalendarPeriod(period);
   const stats = [
@@ -52,9 +59,9 @@ export function Dashboard({ data, initial }: { data: DashboardData; initial?: Re
     </PageHeading>
     <section className="panel mb-5 flex flex-wrap items-end gap-3 p-4" aria-label="Dashboard report filters">
       <PeriodSelector value={period} onChange={setPeriod} />
-      {isManager && (data.profile.role === "admin" || data.workspaces.length > 1) && <label className="space-y-1 text-xs text-muted-foreground"><span>Workspace</span><select className="native-select block text-foreground" value={workspace} onChange={(event) => { setWorkspace(event.target.value); setBidder(""); setProfile(""); setEmail(""); }}><option value="">All workspaces</option>{data.workspaces.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>}
-      {isManager && <label className="space-y-1 text-xs text-muted-foreground"><span>Bidder</span><select className="native-select block text-foreground" value={bidder} onChange={(event) => { setBidder(event.target.value); setEmail(""); }}><option value="">All bidders</option>{data.bidders.filter((row) => !row.archived && (!workspace || row.workspace_id === workspace)).map((row) => <option key={row.user_id} value={row.user_id}>{data.profiles.find((person) => person.id === row.user_id)?.display_name ?? "Bidder"}</option>)}</select></label>}
-      <label className="space-y-1 text-xs text-muted-foreground"><span>Candidate profile</span><select className="native-select block text-foreground" value={profile} onChange={(event) => { setProfile(event.target.value); setEmail(""); }}><option value="">All profiles</option>{data.candidateProfiles.filter((row) => !row.archived && (!workspace || row.workspace_id === workspace)).map((row) => <option key={row.id} value={row.id}>{row.identifier}</option>)}</select></label>
+      {isManager && (data.profile.role === "admin" || workspaces.length > 1) && <label className="space-y-1 text-xs text-muted-foreground"><span>Workspace</span><select className="native-select block text-foreground" value={workspace} onChange={(event) => { setWorkspace(event.target.value); setBidder(""); setProfile(""); setEmail(""); }}><option value="">All workspaces</option>{workspaces.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>}
+      {isManager && <label className="space-y-1 text-xs text-muted-foreground"><span>Bidder</span><select className="native-select block text-foreground" value={bidder} onChange={(event) => { setBidder(event.target.value); setEmail(""); }}><option value="">All bidders</option>{bidders.map((row) => <option key={row.user_id} value={row.user_id}>{data.profiles.find((person) => person.id === row.user_id)?.display_name ?? "Bidder"}</option>)}</select></label>}
+      <label className="space-y-1 text-xs text-muted-foreground"><span>Candidate profile</span><select className="native-select block text-foreground" value={profile} onChange={(event) => { setProfile(event.target.value); setEmail(""); }}><option value="">All profiles</option>{candidates.map((row) => <option key={row.id} value={row.id}>{row.identifier}</option>)}</select></label>
       <span className="ml-auto pb-2 text-xs text-muted-foreground" role="status">{range.from ? `${range.from} – ${range.to} CT` : "All time · CT"}</span>
     </section>
     {error && <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-4 py-3 text-sm" role="alert" aria-label="Bid reporting error"><span>{error}{report ? " Showing the last successful results for these filters." : ""}</span><Button variant="outline" size="sm" onClick={refresh} disabled={loading}>Retry</Button></div>}

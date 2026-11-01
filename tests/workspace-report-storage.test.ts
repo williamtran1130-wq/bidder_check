@@ -210,3 +210,43 @@ it("clears legacy mail blobs after cutover without changing normalized counts or
   expect((await db.query<{mailboxes:unknown[];last_revision:number;original_hash:string}>("select mailboxes,last_revision,original_hash from public.mail_insights_state where client_id=$1",[owner])).rows[0]).toEqual({mailboxes:[],last_revision:7,original_hash:'receipt'});
   expect((await db.query<{n:number}>("select n::integer from private.mail_daily where client_id=$1",[owner])).rows[0].n).toBe(2);
 });
+
+it.each(["account","membership","candidate","assignment"])("hides groups linked to an archived %s while preserving all historical totals",async(kind)=>{
+  await db.exec("begin");
+  const bundle=async(type:string)=>(await db.query<{value:{report:Report}}>("select public.workspace_report_bundle($1,null,null,null,null,null,null,'bidder') value",[type])).rows[0].value.report;
+  const before=await bundle('overview'), earningsBefore=await bundle('earnings');
+  await db.exec('reset role');
+  if(kind==='account')await db.query('update public.profiles set archived=true where id=$1',[bidder]);
+  if(kind==='membership')await db.query('update public.bidders set archived=true where user_id=$1',[bidder]);
+  if(kind==='candidate')await db.query('update public.candidate_profiles set archived=true where id=$1',[p]);
+  if(kind==='assignment')await db.query('update public.resumes set archived=true where id=$1',[r]);
+  await asUser(owner);
+  const after=await bundle('overview'), earningsAfter=await bundle('earnings');
+  expect(after.totals).toEqual(before.totals);
+  expect(after.financial).toEqual(before.financial);
+  expect(after.comparisons.bidders).toEqual([]);
+  expect(after.comparisons.profiles).toEqual([]);
+  expect(earningsAfter.totals).toEqual(earningsBefore.totals);
+  expect(earningsAfter.groups).toEqual([]);
+});
+it("omits removed historical identities without discarding retained counts or saved earnings",async()=>{
+  await db.exec('begin; reset role');
+  const missing='00000000-0000-4000-8000-999999999999';
+  const groups=[{id:r,label:'Active',count:3},{id:missing,label:'Removed assignment',count:9}];
+  const report={totals:{count:12,cents:4500},groups};
+  const filtered=(await db.query<{value:typeof report}>("select private.visible_application_report($1::jsonb,'earnings','assignment') value",[JSON.stringify(report)])).rows[0].value;
+  expect(filtered.totals).toEqual(report.totals);
+  expect(filtered.groups).toEqual(groups.slice(0,1));
+});
+
+it("marks inactive mail assignments without changing historical mail cubes or collection metadata",async()=>{
+  await db.exec('begin; reset role');
+  const mail={assignments:[{id:r,email:'report@example.test',archived:false}],mailboxes:[{email:'report@example.test',collected_at:'2026-10-31T18:00:00Z',coverage_start:'2026-10-01',rows:[{count:17}]}],bid_rows:[{found:12,applied:9}]};
+  await db.query('update public.bidders set archived=true where user_id=$1',[bidder]);
+  const visible=(await db.query<{value:typeof mail}>("select private.visible_mail_assignments($1::jsonb) value",[JSON.stringify(mail)])).rows[0].value;
+  expect(visible.assignments).toEqual([{...mail.assignments[0],archived:true}]);
+  expect(visible.mailboxes).toEqual(mail.mailboxes);
+  expect(visible.bid_rows).toEqual(mail.bid_rows);
+  await asUser(owner);
+  await expect(db.query('select private.visible_mail_assignments($1::jsonb)',[JSON.stringify(mail)])).rejects.toThrow(/permission denied/);
+});

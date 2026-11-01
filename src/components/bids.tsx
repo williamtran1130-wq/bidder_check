@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { WorkspaceData } from "@/lib/data";
+import { activeBidders, activeResumes } from "@/lib/active-items";
 import type { Row } from "@/lib/database.types";
 import { usd, BID_TIMEZONE } from "@/lib/domain";
 import {
@@ -127,15 +128,12 @@ export function BidDialog({
   const [blocked, setBlocked] = useState(false);
   const router = useRouter();
   const assignmentLabels = useMemo(() => buildResumeOptions(data), [data]);
-  const active = data.resumes.filter(
-    (r) =>
-      (!(bid?.bidder_id ?? bidderId) ||
-        r.bidder_id === (bid?.bidder_id ?? bidderId)) &&
-      ((!r.archived &&
-        !!r.file_id &&
-        !data.bidders.find((b) => b.user_id === r.bidder_id)?.archived) ||
-        r.id === bid?.resume_id),
+  const active = activeResumes(data).filter((resume) =>
+    (!(bid?.bidder_id ?? bidderId) || resume.bidder_id === (bid?.bidder_id ?? bidderId)) && !!resume.file_id,
   );
+  const [selectedResume, setSelectedResume] = useState(bid?.resume_id ?? active[0]?.id ?? "");
+  const resumeId = active.some((resume) => resume.id === selectedResume) ? selectedResume : "";
+  const lockedResume = !!bid && (!!bid.first_applied_at || !active.some((resume) => resume.id === bid.resume_id));
   return (
     <Dialog
       open={open}
@@ -149,7 +147,7 @@ export function BidDialog({
         <Button
           variant={bid ? "outline" : "default"}
           size={bid ? "sm" : "default"}
-          disabled={!active.length}
+          disabled={!bid && !active.length}
         >
           {!bid && <Plus size={16} />} {bid ? "Edit details" : "Add bid"}
         </Button>
@@ -169,6 +167,7 @@ export function BidDialog({
           className="space-y-4"
           onSubmit={(event) => {
             event.preventDefault();
+            if (!lockedResume && !resumeId) { setSaveError("Choose an active resume assignment."); return; }
             const form = new FormData(event.currentTarget);
             start(async () => {
               setBlocked(false);
@@ -209,12 +208,12 @@ export function BidDialog({
               </p>
             )}
           <input type="hidden" name="id" value={bid?.id ?? ""} />
-          {bid?.first_applied_at ? (
+          {bid && lockedResume ? (
             <>
               <input type="hidden" name="resume_id" value={bid.resume_id} />
               <p className="rounded-lg bg-secondary p-3 text-xs">
                 Resume: {assignmentLabels.get(bid.resume_id)?.label} · Locked
-                after first application
+                to the original assignment
               </p>
             </>
           ) : (
@@ -222,8 +221,10 @@ export function BidDialog({
               label="Resume profile"
               name="resume_id"
               required
-              defaultValue={bid?.resume_id ?? active[0]?.id}
+              value={resumeId}
+              onChange={(event) => setSelectedResume(event.target.value)}
             >
+              <option value="" disabled>Choose an active assignment</option>
               {active.map((r) => (
                 <option key={r.id} value={r.id}>
                   {assignmentLabels.get(r.id)?.label}
@@ -316,12 +317,12 @@ export function BidDialog({
               <option key={s} value={s} />
             ))}
           </datalist>
-          <div className="flex justify-end">
+          <fieldset className="flex justify-end" disabled={!lockedResume && !resumeId}>
             <SaveButton
               pending={pending}
               label={bid ? "Save changes" : "Add opportunity"}
             />
-          </div>
+          </fieldset>
         </form>
       </DialogContent>
     </Dialog>
@@ -432,8 +433,11 @@ function BidWorkspaceContent({
   }
   const [status, setStatus] = useState("all");
   const [arrangement, setArrangement] = useState("all");
-  const [resume, setResume] = useState("all");
-  const [bidder, setBidder] = useState(bidderId ?? "all");
+  const [selectedResumeFilter, setResume] = useState("all");
+  const [selectedBidderFilter, setBidder] = useState(bidderId ?? "all");
+  const bidders = useMemo(() => activeBidders(data), [data]);
+  const bidder = bidders.some((item) => item.user_id === selectedBidderFilter) ? selectedBidderFilter : "all";
+  const resume = compatibleResume(assignments, selectedResumeFilter, bidderId ?? bidder);
   const resumeChoices = useMemo(
     () => filterResumeOptions(assignments, "", bidderId ?? bidder),
     [assignments, bidderId, bidder],
@@ -455,6 +459,14 @@ function BidWorkspaceContent({
   const [openFilter, setOpenFilter] = useState<string | null>(null);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 });
   const [customPageSize, setCustomPageSize] = useState(false);
+  useEffect(() => {
+    if (selectedBidderFilter === bidder && selectedResumeFilter === resume) return;
+    setBidder(bidder);
+    setResume(resume);
+    setPagination((current) => ({ ...current, pageIndex: 0 }));
+    setChecked({});
+    setSelected(undefined);
+  }, [selectedBidderFilter, bidder, selectedResumeFilter, resume]);
   const pageSize = pagination.pageSize;
   const [selected, setSelected] = useState<string>();
   const [history, setHistory] = useState<Omit<Row<"bid_events">, "details">[]>(
@@ -1516,7 +1528,7 @@ function BidWorkspaceContent({
                   onChange={(e) => changeBidder(e.target.value)}
                 >
                   <option value="all">All bidders</option>
-                  {data.bidders.map((b) => (
+                  {bidders.map((b) => (
                     <option key={b.user_id} value={b.user_id}>
                       {
                         data.profiles.find((p) => p.id === b.user_id)

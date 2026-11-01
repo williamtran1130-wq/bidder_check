@@ -16,7 +16,8 @@ import { MailCount, MailReportNotice, ReportWorkspaceSelector } from "./mail-rep
 export function InterviewReport({ initial, mailContext = {} }: { initial?: ReadSeed<ReportBundle<SeedReport>>; mailContext?: MailReportContext } = {}) {
   const [period, setPeriod] = useState<PeriodSelection>({ preset: "all" });
   const [group, setGroup] = useState<GroupedReportQuery["group"]>("profile");
-  const [workspace, setWorkspace] = useState(mailContext.workspaceId ?? "");
+  const [workspaceSelection, setWorkspace] = useState(mailContext.workspaceId ?? "");
+  const workspace = mailContext.workspaceId ?? (mailContext.workspaces?.some(row => row.id === workspaceSelection) ? workspaceSelection : "");
   const query = useMemo<GroupedReportQuery>(() => ({ period, group, ...(workspace ? { workspace } : {}) }), [period, group, workspace]);
   const bundle = useReportBundle("interviews", query, initial);
   const { report, loading, error, refresh, mail } = bundle;

@@ -36,6 +36,7 @@ type Actor = Awaited<ReturnType<typeof getActor>>;
 type Context = Omit<Actor, "profile"> & {
   profile: Row<"profiles">;
   workspaces: Row<"workspaces">[];
+  selectableWorkspaces: Row<"workspaces">[];
 };
 async function context(options: { actorOnly: true }): Promise<Actor>;
 async function context(options?: { actorOnly?: false }): Promise<Context>;
@@ -56,17 +57,23 @@ async function context(options?: {
       .select("*")
       .eq("id", actor.user.id)
       .single(),
-    actor.supabase.from("workspaces").select("*").order("created_at"),
+    actor.supabase.from("workspaces")
+      .select("*,owner:profiles!workspaces_owner_id_fkey(archived)")
+      .order("created_at")
+      .overrideTypes<(Row<"workspaces"> & { owner: { archived: boolean } | null })[], { merge: false }>(),
   ]);
   if (profileResult.error || !profileResult.data)
     throw new Error(
       "Your workspace is not ready. The database migration must be installed before using the application.",
     );
   if (workspaceResult.error) throw new Error(workspaceResult.error.message);
+  const workspaceRows = workspaceResult.data ?? [];
+  const withoutOwner = ({ owner, ...workspace }: (typeof workspaceRows)[number]) => { void owner; return workspace; };
   return {
     ...actor,
     profile: profileResult.data,
-    workspaces: workspaceResult.data ?? [],
+    workspaces: workspaceRows.map(withoutOwner),
+    selectableWorkspaces: workspaceRows.filter(workspace => !workspace.owner?.archived).map(withoutOwner),
   };
 }
 export const getContext = cache(context);

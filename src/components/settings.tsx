@@ -11,8 +11,10 @@ import { PageHeading, Field, SelectField, SaveButton } from "./common";
 import { Button } from "./ui/button";
 import Link from "next/link";
 export function Settings({ data }: { data: WorkspaceData }) {
-  const [workspaceId, setWorkspaceId] = useState(data.workspaces[0]?.id ?? "");
-  const w = data.workspaces.find((w) => w.id === workspaceId);
+  const workspaces = data.selectableWorkspaces ?? data.workspaces;
+  const [workspaceSelection, setWorkspaceId] = useState(workspaces[0]?.id ?? "");
+  const workspaceId = workspaces.some(row => row.id === workspaceSelection) ? workspaceSelection : workspaces[0]?.id ?? "";
+  const w = workspaces.find((w) => w.id === workspaceId);
   const [pending, start] = useTransition();
   const { setTheme } = useTheme();
   const router = useRouter();
@@ -73,7 +75,7 @@ export function Settings({ data }: { data: WorkspaceData }) {
                   value={workspaceId}
                   onChange={(e) => setWorkspaceId(e.target.value)}
                 >
-                  {data.workspaces.map((w) => (
+                  {workspaces.map((w) => (
                     <option key={w.id} value={w.id}>
                       {w.name}
                     </option>
