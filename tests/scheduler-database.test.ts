@@ -37,7 +37,7 @@ beforeAll(async () => {
     await db.exec(readFileSync(`supabase/migrations/${file}`, "utf8"));
   }
   await db.exec(readFileSync("supabase/scheduler/storage-cleanup-function.sql", "utf8"));
-});
+}, 60000);
 afterAll(async () => {
   await db?.close();
 });

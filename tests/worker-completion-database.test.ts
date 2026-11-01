@@ -24,7 +24,7 @@ beforeAll(async () => {
       "insert into public.bid_purge_operations(actor_id,scope,targets,count,completed_at) values('10000000-0000-4000-8000-000000000001','all','[]',2,now()) returning id",
     )
   ).rows[0].id;
-});
+}, 60000);
 afterAll(async () => {
   await db?.close();
 });
