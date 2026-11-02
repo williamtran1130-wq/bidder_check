@@ -224,9 +224,9 @@ export async function saveCandidateProfileRules(input: {
       p_profile: z.uuid().parse(input.profile),
       p_company_limit: z.number().int().min(1).max(1000).parse(input.companyLimit),
       p_retention_months: input.retentionMonths === null ? null : z.number().int().min(1).max(120).parse(input.retentionMonths),
-      p_companies: z.array(z.string().trim().min(1).max(200)).max(100).parse(input.companies),
-      p_roles: z.array(z.string().trim().min(1).max(200)).max(100).parse(input.roles),
-      p_links: z.array(z.string().trim().min(1).max(200)).max(100).parse(input.links),
+      p_companies: z.array(z.string().trim().min(1).max(200)).parse(input.companies),
+      p_roles: z.array(z.string().trim().min(1).max(200)).parse(input.roles),
+      p_links: z.array(z.string().trim().min(1).max(200)).parse(input.links),
       p_confirm_eligible: input.confirmedEligible ?? null,
     }),
   );

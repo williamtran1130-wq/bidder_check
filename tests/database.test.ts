@@ -373,10 +373,18 @@ it("enforces profile-wide company limits and literal restrictions", async () => 
   ).rows[0].id;
   await finalizeResumeFile(assignment);
   await asUser(client);
+  const companies = Array.from({ length: 249 }, (_, index) => `Blocked Company ${index}`);
+  companies.push("Acme");
   await db.query(
-    "select public.update_candidate_profile_rules($1,1,3,array['Acme'],array['Staff Engineer'],array['blocked.example'])",
-    [profileId],
+    "select public.update_candidate_profile_rules($1,1,3,$2::text[],array['Staff Engineer'],array['blocked.example'])",
+    [profileId, [...companies, " ACME "]],
   );
+  const stored = (await db.query<{ restricted_companies: string[] }>(
+    "select restricted_companies from public.candidate_profiles where id=$1", [profileId],
+  )).rows[0].restricted_companies;
+  expect(stored).toHaveLength(250);
+  expect(stored[0]).toBe("blocked company 0");
+  expect(stored[249]).toBe("acme");
   await asUser(bidder);
   await db.query(
     "select public.save_bid(null,$1,'Northwind','Engineer','https://northwind.test/job/1','LinkedIn','remote','open')",
