@@ -3,7 +3,9 @@ export type AccountKind =
   | "create_bidder"
   | "update_client"
   | "update_bidder"
-  | "reset_password";
+  | "reset_password"
+  | "sign_out_bidder"
+  | "set_bidder_password";
 export type AccountOperation = {
   requestId: string;
   actorId: string;
@@ -29,4 +31,5 @@ export type AccountActionResult = {
   operation?: AccountOperation;
   requestId?: string;
   notStarted?: boolean;
+  requiresPassword?: boolean;
 };

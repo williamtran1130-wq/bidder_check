@@ -811,6 +811,8 @@ export async function retryPurgeCleanup() {
   return { data: { status: purgeFixture(), outcome: "processed" } };
 }
 export async function getManagedAccountOperations() {
+  if (new URLSearchParams(location.search).has("bidder-security"))
+    return (await import("./bidder-security-actions")).list();
   if (new URLSearchParams(location.search).has("account-recovery"))
     return (await import("./account-actions")).list();
   const { fixture } = await import("./sample-data");
@@ -823,6 +825,8 @@ export async function getManagedAccountOperations() {
   };
 }
 export async function resumeManagedAccountOperation(request: string) {
+  if (new URLSearchParams(location.search).has("bidder-security"))
+    return (await import("./bidder-security-actions")).resume(request);
   return new URLSearchParams(location.search).has("account-recovery")
     ? (await import("./account-actions")).resume(request)
     : unavailable();
@@ -835,9 +839,14 @@ export async function submitManagedAccountOperation(
   kind: import("@/lib/account-operation-types").AccountKind,
   fields: Record<string, string>,
 ) {
+  if (new URLSearchParams(location.search).has("bidder-security"))
+    return (await import("./bidder-security-actions")).submit(request, kind, fields);
   return new URLSearchParams(location.search).has("account-recovery")
     ? (await import("./account-actions")).submit(request, kind, fields)
     : unavailable();
+}
+export async function changeManagedBidderPassword(request: string, target: string, password: string, confirmation: string) {
+  return (await import("./bidder-security-actions")).submit(request, "set_bidder_password", { user_id: target }, password, confirmation);
 }
 
 export const deleteCandidateProfile = unavailable, deleteResumeAssignment = unavailable;

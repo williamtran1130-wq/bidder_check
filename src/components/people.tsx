@@ -1,7 +1,7 @@
 "use client";
 import { refreshWorkspace } from "@/lib/report-cache";
 import Link from "next/link";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Search, ArrowUpRight, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
@@ -15,6 +15,7 @@ import {
   resumeManagedAccountOperation,
   abandonManagedAccountOperation,
   submitManagedAccountOperation,
+  changeManagedBidderPassword,
 } from "@/app/(workspace)/actions";
 import {
   freezeAccountRequest,
@@ -50,6 +51,9 @@ function useAccountRequest(open: boolean, scope: string) {
   const [actor, setActor] = useState<string | null>(null);
   const [saved, setSaved] = useState<FrozenAccountRequest | null>(null);
   const [message, setMessage] = useState("");
+  const [requiresPassword, setRequiresPassword] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
   useEffect(() => {
     if (!open) return;
     let current = true;
@@ -83,13 +87,28 @@ function useAccountRequest(open: boolean, scope: string) {
   }, [open, scope]);
   async function run(
     request: FrozenAccountRequest,
+    credentials?: { password: string; confirmation: string },
   ): Promise<AccountActionResult> {
+    if (inFlight.current) return { error: "This request is already running." };
+    inFlight.current = true;
+    setBusy(true);
     try {
-      const result = await submitManagedAccountOperation(
-        request.requestId,
-        request.kind,
-        request.fields,
-      );
+      const result =
+        request.kind === "set_bidder_password"
+          ? credentials
+            ? await changeManagedBidderPassword(
+                request.requestId,
+                request.fields.user_id,
+                credentials.password,
+                credentials.confirmation,
+              )
+            : await resumeManagedAccountOperation(request.requestId, true)
+          : await submitManagedAccountOperation(
+              request.requestId,
+              request.kind,
+              request.fields,
+            );
+      setRequiresPassword(result.requiresPassword === true);
       if (
         result.operation?.status === "completed" ||
         result.operation?.status === "abandoned" ||
@@ -107,11 +126,15 @@ function useAccountRequest(open: boolean, scope: string) {
       setMessage(error);
       window.dispatchEvent(new Event("managed-account-change"));
       return { error };
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
     }
   }
   async function submit(
     kind: AccountKind,
     form: FormData,
+    credentials?: { password: string; confirmation: string },
   ): Promise<AccountActionResult> {
     if (!actor)
       return { error: "Account recovery is still loading. Please retry." };
@@ -126,7 +149,7 @@ function useAccountRequest(open: boolean, scope: string) {
         ),
       });
       setSaved(request);
-      return run(request);
+      return run(request, credentials);
     } catch {
       const error =
         "The request could not be saved for recovery. Enable browser storage before continuing.";
@@ -136,6 +159,8 @@ function useAccountRequest(open: boolean, scope: string) {
   }
   return {
     ready: !!actor,
+    busy,
+    requiresPassword,
     saved,
     message,
     submit,
@@ -207,6 +232,7 @@ function AccountRecovery() {
   const [admin, setAdmin] = useState(false);
   const [pending, start] = useTransition();
   const [message, setMessage] = useState("");
+  const [passwordRequest, setPasswordRequest] = useState<string | null>(null);
   const router = useRouter();
   async function load() {
     const result = await getManagedAccountOperations();
@@ -279,6 +305,9 @@ function AccountRecovery() {
                       op.requestId,
                     );
                     setMessage(result.error ?? "Account change completed.");
+                    setPasswordRequest(
+                      result.requiresPassword ? op.requestId : null,
+                    );
                     await load();
                     refreshWorkspace(router);
                   } catch {
@@ -326,6 +355,33 @@ function AccountRecovery() {
               </Button>
             )}
           </div>
+          {passwordRequest === op.requestId && op.actorId === actor && (
+            <PasswordEntry
+              disabled={pending}
+              onSubmit={async (password, confirmation) => {
+                try {
+                  const result = await changeManagedBidderPassword(
+                    op.requestId,
+                    op.targetId,
+                    password,
+                    confirmation,
+                  );
+                  setMessage(
+                    result.error ??
+                      "Password changed. Bidder signed out on all devices.",
+                  );
+                  if (result.operation?.status === "completed")
+                    setPasswordRequest(null);
+                  await load();
+                  window.dispatchEvent(new Event("managed-account-change"));
+                } catch {
+                  setMessage(
+                    "The response was lost. Check this same request again.",
+                  );
+                }
+              }}
+            />
+          )}
           {op.actorId !== actor && (
             <p>
               The original manager must resume this request. An administrator
@@ -481,7 +537,7 @@ export function EditPerson({
           Manage
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Manage {person.display_name}</DialogTitle>
           <DialogDescription>
@@ -550,9 +606,178 @@ export function EditPerson({
           pending={pending}
           retry={() => start(async () => completed(await request.retry()))}
         />
-        <PasswordReset person={person} />
+        {bidder ? (
+          <BidderSecurity person={person} />
+        ) : (
+          <PasswordReset person={person} />
+        )}
       </DialogContent>
     </Dialog>
+  );
+}
+function PasswordEntry({
+  disabled,
+  onSubmit,
+}: {
+  disabled: boolean;
+  onSubmit: (password: string, confirmation: string) => Promise<void>;
+}) {
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [pending, start] = useTransition();
+  const errorId = useId();
+  const mismatch = !!confirmation && password !== confirmation;
+  return (
+    <form
+      className="space-y-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (
+          disabled ||
+          pending ||
+          mismatch ||
+          password.length < 8 ||
+          password.length > 128
+        )
+          return;
+        start(async () => {
+          try {
+            await onSubmit(password, confirmation);
+          } finally {
+            setPassword("");
+            setConfirmation("");
+          }
+        });
+      }}
+    >
+      <fieldset disabled={disabled || pending} className="space-y-3">
+        <Field
+          label="New password"
+          type="password"
+          autoComplete="new-password"
+          minLength={8}
+          maxLength={128}
+          required
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+        />
+        <Field
+          label="Confirm password"
+          type="password"
+          autoComplete="new-password"
+          minLength={8}
+          maxLength={128}
+          required
+          value={confirmation}
+          onChange={(event) => setConfirmation(event.target.value)}
+          aria-invalid={mismatch}
+          aria-describedby={mismatch ? errorId : undefined}
+        />
+        {mismatch && (
+          <p id={errorId} role="alert" className="text-sm text-destructive">
+            Passwords must match.
+          </p>
+        )}
+        <Button
+          type="submit"
+          variant="outline"
+          disabled={
+            disabled ||
+            pending ||
+            password.length < 8 ||
+            password.length > 128 ||
+            password !== confirmation
+          }
+        >
+          {pending ? "Changing password…" : "Change password"}
+        </Button>
+      </fieldset>
+    </form>
+  );
+}
+function BidderSecurity({ person }: { person: Row<"profiles"> }) {
+  const [confirmed, setConfirmed] = useState(false);
+  const request = useAccountRequest(true, `security:${person.id}`);
+  function completed(result: AccountActionResult) {
+    if (result.error) toast.error(result.error);
+    else if (result.operation?.status === "completed") {
+      toast.success(
+        result.operation.kind === "sign_out_bidder"
+          ? "Bidder signed out on all devices"
+          : "Password changed. Bidder signed out on all devices.",
+      );
+      setConfirmed(false);
+    }
+  }
+  return (
+    <section
+      className="space-y-4 border-t pt-4"
+      aria-label="Bidder password and access"
+    >
+      <div className="space-y-3">
+        <h3 className="text-sm font-semibold">Sign out all devices</h3>
+        <p className="text-sm text-muted-foreground">
+          End all current sessions for {person.email}. They can sign in again
+          with their current password.
+        </p>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            aria-label="Confirm sign out on all devices"
+            checked={confirmed}
+            disabled={request.busy || !!request.saved || !request.ready}
+            onChange={(event) => setConfirmed(event.target.checked)}
+          />
+          Confirm sign out on all devices
+        </label>
+        <Button
+          variant="outline"
+          disabled={
+            !confirmed || request.busy || !!request.saved || !request.ready
+          }
+          onClick={async () => {
+            const form = new FormData();
+            form.set("user_id", person.id);
+            completed(await request.submit("sign_out_bidder", form));
+          }}
+        >
+          Sign out all devices
+        </Button>
+      </div>
+      <div className="space-y-3 border-t pt-4">
+        <h3 className="text-sm font-semibold">Change password</h3>
+        <p className="text-sm text-muted-foreground">
+          Use 8–128 characters. Changing the password signs this bidder out on
+          all devices. Share the new password directly.
+        </p>
+        <PasswordEntry
+          disabled={
+            request.busy ||
+            !request.ready ||
+            (!!request.saved &&
+              (request.saved.kind !== "set_bidder_password" ||
+                !request.requiresPassword))
+          }
+          onSubmit={async (password, confirmation) => {
+            const form = new FormData();
+            form.set("user_id", person.id);
+            completed(
+              await request.submit("set_bidder_password", form, {
+                password,
+                confirmation,
+              }),
+            );
+          }}
+        />
+      </div>
+      <AccountRequestNotice
+        request={request}
+        pending={request.busy}
+        retry={() => {
+          void request.retry().then(completed);
+        }}
+      />
+    </section>
   );
 }
 function PasswordReset({ person }: { person: Row<"profiles"> }) {

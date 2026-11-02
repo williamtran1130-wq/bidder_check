@@ -1,12 +1,15 @@
 import "server-only";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { unstable_rethrow } from "next/navigation";
 import { getContext } from "./auth";
 import { adminClient } from "./admin";
-import { actionErrorMessage } from "./action-errors";
+import { actionErrorMessage, ActionValidationError } from "./action-errors";
 import { moneyToCents } from "./domain";
-import { executeAccountOperation } from "./account-operation-runner";
+import {
+  executeAccountOperation,
+  type EphemeralPassword,
+} from "./account-operation-runner";
 import type {
   AccountActionResult,
   AccountKind,
@@ -44,10 +47,26 @@ const kinds = z.enum([
   "update_client",
   "update_bidder",
   "reset_password",
+  "sign_out_bidder",
+  "set_bidder_password",
 ]);
-function intent(kind: AccountKind, form: FormData) {
+function intent(
+  kind: AccountKind,
+  form: FormData,
+  credentials?: EphemeralPassword,
+) {
   const text = (key: string) => String(form.get(key) ?? "").trim();
-  if (kind === "reset_password")
+  if (kind === "set_bidder_password") {
+    if (!credentials)
+      throw new ActionValidationError(
+        "Use the Change password form to set a bidder password.",
+      );
+    return {
+      target: z.uuid().parse(text("user_id")),
+      password_commitment: credentials.commitment,
+    };
+  }
+  if (kind === "reset_password" || kind === "sign_out_bidder")
     return { target: z.uuid().parse(text("user_id")) };
   const name = z.string().min(1).parse(text("display_name"));
   if (kind === "create_client") z.string().max(100).parse(name);
@@ -71,22 +90,71 @@ function intent(kind: AccountKind, form: FormData) {
 async function drive(
   request: string,
   context: Awaited<ReturnType<typeof getContext>>,
+  credentials?: EphemeralPassword,
 ) {
   const service = adminClient(true);
-  return executeAccountOperation(request, context.profile.id, {
-    rpc: (name, args) =>
-      invoke(
-        name === "dispatch_account_operation" ? service : context.supabase,
-        name,
-        args,
-      ),
-    auth: service.auth.admin,
-  });
+  return executeAccountOperation(
+    request,
+    context.profile.id,
+    {
+      rpc: (name, args) =>
+        invoke(
+          name === "dispatch_account_operation" ? service : context.supabase,
+          name,
+          args,
+        ),
+      auth: service.auth.admin,
+    },
+    credentials,
+  );
+}
+export async function submitBidderPassword(
+  request: string,
+  target: string,
+  password: string,
+  confirmation: string,
+): Promise<AccountActionResult> {
+  try {
+    z.uuid().parse(request);
+    z.uuid().parse(target);
+    if (
+      typeof password !== "string" ||
+      password.length < 8 ||
+      password.length > 128
+    )
+      throw new ActionValidationError("Use between 8 and 128 characters.");
+    if (password !== confirmation)
+      throw new ActionValidationError("Passwords must match.");
+    const key = process.env.MANAGED_PASSWORD_HMAC_KEY;
+    if (!key || !/^[a-fA-F0-9]{64}$/.test(key))
+      throw new ActionValidationError(
+        "Password changes are temporarily unavailable. Contact your administrator.",
+      );
+    const commitment = createHmac("sha256", Buffer.from(key, "hex"))
+      .update(JSON.stringify(["bidder-password-v1", request, target, password]))
+      .digest("hex");
+    const form = new FormData();
+    form.set("user_id", target);
+    return await submitAccountOperation("set_bidder_password", form, request, {
+      password,
+      commitment,
+    });
+  } catch (error) {
+    unstable_rethrow(error);
+    // The same request may already exist. Invalid ephemeral re-entry must never
+    // tell the browser to discard its frozen recovery identity.
+    return {
+      error: safeError(error),
+      requestId: request,
+      requiresPassword: true,
+    };
+  }
 }
 export async function submitAccountOperation(
   kind: AccountKind,
   form: FormData,
   requestId?: string,
+  credentials?: EphemeralPassword,
 ): Promise<AccountActionResult> {
   let operation: AccountOperation | undefined;
   let request: string | undefined;
@@ -97,7 +165,7 @@ export async function submitAccountOperation(
       .uuid()
       .parse(requestId ?? String(form.get("request_id") || randomUUID()));
     kinds.parse(kind);
-    const payload = intent(kind, form);
+    const payload = intent(kind, form, credentials);
     context = await getContext();
     adminClient(true);
     began = true;
@@ -109,7 +177,7 @@ export async function submitAccountOperation(
     await invoke(context.supabase, "reconcile_account_operation", {
       p_request: request,
     });
-    return await drive(request, context);
+    return await drive(request, context, credentials);
   } catch (error) {
     unstable_rethrow(error);
     let notStarted = !operation && !began;
@@ -141,17 +209,42 @@ export async function submitAccountOperation(
 }
 export async function resumeAccountOperation(
   request: string,
+  passwordRecovery = false,
 ): Promise<AccountActionResult> {
   let operation: AccountOperation | undefined;
+  let context: Awaited<ReturnType<typeof getContext>> | undefined;
   try {
     z.uuid().parse(request);
-    const context = await getContext();
+    context = await getContext();
     operation = (await invoke(context.supabase, "reconcile_account_operation", {
       p_request: request,
     })) as AccountOperation;
     return await drive(request, context);
   } catch (error) {
     unstable_rethrow(error);
+    if (
+      passwordRecovery === true &&
+      context &&
+      !operation &&
+      /^(?:[0-9A-Z]{5}|PGRST\d{3})$/.test(
+        (error as { code?: string })?.code ?? "",
+      )
+    ) {
+      try {
+        if (
+          (await invoke(context.supabase, "account_operation_request_exists", {
+            p_request: request,
+          })) === false
+        )
+          return {
+            requestId: request,
+            requiresPassword: true,
+            error: "Re-enter the original password to resume this request.",
+          };
+      } catch (probeError) {
+        unstable_rethrow(probeError);
+      }
+    }
     return { error: safeError(error), ...(operation ? { operation } : {}) };
   }
 }

@@ -1,3 +1,4 @@
+import { fixtureSession, installSessionTables } from "./helpers/live-session";
 // Historical projection comparisons exclude the new retention timestamp; its contract is tested separately.
 // Migration 009 is replayed here to compare its historical file visibility.
 // Added list fields are verified by retention/location suites, not present in 009.
@@ -33,6 +34,7 @@ let primaryBid: string, primaryResume: string;
 let nextFile = 101;
 
 async function asUser(id: string) {
+  await fixtureSession(db, id);
   await db.exec("reset role; set role authenticated");
   await db.query("select set_config('request.jwt.claim.sub',$1,false)", [id]);
   await db.exec(
@@ -179,6 +181,7 @@ beforeAll(async () => {
     create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
     create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text,metadata jsonb); alter table storage.objects enable row level security;
     grant usage on schema auth,storage to authenticated,service_role; grant all on storage.objects to authenticated,service_role;`);
+  await installSessionTables(db);
   for (const file of readdirSync("supabase/migrations")
     .filter(
       (name) => name.endsWith(".sql") && !name.endsWith("_file_read_scope.sql"),

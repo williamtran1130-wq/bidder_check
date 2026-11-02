@@ -1,3 +1,4 @@
+import { fixtureSession, installSessionTables } from "./helpers/live-session";
 import { PGlite } from "@electric-sql/pglite";
 import { beforeAll, afterAll, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -9,6 +10,7 @@ const other = "00000000-0000-4000-8000-000000000002";
 const bidder = "00000000-0000-4000-8000-000000000003";
 let workspace: string, resume: string, bid: string, file: string;
 async function asUser(id: string) {
+  await fixtureSession(db, id);
   await db.exec(
     `reset role; set role authenticated; select set_config('request.jwt.claim.sub','${id}',false); select set_config('request.jwt.claim.role','authenticated',false);`,
   );
@@ -57,6 +59,7 @@ beforeAll(async () => {
  grant usage on schema auth, storage to authenticated, service_role;
  grant all on storage.objects to authenticated,service_role;
  `);
+  await installSessionTables(db);
   for (const file of readdirSync("supabase/migrations")
     .filter((f) => f.endsWith(".sql"))
     .sort()) {

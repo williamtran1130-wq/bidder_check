@@ -20,7 +20,7 @@ it("requires bearer authentication even when a website cookie is present",async(
 it("verifies the token remotely and passes only the caller JWT to the ingestion RPC",async()=>{
  const result=await POST(request(body()));
  expect(result.status).toBe(200);
- expect(h.calls).toEqual(["Bearer valid-token","getUser:valid-token","ingest_mail_insights"]);
+ expect(h.calls).toEqual(["Bearer valid-token","getUser:valid-token","enforce_live_session","ingest_mail_insights"]);
  expect(result.headers.get("cache-control")).toContain("no-store");
 });
 it("rejects client identity substitution and inactive/nonclient uploaders",async()=>{

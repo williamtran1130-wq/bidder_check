@@ -468,8 +468,9 @@ it("rejects outsider and administrator emails before an owner intent can lock un
   }
 });
 it("ignores unfingerprinted reset email fields and preserves own unchanged email intents", async () => {
-  const target = await reviewBidder("review-reset@example.test");
-  await actor(owner);
+  const bidderTarget = await reviewBidder("review-reset@example.test");
+  const target = owner;
+  await actor();
   const request = randomUUID();
   const op = await call("begin_account_operation", [
     request,
@@ -496,7 +497,7 @@ it("ignores unfingerprinted reset email fields and preserves own unchanged email
     randomUUID(),
     "update_bidder",
     {
-      target,
+      target: bidderTarget,
       name: "Same email",
       email: " REVIEW-RESET@EXAMPLE.TEST ",
       rate: 25,

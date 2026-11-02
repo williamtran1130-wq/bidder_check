@@ -16,6 +16,7 @@ type Dependencies = {
     ) => Promise<{ error: unknown }>;
   };
 };
+export type EphemeralPassword = { password: string; commitment: string };
 const pending = (operation: AccountOperation): AccountActionResult => ({
   error:
     operation.authStep === "accepted"
@@ -41,15 +42,27 @@ export async function executeAccountOperation(
   request: string,
   actor: string,
   deps: Dependencies,
+  credentials?: EphemeralPassword,
 ): Promise<AccountActionResult> {
   let operation = (await deps.rpc("account_operation_status", {
     p_request: request,
   })) as AccountOperation;
   if (operation.status === "completed" || operation.status === "abandoned")
     return result(operation);
+  if (
+    operation.kind === "set_bidder_password" &&
+    operation.authStep === "ready" &&
+    !credentials
+  )
+    return {
+      operation,
+      requiresPassword: true,
+      error: "Re-enter the original password to resume this request.",
+    };
   operation = (await deps.rpc("dispatch_account_operation", {
     p_request: request,
     p_actor: actor,
+    ...(credentials ? { p_password_commitment: credentials.commitment } : {}),
   })) as AccountOperation;
   if (operation.dispatchId) {
     const app_metadata = {
@@ -71,13 +84,15 @@ export async function executeAccountOperation(
       } else {
         await deps.auth.updateUserById(
           operation.targetId,
-          operation.kind === "reset_password"
-            ? { password: "123456", app_metadata }
-            : {
-                email: operation.payload.email!,
-                email_confirm: true,
-                app_metadata,
-              },
+          operation.kind === "set_bidder_password"
+            ? { password: credentials!.password, app_metadata }
+            : operation.kind === "reset_password"
+              ? { password: "123456", app_metadata }
+              : {
+                  email: operation.payload.email!,
+                  email_confirm: true,
+                  app_metadata,
+                },
         );
       }
     } catch (error) {

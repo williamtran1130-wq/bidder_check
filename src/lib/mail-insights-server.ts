@@ -2,6 +2,8 @@ import "server-only";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { getActor } from "./auth";
+import { assertLiveSession } from "./live-session";
+import { AuthorizationError } from "./authorization-error";
 import { isCalendarDate } from "./calendar-period";
 import type { Database } from "./database.types";
 
@@ -26,7 +28,13 @@ export async function mailBearerActor(request: Request) {
     throw new MailApiError(503, "Authentication is temporarily unavailable. Sync will retry.");
   }
   if (!data.user) throw new MailApiError(401, "Your session expired. Sign in again.");
+  try { await assertLiveSession(supabase); }
+  catch (error) {
+    if (error instanceof AuthorizationError) throw new MailApiError(401, "Your session expired. Sign in again.");
+    throw new MailApiError(503, "Session verification is temporarily unavailable. Sync will retry.");
+  }
   const { data: profile, error: profileError } = await supabase.from("profiles").select("id,role,archived,approval_status").eq("id", data.user.id).single();
+  if (profileError?.code === "PT401") throw new MailApiError(401, "Your session expired. Sign in again.");
   if (profileError) throw new MailApiError(503, "Could not verify your account. Please retry.");
   if (!profile || profile.archived || (profile.role === "client" && profile.approval_status !== "approved"))
     throw new MailApiError(403, "Your account is not active and approved.");

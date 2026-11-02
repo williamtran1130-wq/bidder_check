@@ -13,6 +13,8 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:bidder-security:e2e": "playwright test --config tests/preview/bidder-security.playwright.config.ts",
+    "test:bidder-security:integration": "playwright test --config tests/preview/bidder-security.integration.config.ts",
     "test:db": "vitest run tests/database.test.ts",
     "admin:bootstrap": "node --env-file=.env.local scripts/bootstrap-admin.mjs",
     "db:types": "supabase gen types typescript --local > src/lib/database.types.ts"

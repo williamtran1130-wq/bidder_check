@@ -72,7 +72,9 @@ vi.mock("@/lib/server", () => ({
         };
         return query;
       },
-      rpc: state.rpc,
+      rpc: (name: string, args: unknown) => name === "enforce_live_session"
+        ? Promise.resolve({ data: null, error: null })
+        : state.rpc(name, args),
     };
   },
 }));

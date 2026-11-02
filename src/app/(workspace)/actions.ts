@@ -29,7 +29,7 @@ import type {
 } from "@/lib/bulk-types";
 import { canRetryPurge } from "@/lib/purge-status";
 import { readReport } from "@/lib/reporting-server";
-import { submitAccountOperation, resumeAccountOperation, accountRecoveryList, abandonAccountOperation } from "@/lib/account-operation-server";
+import { submitAccountOperation, submitBidderPassword, resumeAccountOperation, accountRecoveryList, abandonAccountOperation } from "@/lib/account-operation-server";
 import type { AccountKind } from "@/lib/account-operation-types";
 import type { BidRow } from "@/lib/workspace-types";
 import type { DashboardReport, EarningsReport, InterviewReport, ReportQuery, GroupedReportQuery } from "@/lib/report-types";
@@ -320,7 +320,10 @@ export async function createClientAccount(form: FormData, requestId?: string) {
   return submitAccountOperation("create_client", form, requestId);
 }
 export async function getManagedAccountOperations() { return accountRecoveryList(); }
-export async function resumeManagedAccountOperation(request: string) { return resumeAccountOperation(request); }
+export async function changeManagedBidderPassword(request: string, target: string, password: string, confirmation: string) {
+  return submitBidderPassword(request, target, password, confirmation);
+}
+export async function resumeManagedAccountOperation(request: string, passwordRecovery = false) { return resumeAccountOperation(request, passwordRecovery); }
 export async function abandonManagedAccountOperation(request: string) { return abandonAccountOperation(request); }
 export async function submitManagedAccountOperation(request: string, kind: AccountKind, fields: Record<string, string>) {
   const form = new FormData();

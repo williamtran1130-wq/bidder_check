@@ -3,6 +3,7 @@ import { z } from "zod";
 /** Only explicit application messages may cross a server-action boundary. */
 export class ActionValidationError extends Error {}
 const publicMessages = new Set([
+  "Use Change password for bidder accounts", "Re-enter the original password to resume this request",
   "Access denied", "Manager access denied", "Blocked", "Assignment unavailable",
   "A correction reason is required", "A rejection reason is required", "A reason is required (up to 1000 characters)",
   "A bid was selected more than once", "A request id is required", "A selected bid changed. Refresh and review the current rows.",

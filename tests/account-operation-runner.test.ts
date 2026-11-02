@@ -82,3 +82,26 @@ it("skips Auth for an unchanged email and returns success only after SQL complet
   ).toBe("completed");
   expect(f.counts()).toEqual({ resets: 0, audits: 1 });
 });
+it("requires password re-entry before dispatching an unaccepted custom password operation", async () => {
+  const f = fixture(); f.journal.kind = "set_bidder_password";
+  const result = await executeAccountOperation(request, "actor", f);
+  expect(result.requiresPassword).toBe(true);
+  expect(f.journal.authStep).toBe("ready");
+  expect(f.counts()).toEqual({ resets: 0, audits: 0 });
+});
+it("sends only ephemeral custom credentials to Auth and their commitment to dispatch", async () => {
+  const f = fixture(); f.journal.kind = "set_bidder_password";
+  const effects: Record<string, unknown>[] = [];
+  const deps = { ...f, rpc: async (name: string, args: Record<string, unknown>) => {
+    if (name === "dispatch_account_operation") expect(args.p_password_commitment).toBe("commitment");
+    return f.rpc(name);
+  }, auth: { ...f.auth, updateUserById: async (_id: string, value: Record<string, unknown>) => {
+    effects.push(value); f.journal.authStep = "accepted"; return { error: null };
+  } } };
+  const result = await executeAccountOperation(request, "actor", deps, { password: "  new password  ", commitment: "commitment" });
+  expect(effects).toEqual([{ password: "  new password  ", app_metadata: { managed_account_operation: { request, dispatch: "dispatch" } } }]);
+  expect(result.operation?.status).toBe("completed");
+  expect(JSON.stringify(result)).not.toContain("new password");
+  await executeAccountOperation(request, "actor", deps);
+  expect(effects).toHaveLength(1);
+});

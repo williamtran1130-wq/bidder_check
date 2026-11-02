@@ -2,6 +2,8 @@
 import { createClient } from "@/lib/server";
 import { z } from "zod";
 import { redirect } from "next/navigation";
+import { assertLiveSession } from "@/lib/live-session";
+import { AuthorizationError } from "@/lib/authorization-error";
 const credentials = z.object({
   email: z.email(),
   password: z.string().min(6, "Use at least 6 characters.").max(128),
@@ -27,6 +29,12 @@ export async function authenticate(
       return {
         error: "Please sign in before changing your password.",
       };
+    try { await assertLiveSession(supabase); }
+    catch (error) {
+      return { error: error instanceof AuthorizationError
+        ? "Please sign in before changing your password."
+        : "Session verification is temporarily unavailable. Please retry." };
+    }
     const { error } = await supabase.auth.updateUser({
       password: values.password,
     });

@@ -1,3 +1,4 @@
+import { fixtureSession, installSessionTables } from "./helpers/live-session";
 import { PGlite } from "@electric-sql/pglite";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -7,6 +8,7 @@ const bidder = "40000000-0000-4000-8000-000000000002";
 const other = "40000000-0000-4000-8000-000000000003";
 let db: PGlite, workspace: string, profile: string, resume: string, bid: string;
 async function actor(id = owner) {
+  await fixtureSession(db, id);
   await db.exec("reset role; set role authenticated");
   await db.query(
     "select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claim.role','authenticated',false)",
@@ -66,6 +68,7 @@ beforeAll(async () => {
     create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
     create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text,metadata jsonb); alter table storage.objects enable row level security;
     grant usage on schema auth,storage to authenticated,service_role; grant all on storage.objects to authenticated,service_role;`);
+  await installSessionTables(db);
   for (const f of readdirSync("supabase/migrations")
     .filter((f) => f.endsWith(".sql"))
     .sort())

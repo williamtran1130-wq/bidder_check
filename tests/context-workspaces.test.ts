@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 const state=vi.hoisted(()=>({rows:[] as Record<string,unknown>[],selects:[] as string[]}));
-vi.mock("@/lib/server",()=>({createClient:async()=>({auth:{getUser:async()=>({data:{user:{id:"viewer"}}})},from(table:string){
+vi.mock("@/lib/server",()=>({createClient:async()=>({rpc:async()=>({error:null}),auth:{getUser:async()=>({data:{user:{id:"viewer"}}})},from(table:string){
  const query={select(columns:string){state.selects.push(table+":"+columns);return query;},eq(){return query;},order(){return query;},overrideTypes(){return query;},limit(){return query;},single:async()=>({data:{id:"viewer",role:"admin",archived:false,approval_status:"approved"},error:null}),then(resolve:(value:unknown)=>unknown){return Promise.resolve({data:state.rows,error:null}).then(resolve);}};
  return query;
 }})}));

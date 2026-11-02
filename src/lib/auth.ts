@@ -4,19 +4,25 @@ import { redirect } from "next/navigation";
 import { createClient } from "./server";
 import type { Row } from "./database.types";
 import { AuthorizationError } from "./authorization-error";
+import { assertLiveSession } from "./live-session";
 export { AuthorizationError } from "./authorization-error";
 /** React cache is request-local. Every new request confirms the live Auth user. */
 export const getActor = cache(async () => {
   const supabase = await createClient();
   const {
     data: { user },
+    error: authError,
   } = await supabase.auth.getUser();
+  if (authError && !([400, 401, 403].includes(authError.status ?? 0) && authError.name !== "AuthRetryableFetchError") && authError.name !== "AuthSessionMissingError")
+    throw new Error("Authentication is temporarily unavailable. Please retry.");
   if (!user) throw new AuthorizationError("/auth/login");
+  await assertLiveSession(supabase);
   const { data: profile, error } = await supabase
     .from("profiles")
     .select("id,role,approval_status,archived")
     .eq("id", user.id)
     .single();
+  if (error?.code === "PT401") throw new AuthorizationError("/auth/login");
   if (error || !profile)
     throw new Error(
       "Your workspace is not ready. The database migration must be installed before using the application.",

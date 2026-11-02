@@ -22,6 +22,7 @@ vi.mock("@/lib/admin", () => ({
 import {
   submitAccountOperation,
   resumeAccountOperation,
+  submitBidderPassword,
 } from "@/lib/account-operation-server";
 const request = "22000000-0000-4000-8000-000000000010";
 const target = "22000000-0000-4000-8000-000000000002";
@@ -39,6 +40,36 @@ beforeEach(() => {
   state.adminRpc.mockReset();
   state.auth.createUser.mockReset();
   state.auth.updateUserById.mockReset();
+});
+it("rejects invalid passwords before creating a recovery record", async () => {
+  for (const [password, confirmation] of [["short", "short"], ["a".repeat(129), "a".repeat(129)], ["valid password", "different"]]) {
+    const result = await submitBidderPassword(request, target, password, confirmation);
+    expect(result).toMatchObject({ requiresPassword: true, error: expect.any(String) });
+    expect(result.notStarted).not.toBe(true);
+  }
+  expect(state.rpc).not.toHaveBeenCalled();
+});
+it("offers password re-entry when a saved request never reached begin without discarding its identity", async () => {
+  state.rpc.mockImplementation(async name => name === "account_operation_request_exists"
+    ? { data: false, error: null }
+    : { data: null, error: { code: "P0001", message: "Access denied" } });
+  const result = await resumeAccountOperation(request, true);
+  expect(result.requiresPassword).toBe(true);
+  expect(result.notStarted).not.toBe(true);
+});
+it("journals a server commitment without the password or confirmation", async () => {
+  vi.stubEnv("MANAGED_PASSWORD_HMAC_KEY", "a".repeat(64));
+  const password = "  chosen password  ";
+  const op = { requestId: request, actorId: target, targetId: target, kind: "set_bidder_password", payload: { target }, status: "completed", authStep: "accepted" };
+  state.rpc.mockImplementation(async (name, args) => {
+    if (name === "begin_account_operation") {
+      expect(args.p_payload).toEqual({ target, password_commitment: expect.stringMatching(/^[a-f0-9]{64}$/) });
+      expect(JSON.stringify(args)).not.toContain(password);
+    }
+    return { data: op, error: null };
+  });
+  try { expect((await submitBidderPassword(request, target, password, password)).operation?.status).toBe("completed"); }
+  finally { vi.unstubAllEnvs(); }
 });
 it("keeps a request recoverable when begin committed but its response was lost", async () => {
   state.rpc.mockRejectedValue(new Error("transport lost"));
