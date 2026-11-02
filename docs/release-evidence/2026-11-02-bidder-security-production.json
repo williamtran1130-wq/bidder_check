@@ -1,0 +1,39 @@
+{
+  "date": "2026-11-02",
+  "origin": "https://bidder-check.vercel.app",
+  "deployment_id": "dpl_FyEcFqRyxmLDFKVmzkkyNdu73MWD",
+  "application_source": "9f4313e3d2fa25d8b364e6b57e1e3cf917562981",
+  "migration": "202611020001",
+  "production_hmac": "configured-sensitive-value-not-recorded",
+  "previous_deployment": "dpl_CU6v398vGehL8dWRBAenS56XL1rK",
+  "acceptance": [
+    "real independent browser sessions against the production-target candidate before promotion",
+    "owner can sign out a bidder on all devices",
+    "old access tokens rejected by Data API tables and RPCs",
+    "old refresh tokens rejected",
+    "revoked browsers redirected to login and read API returns 401",
+    "authenticated private Storage downloads rejected after both sign-out and password change",
+    "fresh bidder sessions can access their private file",
+    "owner and unrelated bidder sessions remain usable",
+    "custom password replaces the old credential and ends previous sessions",
+    "private journal stores only a commitment and no plaintext password",
+    "production alias resolves to the accepted deployment",
+    "production migration and live-session hook verified after cleanup"
+  ],
+  "synthetic_accounts_removed": 3,
+  "synthetic_private_files_removed": 1,
+  "profile_count_before": 38,
+  "profile_count_after": 38,
+  "archived_profile_count_before": 7,
+  "archived_profile_count_after": 7,
+  "local_verification": {
+    "unit_database": 914,
+    "vitest_workers": 2,
+    "desktop_mobile_browser": 16,
+    "lint": "passed",
+    "typecheck": "passed",
+    "database_types": "fresh",
+    "build": "passed"
+  },
+  "staging_note": "Former staging resources were removed. Hosted acceptance used a production-configured candidate with domain promotion disabled. Only synthetic fixture IDs were mutated."
+}

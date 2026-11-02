@@ -68,7 +68,7 @@ test("real browser sessions, refresh tokens and direct API access are revoked wi
     return data.user!.id;
   }
   async function login(browser: Browser, email: string, password = initial) {
-    const context = await browser.newContext();
+    const context = await browser.newContext({ baseURL });
     contexts.push(context);
     let cookies: { name: string; value: string }[] = [];
     const client = createServerClient<Database>(url, key, {

@@ -2,6 +2,31 @@
 
 # Deployment handoff
 
+## Bidder sign-out and password management, 2026-11-02
+
+Application source `9f4313e`, deployment `dpl_FyEcFqRyxmLDFKVmzkkyNdu73MWD`,
+is promoted to https://bidder-check.vercel.app. Migration `202611020001` is
+recorded in the production ledger, the live-session Data API hook is installed,
+and the required HMAC key is configured as a sensitive production variable.
+
+The exact production-target deployment passed real hosted acceptance before
+domain promotion: two bidder browser sessions were revoked; stale Data API,
+RPC, refresh and authenticated Storage access failed; fresh login remained
+possible; custom password replacement revoked the remaining old session;
+the old password failed and the new password succeeded; and the owner's and
+other bidder's sessions remained usable. The three synthetic accounts and
+one private resume object were removed. Production profile counts returned
+to the original 38 records, including the same seven archived profiles.
+
+The previous staging Supabase/Vercel projects no longer exist. Acceptance used
+an isolated production candidate with domain promotion disabled, followed by
+live-domain public authentication/mobile/admin checks. Local verification passed
+914 unit/database tests with two workers, 16 desktop/mobile UI cases, lint,
+typecheck, generated-type freshness and the production build.
+
+See [feature/deployment notes](bidder-security.md) and
+[production evidence](release-evidence/2026-11-02-bidder-security-production.json).
+
 ## Workspace reporting, latest application IP and notification retirement, 2026-10-31
 
 Production cutover: `dpl_H1WxEKJSXKHpkyibPCxM6T81XXmZ`, source release marker

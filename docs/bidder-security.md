@@ -1,5 +1,15 @@
 # Bidder sign-out and password management
 
+Production release: 2026-11-02, application source `9f4313e`, deployment
+`dpl_FyEcFqRyxmLDFKVmzkkyNdu73MWD` at https://bidder-check.vercel.app.
+Migration `202611020001` and the sensitive production HMAC setting are installed.
+Real hosted multi-browser Auth, refresh-token and private Storage acceptance passed
+against this exact deployment before promotion. All three synthetic accounts and
+their private file were removed; the profile inventory returned to its original
+38 records. The former staging projects have been removed, so this release used
+an isolated production-target candidate without domain promotion for acceptance.
+See [release evidence](release-evidence/2026-11-02-bidder-security-production.json).
+
 Clients manage their own bidders from **People → Manage** or the bidder detail
 page. Administrators can manage all bidders. **Sign out all devices** ends current
 sessions but permits another sign-in. **Change password** accepts an exact match

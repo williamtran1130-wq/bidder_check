@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 async function manage(page: import("@playwright/test").Page, mode = "success") {
-  await page.goto(`/users?bidder-security=${mode}`);
+  await page.goto(`http://127.0.0.1:3001/users?bidder-security=${mode}`);
   await page.getByLabel("Search people").fill("bidder0@example.test");
   await page.getByRole("button", { name: "Manage", exact: true }).click();
   return page.getByRole("dialog");
