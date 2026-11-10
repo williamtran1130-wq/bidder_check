@@ -62,5 +62,9 @@
     "typescript": "^6.0.3",
     "vitest": "^4.1.11"
   },
-  "type": "module"
+  "type": "module",
+  "allowScripts": {
+    "node@22.23.3": true,
+    "unrs-resolver@1.12.2": true
+  }
 }
